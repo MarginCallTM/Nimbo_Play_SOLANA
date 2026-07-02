@@ -16,13 +16,19 @@ export function Header() {
           <span className="font-display text-lg tracking-tight">Solvault</span>
         </a>
         <nav className="hidden items-center gap-1 md:flex">
-          {["Lotteries", "How it works", "Winners", "Docs"].map((l) => (
+          {/* "#" entries are placeholders until their section is ported. */}
+          {[
+            { label: "Lotteries", href: "#" },
+            { label: "How it works", href: "#how" },
+            { label: "Winners", href: "#" },
+            { label: "Docs", href: "#" },
+          ].map((l) => (
             <a
-              key={l}
-              href="#"
+              key={l.label}
+              href={l.href}
               className="rounded-full px-3.5 py-2 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
             >
-              {l}
+              {l.label}
             </a>
           ))}
         </nav>

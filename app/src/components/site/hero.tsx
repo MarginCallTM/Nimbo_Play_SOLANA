@@ -5,8 +5,9 @@
 //
 // TODO(10.16): the badge text "Solana mainnet · Round #248" is a mock kept for
 // pixel-parity. It MUST be corrected to devnet + a single real round.
-import { PoweredBySparkles } from "@/components/site/powered-by-sparkles";
+import { PoweredBy } from "@/components/site/powered-by";
 import { LiveActivity } from "@/components/site/live-activity";
+import { GlobeAnalytics } from "@/components/site/globe-analytics";
 
 export function Hero() {
   return (
@@ -15,6 +16,13 @@ export function Hero() {
       className="relative overflow-hidden"
       style={{ background: "var(--gradient-hero)" }}
     >
+      {/* Bottom fade-to-white: gradient-hero isn't fully white yet at the
+          section's end, so this overlay turns the background pure white from
+          the PoweredBy row down, matching HowItWorks' white top gradient.
+          First child on purpose: positioned siblings below (content, logos)
+          paint above it, so nothing gets washed out. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-80 bg-gradient-to-b from-transparent to-background to-40%" />
+
       {/* Floating cute cloud — top left */}
       <div className="pointer-events-none absolute left-6 top-10 w-[11.7rem] md:w-[14.3rem] lg:w-[16.9rem]">
         <img
@@ -32,10 +40,10 @@ export function Hero() {
       </div>
 
       <div className="relative mx-auto max-w-6xl px-6 pt-28 pb-16 md:pt-36">
-        {/* Floating candy — top-right of the headline block */}
+        {/* Floating SOL coin — top-right of the headline block */}
         <div className="pointer-events-none absolute right-2 top-6 z-10 w-16 sm:right-6 sm:w-20 md:w-24 lg:right-8 lg:w-28">
           <img
-            src="/solana-hero.png"
+            src="/solana-coin-left.png"
             alt=""
             aria-hidden
             className="w-full"
@@ -79,18 +87,9 @@ export function Hero() {
         {/* Two-column showcase: smaller chest (left) + live leaderboard (right).
             Stacks vertically on mobile, side-by-side from lg. */}
         <div className="mt-16 grid items-center gap-10 lg:grid-cols-2 lg:gap-8">
-          {/* Treasure chest — reduced and left-aligned on desktop (+15% width) */}
+          {/* Interactive globe (corporate look) — replaces the treasure chest */}
           <div className="relative mx-auto w-full max-w-[27.6rem] lg:mx-0">
-            <div
-              className="absolute inset-x-8 bottom-0 h-20 rounded-full opacity-70 blur-3xl"
-              style={{ background: "radial-gradient(circle, oklch(0.78 0.18 259.81 / 0.5), transparent 70%)" }}
-            />
-            <img
-              src="/chest-wallpaper.png"
-              alt="Treasure chest with Solana coins"
-              className="relative z-10 mx-auto w-full drop-shadow-2xl"
-              style={{ animation: "float-y 5s ease-in-out infinite" }}
-            />
+            <GlobeAnalytics />
           </div>
 
           {/* Live activity feed (fabricated devnet data — see component header) */}
@@ -98,8 +97,9 @@ export function Hero() {
         </div>
       </div>
 
-      {/* Design test: sparkles logo cloud instead of the marquee (revertible). */}
-      <PoweredBySparkles />
+      {/* Partner logos — plain row; the sparkles band was dropped for a
+          cleaner transition into HowItWorks. */}
+      <PoweredBy />
     </section>
   );
 }

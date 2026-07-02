@@ -424,12 +424,17 @@ PHASE 10 — FRONTEND NEXT.JS
 [~] 10.15 Reconstruire section par section en composants, MOCKS d'abord (Header, Hero,
           round unique, HowItWorks, Trust, Stats, FinalCTA, Footer). Claude ecrit par morceaux,
           l'utilisateur comprend et adapte (cf revision methode de build 2026-06-29).
-          -> EN COURS (2026-07-01): FAITS = Ticker, Header, Hero (bloc principal + marquee
-             "Powered by" 6 logos). Composants dans app/src/components/site/. Assets Hero copies
-             depuis ~/Documents/Solana_front_react/Asset_img (+ /logo banner) vers app/public/
-             (cloud-cute, candy=orange_candy_done, chest-wallpaper, solana, phantom, backpack,
-             jupiter, superteam, solflare). Images en <img> plain (fidelite). animate-fade-in
-             ajoute au globals.css. RESTE: Lotteries, HowItWorks, Trust, Stats, FinalCTA, Footer.
+          -> HOMEPAGE TERMINEE (2026-07-02): Ticker, Header, Hero (globe cobe interactif
+             recolore palette via filtre CSS invert+hue-rotate, 8 etiquettes villes stats mock,
+             rangee "Powered by" 5 logos, fondu blanc bas de hero), HowItWorks (juste apres le
+             Hero, degrades de jonction haut+bas), WhySolvault (carte code animee buy_ticket +
+             PointerHighlight Aceternity sur "Blockchain."), Faq (accordion shadcn, 6 questions),
+             Footer. Sections Lotteries & Stats de la reference SAUTEES (choix utilisateur);
+             la carte du round vivra dans le Hero une fois branchee (10.17).
+             Copy deja corrigee partout: pas de VRF, un seul round, claim par le gagnant,
+             mention devnet dans FAQ + footer -> 10.16 quasi fait (reste badge hero "mainnet"
+             + ticker/live-activity a verifier). Deps ajoutees: motion (deja la), radix-ui
+             v1.6 via shadcn accordion.
 [ ] 10.16 CORRIGER LE CONTENU vers la verite (badge devnet, retirer "mainnet"/"VRF",
           UN seul round). Obligatoire cf CLAUDE.md (ne pas vendre l'alea simple comme sur).
 [ ] 10.17 Brancher les sections sur les vraies donnees (remplacer les mocks par 10.C + 10.D).
