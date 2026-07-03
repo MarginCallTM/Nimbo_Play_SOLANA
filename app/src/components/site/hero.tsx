@@ -73,13 +73,7 @@ export function Hero() {
               className="inline-flex items-center gap-3 rounded-full px-7 py-4 text-base font-semibold text-primary-foreground cta-glow transition-transform hover:scale-[1.02]"
               style={{ background: "var(--gradient-brand)" }}
             >
-              Buy ticket
-            </a>
-            <a
-              href="#lotteries"
-              className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-6 py-4 text-base font-medium hover:bg-secondary"
-            >
-              View lottery
+              Get a Ticket
             </a>
           </div>
         </div>

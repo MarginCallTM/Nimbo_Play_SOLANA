@@ -46,24 +46,6 @@ export function Faq() {
       className="relative overflow-hidden py-24"
       style={{ background: "var(--gradient-hero)" }}
     >
-      {/* Floating clouds, echoing the Hero's decoration */}
-      <img
-        src="/cloud-cute.png"
-        alt=""
-        aria-hidden
-        width={120}
-        height={120}
-        className="float-slow absolute left-8 top-10 w-24 opacity-80"
-      />
-      <img
-        src="/cloud-cute.png"
-        alt=""
-        aria-hidden
-        width={160}
-        height={160}
-        className="float-med absolute bottom-8 right-10 w-32 opacity-60"
-      />
-
       <div className="relative mx-auto grid max-w-6xl gap-12 px-6 lg:grid-cols-[1fr_2fr] lg:items-start">
         {/* Left: badge + heading */}
         <div>
@@ -77,6 +59,18 @@ export function Faq() {
             Everything you need to know about playing the Solana lottery on
             Solvault.
           </p>
+          {/* Graduate-cloud mascot (background removed via macOS Vision —
+              the source PNG had a fake baked-in checkerboard). In-flow
+              rather than absolute so it can never overlap the accordion;
+              hidden on mobile where the column is stacked. */}
+          <img
+            src="/cloud-graduate.png"
+            alt=""
+            aria-hidden
+            width={512}
+            height={512}
+            className="float-slow mt-10 hidden w-44 lg:block"
+          />
         </div>
 
         {/* Right: one collapsible item per question */}
