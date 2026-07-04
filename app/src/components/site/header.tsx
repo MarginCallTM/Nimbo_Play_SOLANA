@@ -1,10 +1,11 @@
 // Site header — ported 1:1 from the Lovable maquette (Header section).
-// Stateless, so it stays a Server Component (next/image works in RSC).
-// The "Connect wallet" link is still a mock; it gets wired to the real wallet
-// hook in phase 10.6, and the "mainnet" wording is corrected in 10.16.
+// Still a Server Component: ConnectWalletButton is a client LEAF inside it
+// (same pattern as HighlightedWord) — the rest of the header renders on the
+// server. "mainnet" wording is corrected in 10.16.
 // logo-mark.png = official logo, background-removed + trimmed from
 // public/official_logo.png (kept as the untouched source).
 import Image from "next/image";
+import { ConnectWalletButton } from "@/components/site/connect-wallet-button";
 
 export function Header() {
   return (
@@ -44,13 +45,7 @@ export function Header() {
           >
             View lottery
           </a>
-          <a
-            href="#play"
-            className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-primary-foreground cta-glow"
-            style={{ background: "var(--gradient-brand)" }}
-          >
-            <span className="size-1.5 rounded-full bg-white/90" /> Connect wallet
-          </a>
+          <ConnectWalletButton />
         </div>
       </div>
     </header>
