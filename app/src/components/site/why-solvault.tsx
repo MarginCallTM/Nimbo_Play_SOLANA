@@ -34,7 +34,7 @@ export function WhySolvault() {
 
         {/* Right: kicker + heading + trust arguments */}
         <div>
-          <p className="text-sm font-medium text-primary">Why Solvault</p>
+          <p className="text-sm font-medium text-primary">Why Nimbo Play</p>
           {/* HighlightedWord = PointerHighlight filled with the brand
               gradient + the word fading to white during the sweep. */}
           <h2 className="mt-2 font-display text-3xl md:text-4xl">

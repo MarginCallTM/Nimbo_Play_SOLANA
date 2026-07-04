@@ -4,19 +4,23 @@
 // Static markup -> Server Component. Nav points to on-page anchors; legal
 // links are placeholders until those pages exist.
 
+import Image from "next/image";
+
+// "/#..." (not "#...") so the links also work from other pages (/vaults).
 const navLinks = [
-  { label: "Home", href: "#play" },
-  { label: "How it works", href: "#how" },
-  { label: "Why Solvault", href: "#why" },
-  { label: "FAQ", href: "#faq" },
+  { label: "Home", href: "/#play" },
+  { label: "Lotteries", href: "/vaults" },
+  { label: "How it works", href: "/#how" },
+  { label: "Why Nimbo Play", href: "/#why" },
+  { label: "FAQ", href: "/#faq" },
 ];
 
 // User-provided disclaimer copy (2026-07-03) — honest educational framing.
 const legalParagraphs = [
-  "Solvault is an educational blockchain project exploring transparent lottery systems built on Solana.",
+  "Nimbo Play is an educational blockchain project exploring transparent lottery systems built on Solana.",
   "The platform demonstrates how decentralized technologies can create verifiable, on-chain experiences where tickets, draws, and transactions can be publicly inspected.",
-  "Solvault uses Solana smart contracts to provide a transparent lottery mechanism where users interact directly through their wallets. The project focuses on blockchain education, smart contract development, and decentralized application design.",
-  "Solvault does not provide financial services, investment products, or guaranteed rewards. All interactions are part of an experimental blockchain application designed for learning and research purposes.",
+  "Nimbo Play uses Solana smart contracts to provide a transparent lottery mechanism where users interact directly through their wallets. The project focuses on blockchain education, smart contract development, and decentralized application design.",
+  "Nimbo Play does not provide financial services, investment products, or guaranteed rewards. All interactions are part of an experimental blockchain application designed for learning and research purposes.",
   "Blockchain transactions are irreversible and users remain responsible for their own wallets, private keys, and interactions with smart contracts.",
 ];
 
@@ -24,16 +28,18 @@ export function Footer() {
   return (
     <footer className="border-t border-border bg-background pb-10 pt-16">
       <div className="mx-auto max-w-7xl px-6">
-        {/* Brand */}
+        {/* Brand — same official logo mark as the header (the old "S" tile
+            was a Solvault artifact). */}
         <div className="flex items-center gap-2">
-          <span
-            className="grid size-8 place-items-center rounded-xl font-display text-sm text-primary-foreground"
-            style={{ background: "var(--gradient-brand)" }}
-          >
-            S
-          </span>
-          <span className="font-display text-lg tracking-tight text-foreground">
-            Solvault
+          <Image
+            src="/logo-mark.png"
+            alt="Nimbo Play logo"
+            width={64}
+            height={64}
+            className="size-8 object-contain"
+          />
+          <span className="font-brand text-lg font-semibold text-foreground">
+            Nimbo Play
           </span>
         </div>
 
@@ -64,7 +70,7 @@ export function Footer() {
         {/* Bottom row: copyright left, legal links right */}
         <div className="mt-10 flex flex-wrap items-center justify-between gap-4">
           <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} Solvault. All rights reserved.
+            © {new Date().getFullYear()} Nimbo Play. All rights reserved.
           </p>
           <div className="flex items-center gap-6 text-sm">
             <a

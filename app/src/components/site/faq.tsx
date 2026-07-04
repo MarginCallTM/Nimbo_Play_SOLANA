@@ -35,7 +35,7 @@ const faqs = [
   },
   {
     q: "Is this real money?",
-    a: "Not yet. Solvault runs on Solana devnet: tickets are paid in devnet SOL, which has no monetary value. Mainnet would only come after a serious security audit.",
+    a: "Not yet. Nimbo Play runs on Solana devnet: tickets are paid in devnet SOL, which has no monetary value. Mainnet would only come after a serious security audit.",
   },
 ];
 
@@ -57,7 +57,7 @@ export function Faq() {
           </h2>
           <p className="mt-4 max-w-sm text-muted-foreground">
             Everything you need to know about playing the Solana lottery on
-            Solvault.
+            Nimbo Play.
           </p>
           {/* Graduate-cloud mascot (background removed via macOS Vision —
               the source PNG had a fake baked-in checkerboard). In-flow

@@ -5,6 +5,7 @@
 //
 // TODO(10.16): the badge text "Solana mainnet · Round #248" is a mock kept for
 // pixel-parity. It MUST be corrected to devnet + a single real round.
+import Link from "next/link";
 import { PoweredBy } from "@/components/site/powered-by";
 import { LiveActivity } from "@/components/site/live-activity";
 import { GlobeAnalytics } from "@/components/site/globe-analytics";
@@ -68,13 +69,15 @@ export function Hero() {
             Buy a ticket, join the vault. Every draw is provably fair, settled on-chain, and paid out in seconds.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3 animate-fade-in">
-            <a
-              href="#play"
-              className="inline-flex items-center gap-3 rounded-full px-7 py-4 text-base font-semibold text-primary-foreground cta-glow transition-transform hover:scale-[1.02]"
+            {/* Main CTA -> vault selection. next/link = client-side nav +
+                prefetch when the link enters the viewport. */}
+            <Link
+              href="/vaults"
+              className="inline-flex items-center gap-3 rounded-[10px] px-5 py-3 text-base font-semibold text-primary-foreground cta-glow transition-transform hover:scale-[1.02]"
               style={{ background: "var(--gradient-brand)" }}
             >
               Get a Ticket
-            </a>
+            </Link>
           </div>
         </div>
 

@@ -30,7 +30,8 @@ export function Ticker() {
             key={i}
             className={`inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 ${
               it.tone === "win"
-                ? "bg-[oklch(0.96_0.06_165)] text-[oklch(0.35_0.15_160)]"
+                ? // Literal greens (not tokens), so they need explicit dark: twins.
+                  "bg-[oklch(0.96_0.06_165)] text-[oklch(0.35_0.15_160)] dark:bg-[oklch(0.35_0.08_165)] dark:text-[oklch(0.88_0.1_160)]"
                 : it.tone === "info"
                   ? "bg-secondary text-secondary-foreground"
                   : "bg-card text-foreground"

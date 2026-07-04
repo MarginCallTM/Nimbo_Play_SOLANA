@@ -420,8 +420,11 @@ PHASE 10 — FRONTEND NEXT.JS
           PAS expose au public (cf CLAUDE.md: draw reserve a l'authority).
 
   -- 10.E  RECONSTRUCTION VISUELLE (APRES que app-reference soit FIGE) --
-[ ] 10.14 Importer les assets figes (theme final) dans app/public (ou src/assets).
-[~] 10.15 Reconstruire section par section en composants, MOCKS d'abord (Header, Hero,
+[x] 10.14 Importer les assets figes (theme final) dans app/public (ou src/assets).
+          -> Fait au fil de l'eau: 3 coffres vaults, logo-mark.png (detoure via Vision),
+             icon.png (favicon), cloud-graduate.png. Source brute official_logo.png (2 Mo)
+             a sortir de public/ un jour (poids mort expose).
+[x] 10.15 Reconstruire section par section en composants, MOCKS d'abord (Header, Hero,
           round unique, HowItWorks, Trust, Stats, FinalCTA, Footer). Claude ecrit par morceaux,
           l'utilisateur comprend et adapte (cf revision methode de build 2026-06-29).
           -> HOMEPAGE TERMINEE (2026-07-02): Ticker, Header, Hero (globe cobe interactif
@@ -435,6 +438,37 @@ PHASE 10 — FRONTEND NEXT.JS
              mention devnet dans FAQ + footer -> 10.16 quasi fait (reste badge hero "mainnet"
              + ticker/live-activity a verifier). Deps ajoutees: motion (deja la), radix-ui
              v1.6 via shadcn accordion.
+          -> PAGE /vaults AJOUTEE (2026-07-03): portage corporate de vaults.tsx (reference,
+             copie dans app-reference/src/routes/). Composants dans app/src/components/vaults/
+             (vaults-data mock, VaultPicker client avec countdown+ventes simulees, WinnerCta,
+             FinishedRounds onglets). 1 vault live (= notre round unique) + 2 "Coming soon".
+             Nav header/footer -> /vaults, ancres passees en "/#...". Footer redesign minimal
+             type Rain.fi avec disclaimer educatif fourni par l'utilisateur.
+          -> FINITIONS DESIGN (2026-07-03/04) -- 10.15 TERMINE, phase design close:
+             * /vaults passee en THEME SOMBRE bleu nuit page-scoped (classe "dark" sur la
+               racine; palette .dark de globals.css teintee hue 265 + overrides sombres de
+               --gradient-hero/--shadow-card + .brand-text eclairci). Homepage reste claire.
+             * REBRANDING: Solvault -> "Nimbo Play" (tous les textes visibles + metadata).
+               Identifiants de code (WhySolvault, why-solvault.tsx, ancre /#why) GARDES --
+               renommage a faire si le nom est definitif. Logo officiel detoure ->
+               header + footer (logo-mark.png) + favicon (src/app/icon.png, convention Next).
+               Police marque: Fredoka via next/font (--font-brand, utilitaire font-brand).
+             * Langage boutons: actions -> rounded-[10px] (style Rain.fi), "Connect wallet"
+               et badges/statuts restent en pilule. 2 vaults live (Daily+Weekly) + 1 coming
+               soon; images coffres par vault (champ image? optionnel, fallback icone lucide).
+             * WinnerCta refait (badge or "unclaimed", titre "You might already have won.",
+               checklist reassurance, pile CTA primaire/secondaire) + GlowBorder: liseret
+               dore suivant la souris (masques padding/border-box + background-attachment
+               fixed, composant client components/ui/glow-border.tsx).
+             * Section MyTicketsDashboard (banniere stats + modale accessible) avec
+               DashboardCard animee (motion/react, variants spring, overlay confirm).
+               shadcn ajoutes: badge, avatar, separator. QR code = api.qrserver.com (SEULE
+               requete externe du site, mock a remplacer).
+             * Hero "Get a Ticket" -> Link /vaults (prefetch). Bouton achat -> "Connect
+               wallet" (etat honnete sans wallet).
+             TOUT est encore mock -> la suite est 10.B (4->7): providers wallet + client
+             Anchor, puis 10.C/10.D. Rappel 10.17: le programme n'a qu'UN round a la fois,
+             deux vaults "live" est une fiction UI a resoudre au branchement.
 [ ] 10.16 CORRIGER LE CONTENU vers la verite (badge devnet, retirer "mainnet"/"VRF",
           UN seul round). Obligatoire cf CLAUDE.md (ne pas vendre l'alea simple comme sur).
 [ ] 10.17 Brancher les sections sur les vraies donnees (remplacer les mocks par 10.C + 10.D).

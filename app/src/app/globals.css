@@ -51,11 +51,14 @@
   --color-success-foreground: var(--success-foreground);
   --color-sky-soft: var(--sky-soft);
   --color-sky-softer: var(--sky-softer);
+  --color-gold: var(--gold);
 
-  /* Fonts — Inter everywhere (loaded by next/font as --font-inter). */
+  /* Fonts — Inter everywhere (loaded by next/font as --font-inter).
+     Fredoka (--font-fredoka) is reserved for the brand name (font-brand). */
   --font-display: var(--font-inter), system-ui, sans-serif;
   --font-sans: var(--font-inter), system-ui, sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", monospace;
+  --font-brand: var(--font-fredoka), var(--font-inter), system-ui, sans-serif;
 
   /* Charts + sidebar. */
   --color-chart-1: var(--chart-1);
@@ -145,25 +148,29 @@
 }
 
 .dark {
-  /* --- New blue palette (dark) --- */
-  --background: oklch(0.2 0 0);
-  --foreground: oklch(0.92 0 0);
-  --card: oklch(0.27 0 0);
-  --card-foreground: oklch(0.92 0 0);
-  --popover: oklch(0.27 0 0);
-  --popover-foreground: oklch(0.92 0 0);
+  /* --- New blue palette (dark) ---
+     "Soft dark": every neutral is tinted with the brand hue (~265) instead
+     of pure gray, so dark pages read as blue-night rather than black.
+     Used page-scoped (e.g. /vaults root has class="dark") — there is no
+     global theme toggle. */
+  --background: oklch(0.21 0.03 265);
+  --foreground: oklch(0.93 0.01 255);
+  --card: oklch(0.25 0.035 265);
+  --card-foreground: oklch(0.93 0.01 255);
+  --popover: oklch(0.25 0.035 265);
+  --popover-foreground: oklch(0.93 0.01 255);
   --primary: oklch(0.62 0.19 259.81);
   --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.27 0 0);
-  --secondary-foreground: oklch(0.92 0 0);
-  --muted: oklch(0.27 0 0);
-  --muted-foreground: oklch(0.72 0 0);
+  --secondary: oklch(0.29 0.035 265);
+  --secondary-foreground: oklch(0.88 0.02 255);
+  --muted: oklch(0.27 0.03 265);
+  --muted-foreground: oklch(0.68 0.025 260);
   --accent: oklch(0.38 0.14 265.52);
   --accent-foreground: oklch(0.88 0.06 254.13);
   --destructive: oklch(0.64 0.21 25.33);
   --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.37 0 0);
-  --input: oklch(0.37 0 0);
+  --border: oklch(0.33 0.035 265);
+  --input: oklch(0.33 0.035 265);
   --ring: oklch(0.62 0.19 259.81);
 
   --success: oklch(0.72 0.18 160);
@@ -179,14 +186,21 @@
   --chart-3: oklch(0.55 0.22 262.88);
   --chart-4: oklch(0.49 0.22 264.38);
   --chart-5: oklch(0.42 0.18 265.64);
-  --sidebar: oklch(0.2 0 0);
-  --sidebar-foreground: oklch(0.92 0 0);
+  --sidebar: oklch(0.21 0.03 265);
+  --sidebar-foreground: oklch(0.93 0.01 255);
   --sidebar-primary: oklch(0.62 0.19 259.81);
   --sidebar-primary-foreground: oklch(1 0 0);
   --sidebar-accent: oklch(0.38 0.14 265.52);
   --sidebar-accent-foreground: oklch(0.88 0.06 254.13);
-  --sidebar-border: oklch(0.37 0 0);
+  --sidebar-border: oklch(0.33 0.035 265);
   --sidebar-ring: oklch(0.62 0.19 259.81);
+
+  /* Gradients & shadows are declared light-only in :root — without these
+     overrides a dark page would inherit the LIGHT hero gradient and the
+     white inset line baked into --shadow-card. */
+  --gradient-hero: radial-gradient(ellipse at 50% 0%, oklch(0.33 0.09 265) 0%, oklch(0.25 0.05 265) 55%, oklch(0.21 0.03 265) 100%);
+  --shadow-soft: 0 1px 2px oklch(0 0 0 / 0.25), 0 8px 24px -8px oklch(0 0 0 / 0.35);
+  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.06) inset, 0 1px 3px oklch(0 0 0 / 0.3), 0 12px 28px -12px oklch(0 0 0 / 0.45);
 }
 
 @layer base {
@@ -219,6 +233,13 @@
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
+  }
+  /* On dark surfaces the brand gradient's low end (L 0.49) lacks contrast
+     as TEXT, so lift both stops. Buttons keep var(--gradient-brand) as-is. */
+  .dark .brand-text {
+    background: linear-gradient(135deg, oklch(0.78 0.12 254) 0%, oklch(0.64 0.19 259.81) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
   }
   .ticker-track {
     animation: ticker 60s linear infinite;
@@ -295,6 +316,63 @@
   }
   @keyframes border-rotate {
     to { transform: translate(-50%, -50%) rotate(360deg); }
+  }
+  /* Pointer-tracked golden border glow (GlowBorder component).
+     --x/--y = pointer VIEWPORT coords set from JS. background-attachment:
+     fixed anchors the radial gradients to the viewport, so a gradient
+     placed at --x/--y sits under the cursor regardless of scroll/layout.
+     The double mask (transparent padding-box ∩ white border-box) keeps
+     only the border ring visible — same clipping idea as .code-border-anim.
+     Layers: ::before = gold ring, ::after = warm hotspot, .glow-border-halo
+     = blurred twin for the outer bloom. z-index 1 lifts them above the
+     card child so the gold covers its 1px border. */
+  .glow-border {
+    --glow-border: 2px;
+    --glow-spot: 320px;
+    position: relative;
+  }
+  .glow-border::before,
+  .glow-border::after,
+  .glow-border-halo {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border: var(--glow-border) solid transparent;
+    border-radius: inherit;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    mask: linear-gradient(transparent, transparent), linear-gradient(white, white);
+    mask-clip: padding-box, border-box;
+    mask-composite: intersect;
+  }
+  /* Winner-ticket gold = --gold (oklch 0.85 0.14 85), chroma bumped for punch.
+     --x/--y default to -9999 so nothing shows before the first pointermove. */
+  .glow-border::before {
+    content: "";
+    background-image: radial-gradient(
+      var(--glow-spot) var(--glow-spot) at
+      calc(var(--x, -9999) * 1px) calc(var(--y, -9999) * 1px),
+      oklch(0.85 0.17 85 / 0.95), transparent 70%
+    );
+    filter: brightness(1.3);
+  }
+  .glow-border::after {
+    content: "";
+    background-image: radial-gradient(
+      calc(var(--glow-spot) * 0.4) calc(var(--glow-spot) * 0.4) at
+      calc(var(--x, -9999) * 1px) calc(var(--y, -9999) * 1px),
+      oklch(0.97 0.06 95 / 0.9), transparent 100%
+    );
+  }
+  .glow-border-halo {
+    border-width: calc(var(--glow-border) * 2);
+    background-image: radial-gradient(
+      var(--glow-spot) var(--glow-spot) at
+      calc(var(--x, -9999) * 1px) calc(var(--y, -9999) * 1px),
+      oklch(0.85 0.17 85 / 0.7), transparent 70%
+    );
+    filter: blur(12px) brightness(1.2);
   }
   .marquee-track {
     animation: marquee 30s linear infinite;
