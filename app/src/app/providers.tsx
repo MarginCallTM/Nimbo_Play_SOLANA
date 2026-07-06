@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
     ConnectionProvider,
     WalletProvider,
 } from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RPC_ENDPOINT } from "@/lib/constants";
 
 // Default stylesheet for the wallet-selection modal. Loaded once here;
@@ -19,10 +20,30 @@ export function Providers({ children }: {children: ReactNode}) {
     // array each render would make WalletProvider re-initialize.
     const wallets = useMemo(() => [], []);
 
+    // One QueryClient per mount (useState initializer runs once), never a
+    // module-level singleton: with SSR that would leak cached data between
+    // requests/users. Defaults tuned for a public devnet RPC: data stays
+    // "fresh" 10s (no refetch storm), no refetch on window focus.
+    const [queryClient] = useState(
+        () =>
+            new QueryClient({
+                defaultOptions: {
+                    queries: {
+                        staleTime: 10_000,
+                        refetchOnWindowFocus: false,
+                    },
+                },
+            }),
+    );
+
     return (
         <ConnectionProvider endpoint={RPC_ENDPOINT}>
             <WalletProvider wallets={wallets} autoConnect>
-                <WalletModalProvider>{children}</WalletModalProvider>
+                <WalletModalProvider>
+                    <QueryClientProvider client={queryClient}>
+                        {children}
+                    </QueryClientProvider>
+                </WalletModalProvider>
             </WalletProvider>
         </ConnectionProvider>
     );

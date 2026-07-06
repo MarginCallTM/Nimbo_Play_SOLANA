@@ -8,6 +8,7 @@ import { Ticker } from "@/components/site/ticker";
 import { Header } from "@/components/site/header";
 import { Footer } from "@/components/site/footer";
 import { VaultPicker } from "@/components/vaults/vault-picker";
+import { LotteryDebug } from "@/components/vaults/lottery-debug";
 import { MyTicketsDashboard } from "@/components/vaults/my-tickets-dashboard";
 import { WinnerCta } from "@/components/vaults/winner-cta";
 import { FinishedRounds } from "@/components/vaults/finished-rounds";
@@ -53,6 +54,9 @@ export default function VaultsPage() {
             ticket, and enter the round in seconds.
           </p>
         </div>
+
+        {/* TEMP 10.9 debug — remove with 10.17 */}
+        <LotteryDebug />
 
         <VaultPicker />
         <MyTicketsDashboard />

@@ -398,18 +398,34 @@ PHASE 10 — FRONTEND NEXT.JS
              Rendu OK sur page.tsx (variantes Button + Card, couleur bleue appliquee).
 
   -- 10.B  PROVIDERS & CLIENT ANCHOR (plomberie web3 -- independant du visuel) --
-[ ] 10.4  lib/constants.ts: PROGRAM_ID, RPC devnet, round_id courant via env NEXT_PUBLIC_*.
-[ ] 10.5  providers.tsx ("use client"): ConnectionProvider + WalletProvider + WalletModalProvider
+[x] 10.4  lib/constants.ts: PROGRAM_ID, RPC devnet, round_id courant via env NEXT_PUBLIC_*.
+          (2026-07-04 : fait + .env.local ; new PublicKey() valide la base58 au chargement.)
+[x] 10.5  providers.tsx ("use client"): ConnectionProvider + WalletProvider + WalletModalProvider
           (Phantom/devnet), cable dans layout.tsx.
-[ ] 10.6  Bouton "Connect wallet" (hook useWallet): connexion + adresse tronquee + disconnect.
+          (2026-07-04 : fait ; wallets=[] volontaire, Wallet Standard auto-detecte les extensions.)
+[x] 10.6  Bouton "Connect wallet" (hook useWallet): connexion + adresse tronquee + disconnect.
           1er vrai usage d'un hook Solana.
-[ ] 10.7  lib/anchor.ts: copier l'IDL target/idl/lottery.json dans le front, construire l'objet
+          (2026-07-04 : fait ; garde d'hydratation "mounted" pour matcher le SSR, integre au header.)
+[x] 10.7  lib/anchor.ts: copier l'IDL target/idl/lottery.json dans le front, construire l'objet
           Program (VERIFIER la signature @coral-xyz/anchor 0.31.1), exposer via un hook useProgram.
+          (2026-07-04 : fait ; IDL + types copies dans src/lib/idl/ -- A RE-COPIER apres chaque
+          anchor build. Signature 0.30+ verifiee : new Program(idl as Lottery, provider), adresse
+          lue depuis idl.address + check de coherence avec PROGRAM_ID. Deux factories exportees
+          (getReadonlyProgram / getProgram) plutot qu'un hook -- le hook viendra avec 10.9 si utile.)
 
   -- 10.C  LECTURES ON-CHAIN --
-[ ] 10.8  Derivation des PDA cote front (lottery, vault) avec les MEMES seeds que le programme.
-[ ] 10.9  Lire le compte Lottery courant (account.lottery.fetch) -> pot, total_tickets, state,
+[x] 10.8  Derivation des PDA cote front (lottery, vault) avec les MEMES seeds que le programme.
+          (2026-07-06 : fait, src/lib/pda.ts -- u64 LE via DataView/BigInt, TextEncoder (pas de
+          polyfill Buffer). VERIFIE contre devnet : lottery + ticket #0 du round 1782381011
+          matchent les comptes on-chain reels.)
+[x] 10.9  Lire le compte Lottery courant (account.lottery.fetch) -> pot, total_tickets, state,
           end_timestamp, winner_index. Encapsule dans react-query (cache + refetch).
+          (2026-07-06 : fait -- @tanstack/react-query@5 installe, QueryClientProvider ajoute a
+          providers.tsx (useState initializer, staleTime 10s), hook src/hooks/use-lottery.ts
+          (fetchNullable + poll 30s, lecture SANS wallet). .env.local: ROUND_ID=1782381011 (round
+          Closed reel des smoke-tests devnet ; round_id=1 n'existe pas on-chain). Bloc debug TEMP
+          <LotteryDebug /> sur /vaults a supprimer en 10.17. Rappels: u64 -> BN (.toString()),
+          enum state -> objet {open:{}}, pot en lamports.)
 [ ] 10.10 Compte a rebours depuis end_timestamp + (si besoin) solde du vault pour le pot affiche.
 
   -- 10.D  ECRITURES (transactions signees) --
