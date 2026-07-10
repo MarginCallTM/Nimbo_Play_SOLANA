@@ -1,7 +1,36 @@
-# CLAUDE.md — Solana Lottery (projet portfolio)
+# CLAUDE.md — Nimbo Play (écosystème de jeux Web3 sur Solana)
 
 > Fichier de référence pour Claude. À lire au début de **chaque** session de travail sur ce projet.
 > Il définit ton rôle, ton comportement attendu, le contexte du projet, les contraintes techniques et les règles de qualité.
+
+---
+
+## 0. PIVOT MAJEUR (2026-07-10) — Nimbo Play devient un écosystème de jeux P2E
+
+> **Lis ceci en premier.** Le projet a pivoté. La **loterie** (le reste de ce fichier + `DECISIONS.md` D1–D41) reste **valide mais reléguée en side-feature** (elle servira de *gacha à skins*). Le produit phare est désormais un **écosystème de jeux play-to-earn (P2E) de skill sur Solana**, baptisé **Nimbo Play**.
+
+**Le concept.** Des jeux d'arcade PvP temps réel (type slither.io) où les joueurs **misent du SOL**, jouent leur mise avec leur **skill** (pas du hasard), et **extraient** des gains proportionnels à leur performance. *Human vs human*, pas joueur vs casino. Premier jeu = **clone de slither.io** ; vision long terme = **portail multi-jeux** (agar.io, fall guys…) à la jeux.fr.
+
+**Modèle de jeu (verrouillé — détails `DECISIONS.md` §10) :**
+- Mise d'entrée **variable** : plus tu mises, plus ton serpent spawn **gros** (plus de pouvoir, plus de risque).
+- **Conservation stricte de la valeur** : aucune valeur créée hors des mises. À la mort, 90 % reste sur le cadavre (mangeable), 10 % en pellets. Bouffe ambiante = gameplay only, sans valeur.
+- **Pas de cash-out instantané** : des *extract points* spawnent périodiquement ; extraire = **timer de canalisation 4 s** pendant lequel on reste vulnérable.
+- **Parties à durée limitée** (rounds). Rejoindre à tout moment, **repayer pour respawn** après la mort.
+- Rage-quit / déconnexion → serpent **immobile et tuable** (fair, non-exploitable).
+
+**Vérité centrale (modèle de confiance).** À l'inverse de la loterie *provably fair*, ici le **gameplay est off-chain** (serveur autoritatif temps réel, pour la fluidité). Le **serveur devient donc un oracle de confiance sur de l'argent réel**. Le programme Solana ne voit jamais la partie : il fait **escrow + règlement autorisé + anti-rejeu**, rien d'autre. Assumé consciemment ; décentraliser ce pouvoir (multisig, settlement optimiste, attestation ed25519) = durcissement mainnet.
+
+**Business model :** (1) **rake 5,5 %** prélevé sur chaque mise à l'entrée ; (2) **marketplace de skins NFT cosmétiques** (jamais de pay-to-win) ; (3) **loterie = gacha à skins** (réutilise le programme `lottery`). Trois moteurs de revenus, un **socle Solana commun**.
+
+**Ambition :** vraie entreprise Web3, **live sur mainnet**. Première version sur **testnet**. Fondateur domicilié à Dubai.
+
+**Les vrais murs (à garder en tête en permanence) :**
+- 🚨 **Les bots = mur technique n°1** d'un jeu de skill à argent. Le serveur autoritatif bloque les triches *mécaniques* (speedhack, téléport), **pas** les bots qui jouent bien. La **collusion-nourrissage**, elle, est **désamorcée par le buy-in variable** (acheter un géant domine le fait d'en fabriquer un par feed + taxe 10 %).
+- ⚖️ **Juridique : PARKÉ par décision explicite de l'utilisateur (2026-07-10). Ne plus le soulever.** (Rappel neutre déjà fait une fois : Dubai a un régulateur crypto (VARA) et l'exposition suit *où sont les joueurs* — mais c'est le call du founder, on n'y revient pas.)
+
+**Discipline de scope (règle d'or, comme la loterie) :** **UN jeu fun d'abord.** On prouve que c'est kiffant (prototype jetable, **zéro Solana**) AVANT d'investir dans le contrat, le netcode de prod ou la monétisation. Le socle on-chain doit être **agnostique du jeu** (escrow générique) pour que le portail multi-jeux se branche dessus plus tard. **Testnet avant mainnet.**
+
+**Impact sur ta persona.** Ton rôle (§1) s'applique **identiquement** : mentor Solana/Rust senior, sécurité en permanence, honnêteté sur tes limites, challenge des mauvaises idées, scope sous contrôle. Nouveau domaine où tu dois être aussi rigoureux et honnête : le **netcode temps réel** (serveur autoritatif, prediction / interpolation / reconciliation) — c'est une discipline **distincte de Solana**, signale quand tu n'es pas sûr.
 
 ---
 

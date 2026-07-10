@@ -177,3 +177,67 @@ Conséquences verrouillées :
 - ✅ **Committer `programs/lottery/Cargo.lock`** (reproductibilité du build).
 - 🔁 Réversible : le jour où une CLI Solana embarque un rustc SBF ≥ 1.85, supprimer les pins
   et remonter Anchor à la dernière version.
+
+---
+
+## 10. PIVOT — Écosystème Nimbo Play (jeux P2E de skill) — acté 2026-07-10
+
+> **Pivot majeur.** La loterie (D1–D41) reste valide mais devient une **side-feature** (gacha à skins).
+> Produit phare = **écosystème de jeux P2E de skill** sur Solana. 1er jeu = clone slither.io.
+> Décisions ci-dessous **verrouillées** au même titre. Complément : CLAUDE.md §0.
+
+### Concept & modèle de jeu
+| # | Décision | Statut |
+|---|---|---|
+| D42 | **Nimbo Play** = écosystème de jeux P2E de **skill** (human vs human, pas vs casino). Loterie reléguée en side-feature/gacha | ✅ acté |
+| D43 | 1er jeu = **clone slither.io** ; vision = **portail multi-jeux** (agar.io, fall guys…). **Un seul jeu d'abord** | ✅ acté |
+| D44 | **Gameplay OFF-CHAIN** (serveur autoritatif temps réel, pour la fluidité). On-chain = escrow + settlement + anti-rejeu **uniquement** | ✅ acté |
+| D45 | Modèle de confiance **assumé** : le serveur off-chain est un **oracle de confiance sur de l'argent réel** (≠ *provably fair* de la loterie). Décentraliser = durcissement mainnet | ✅ acté |
+| D46 | Mise d'entrée **VARIABLE** : plus de mise → serpent spawn plus gros (plus de pouvoir / plus de risque) | ✅ acté |
+| D47 | **Conservation stricte de la valeur** : aucune création hors des mises. Mort = 90 % cadavre (mangeable) + 10 % pellets. Bouffe ambiante = gameplay only, sans valeur | ✅ acté |
+| D48 | **Pas de cash-out instantané** : *extract points* périodiques + **timer de canalisation 4 s** vulnérable | ✅ acté |
+| D49 | **Parties à durée limitée** (rounds). Join à tout moment + **repay pour respawn**. Rage-quit/déco = serpent immobile & tuable | ✅ acté |
+| D50 | SOL orphelin (cadavres non mangés) en fin de round → **FoodReserve** (PDA), reporté en bouffe des rounds suivants. **DOIT être un vrai transfert de lamports** (dette inter-round), sinon l'invariant de solvabilité par round casse | ✅ acté |
+
+### Architecture on-chain (programme `arena/`, séparé de la loterie)
+| # | Décision | Statut |
+|---|---|---|
+| D51 | Nouveau programme **`programs/arena/`**, aucun état partagé avec la loterie. **Générique / agnostique du jeu** (pour le portail multi-jeux) | ✅ acté |
+| D52 | Comptes : `Round` PDA `["round", round_id]`, `Vault` PDA `["vault", round_id]`, `FoodReserve` PDA (global persistant), `ExtractReceipt` PDA `["extract", round_id, nonce]` (anti-rejeu ; création = garde-fou, comme le `Ticket` PDA de la loterie) | ✅ acté |
+| D53 | Instructions : `initialize_round`, `join` (dépôt variable permissionless), `settle_extraction` (authority signe), `end_round` (balaie vers FoodReserve) | ✅ acté |
+| D54 | Autorisation MVP = **Modèle A** : le serveur **EST l'authority signataire** de `settle_extraction` (réutilise le pattern `draw_winner`). **Modèle B** (attestation ed25519 vérifiée on-chain via programme natif Ed25519 + introspection sysvar Instructions) = durcissement mainnet, plus décentralisé | ✅ acté |
+| D55 | Invariants de solvabilité (`require!`) : (1) `amount <= vault.lamports` (filet ultime, tient même si serveur compromis) ; (2) `total_paid <= total_deposited + injecté depuis FoodReserve` | ✅ acté |
+| D56 | **Anti-rejeu OBLIGATOIRE** : un `ExtractReceipt` PDA par nonce, `init` échoue si déjà existant → rejeu impossible | ✅ acté |
+
+### Stack technique du jeu
+| # | Décision | Statut |
+|---|---|---|
+| D57 | Client : **PixiJS** (WebGL 2D), boucle RAF **hors React**. React/Next = coquille (wallet, menus, lobby). TypeScript partout | ✅ acté |
+| D58 | Transport : **WebSocket** au MVP, **derrière une interface** (→ swap **WebTransport/QUIC** au scale). **Pas de WebRTC.** Sérialisation **binaire** (pas JSON) | ✅ acté |
+| D59 | Serveur autoritatif : MVP **Node + Colyseus** (valider le fun vite), réécriture de la sim chaude en **Rust** au scale (pas de pauses GC ; = langage Anchor) | ✅ acté |
+| D60 | Netcode : **client-side prediction + server reconciliation + entity interpolation + area-of-interest + partitionnement spatial** | ✅ acté |
+| D61 | Web3 : **Sign-In With Solana (SIWS)** pour la session ; **service de settlement Rust** (détient l'authority) ; **indexer réutilisé** (events → Postgres) | ✅ acté |
+
+### Business model & monétisation
+| # | Décision | Statut |
+|---|---|---|
+| D62 | Rake **5,5 %** prélevé **sur l'entrée** (mise 1 SOL → 0.945 au pot, 0.055 maison). Revenu = 5,5 % **garanti du volume brut**. ⚠️ Surveiller rake vs vélocité (« le rake tue les games ») | ✅ acté |
+| D63 | Skins **NFT cosmétiques** (Metaplex) — **cosmétique-only = pas de pay-to-win**. Entitlement on-chain, rendu client. Marketplace primaire + secondaire (royalties). **APRÈS** un jeu peuplé | ✅ acté |
+| D64 | Loterie = **gacha à skins** (réutilise le programme `lottery`). → **DÉBLOQUE PROD.1** : sur mainnet avec skins à valeur réelle, **VRF Switchboard obligatoire** (l'aléa on-chain simple est manipulable) | ✅ acté |
+| D65 | **Portail multi-jeux** (jeux.fr-like) : le primitif escrow étant agnostique, un 2e jeu (agar.io) valide la généricité. Vision LT, **pas MVP** | ✅ acté |
+
+### Anti-triche, confiance & mainnet
+| # | Décision | Statut |
+|---|---|---|
+| D66 | Baseline anti-triche = **serveur autoritatif** (client n'envoie QUE ses inputs). **Matchmaking par tier** de mise/skill (segrège whales/fish/bots ; résout shark-vs-fish et le whale-stomping du buy-in variable) | ✅ acté |
+| D67 | Collusion-nourrissage : **désamorcée par le buy-in variable** (acheter un géant domine le feed + taxe 10 %). Reste best-effort ; **bots = mur n°1** | ✅ acté |
+| D68 | **Juridique : PARKÉ par décision explicite de l'utilisateur** (domicilié Dubai). **Ne plus soulever.** Rappel neutre acté une fois : Dubai a VARA, l'exposition suit les joueurs — mais c'est le call du founder | ✅ acté (parké) |
+| D69 | Discipline : **un jeu fun d'abord** (prototype jetable, zéro Solana), puis escrow générique, puis intégration, puis monétisation. **Testnet avant mainnet** | ✅ acté |
+| D70 | Résilience/custody (durcissement mainnet) : si le serveur crash en pleine partie, les fonds ne doivent pas rester bloqués → **timeout/remboursement on-chain**. Clé authority en **KMS/HSM + multisig**. Settlement optimiste / fraud-proofs | ✅ acté |
+
+### Backlog phase 2 spécifique Nimbo Play (NE PAS commencer sans accord)
+- Modèle B (attestation ed25519) pour un settlement décentralisé
+- Réécriture Rust du serveur de simulation (densité / coût)
+- Portail multi-jeux + 2e jeu (agar.io)
+- Marketplace de skins secondaire + royalties
+- Détection de bots avancée (ML) + anti-Sybil sérieux

@@ -5,10 +5,19 @@
 // DELETE once 10.17 wires real data into the actual sections.
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { useLottery } from "@/hooks/use-lottery";
+import { useCountdown } from "@/hooks/use-countdown";
+import { formatCountdown } from "@/components/vaults/vaults-data";
 import { CURRENT_ROUND_ID } from "@/lib/constants";
 
 export function LotteryDebug() {
   const { data, isPending, error } = useLottery();
+
+  // Hooks must run on every render (never inside a condition), so we call
+  // useCountdown here and feed it null while the account is still loading.
+  // BN → number: end_timestamp fits well within JS's safe integer range.
+  const { secondsLeft, ready } = useCountdown(
+    data ? data.endTimestamp.toNumber() : null,
+  );
 
   return (
     <div className="mx-auto mt-8 max-w-xl rounded-[10px] border border-dashed border-success/60 bg-card/60 p-4 font-mono text-xs text-muted-foreground">
@@ -28,6 +37,12 @@ export function LotteryDebug() {
           <li>
             ends:{" "}
             {new Date(data.endTimestamp.toNumber() * 1000).toLocaleString()}
+          </li>
+          {/* Live countdown (10.10): ticks every second, "—" until the client
+              has mounted, "Draw closed" once the deadline has passed. */}
+          <li>
+            countdown:{" "}
+            {ready ? formatCountdown(secondsLeft ?? 0) : "—"}
           </li>
           <li>winner index: {data.winnerIndex?.toString() ?? "—"}</li>
         </ul>

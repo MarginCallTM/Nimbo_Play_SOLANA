@@ -426,7 +426,17 @@ PHASE 10 — FRONTEND NEXT.JS
           Closed reel des smoke-tests devnet ; round_id=1 n'existe pas on-chain). Bloc debug TEMP
           <LotteryDebug /> sur /vaults a supprimer en 10.17. Rappels: u64 -> BN (.toString()),
           enum state -> objet {open:{}}, pot en lamports.)
-[ ] 10.10 Compte a rebours depuis end_timestamp + (si besoin) solde du vault pour le pot affiche.
+[x] 10.10 Compte a rebours depuis end_timestamp + (si besoin) solde du vault pour le pot affiche.
+          (2026-07-10 : fait -- hook src/hooks/use-countdown.ts. Countdown ABSOLU : recalcule
+          endTimestamp - now() a CHAQUE tick (pas un compteur decremente), donc auto-correcteur
+          si l'onglet dort + colle a l'horloge que la chaine applique. Garde SSR : secondsLeft=null
+          jusqu'au montage client (evite le hydration mismatch de Date.now()), flags ready/expired.
+          Demontre sur le vrai round via <LotteryDebug> (/vaults) : round 1782381011 est Closed
+          -> affiche "Draw closed" (branche expired validee en reel). Le tick seconde/seconde se
+          verra sur un round OUVERT (echeance future) une fois 10.13 fait.
+          DECISION scope : PAS de lecture du solde lamports du Vault -- le pot affiche = lottery.potAmount
+          (suivi on-chain, D9 : la chaine a tranche, on recopie). Lire le vault serait trompeur
+          (contient aussi le min rent-exempt, et vide apres payout alors que potAmount reste juste).)
 
   -- 10.D  ECRITURES (transactions signees) --
 [ ] 10.11 buy_ticket: methods.buyTicket()...rpc(), signature wallet, refetch apres confirmation.
@@ -546,4 +556,150 @@ PHASE 11 — INTÉGRATION DE BOUT EN BOUT & FINITIONS
 [ ] Dashboard de stats
 [ ] Déclenchement permissionless de draw_winner
 [ ] Déploiement mainnet (uniquement après audit interne sérieux)
+==============================================================
+
+
+
+
+==============================================================
+==============================================================
+  NIMBO PLAY — BRANCHE JEU P2E  (PIVOT 2026-07-10)
+  Produit phare : ecosysteme de jeux de SKILL a argent sur Solana.
+  1er jeu = clone slither.io. La loterie ci-dessus = side-feature / gacha.
+  Cf CLAUDE.md §0 + DECISIONS.md §10 (D42-D70).
+  REGLE D'OR : UN jeu FUN d'abord (prototype jetable, ZERO Solana) avant
+  d'investir contrat / netcode / monetisation. Le socle on-chain = AGNOSTIQUE
+  du jeu (escrow generique). Testnet avant mainnet.
+  Ordre : Fun -> Netcode autoritatif -> Escrow on-chain -> Integration ->
+          Anti-triche/matchmaking -> Monetisation -> Bloquants mainnet.
+==============================================================
+==============================================================
+
+
+--------------------------------------------------------------
+PHASE ARENA-0 — PROTOTYPE DE FUN  (jetable, ZERO Solana, ZERO reseau)
+  But : repondre a UNE question -> est-ce que le jeu est KIFFANT ?
+  Rien d'autre ne commence tant que ce n'est pas un OUI franc.
+--------------------------------------------------------------
+[ ] A0.1  Setup client : PixiJS + TypeScript, boucle requestAnimationFrame
+          HORS React (Pixi monte dans un ref, pas de re-render 60fps).
+[ ] A0.2  Boucle single-player : 1 serpent controlable (souris), camera qui
+          suit, map bornee, rendu fluide de milliers d'entites (sprites batches).
+[ ] A0.3  Bouffe ambiante (gameplay only, SANS valeur) : le serpent grossit
+          en mangeant ; gestion de la longueur / des segments.
+[ ] A0.4  Collisions : serpent vs bouffe (grossir), tete vs corps adverse (mort).
+          Partitionnement spatial (grille) DES le proto (O(n^2) = mort).
+[ ] A0.5  Bots basiques (IA simple) pour peupler l'arene et tester le ressenti PvP.
+[ ] A0.6  Mecanique de VALEUR mockee (pas de SOL) : taille = "valeur" affichee ;
+          extract points qui spawn periodiquement ; timer de canalisation 4s vulnerable.
+[ ] A0.7  Regle 90/10 a la mort : 90% de la valeur reste sur le cadavre (mangeable),
+          10% redistribue en pellets. Conservation visible a l'ecran.
+[ ] A0.8  Buy-in variable mocke : spawn plus gros si "mise" plus grande.
+==> JALON GO/NO-GO : PLAYTEST. Est-ce FUN ? Si non -> iterer le gameplay AVANT
+    d'ecrire la moindre ligne de Solana ou de netcode de prod.
+
+
+--------------------------------------------------------------
+PHASE ARENA-1 — SERVEUR AUTORITATIF & NETCODE  (toujours ZERO Solana)
+  But : multijoueur temps reel, serveur-autoritatif (= fondation anti-triche).
+  Le client n'envoie QUE ses inputs ; le serveur simule TOUT.
+--------------------------------------------------------------
+[ ] A1.1  Choix serveur MVP : Node + Colyseus (rooms autoritatives, schema
+          binaire, matchmaking de base). Types TS partages client/serveur.
+[ ] A1.2  Client = inputs seulement (direction, boost). ZERO calcul de
+          position / kill / taille cote client (base de l'anti-triche).
+[ ] A1.3  Tick de simulation fixe (~30Hz) DECOUPLE du broadcast (~15-20Hz).
+[ ] A1.4  Serialisation BINAIRE des snapshots (pas de JSON).
+[ ] A1.5  Netcode : client-side prediction (ton serpent bouge immediatement).
+[ ] A1.6  Netcode : entity interpolation (les autres serpents rendus ~100ms
+          dans le passe, lisses entre snapshots).
+[ ] A1.7  Netcode : server reconciliation (correction douce des ecarts de prediction).
+[ ] A1.8  Area of Interest : n'envoyer a chaque joueur que les entites proches.
+[ ] A1.9  Rage-quit / deconnexion : serpent immobile et tuable + fenetre de reconnexion.
+[ ] A1.10 Test multijoueur reel avec latence simulee ; stabilite d'une room sous charge.
+==> JALON : une room jouable, fluide, autoritative, a plusieurs. Toujours sans argent.
+
+
+--------------------------------------------------------------
+PHASE ARENA-2 — PRIMITIF D'ESCROW ON-CHAIN  (programme Anchor GENERIQUE)
+  But : le programme Solana, AGNOSTIQUE du jeu (reutilisable par le portail).
+  Reutilise a fond les patterns loterie (PDA, vault, CPI, has_one, anti-rejeu).
+  REGLE : pas de logique tant que les structs ne compilent pas (cf loterie phase 2).
+--------------------------------------------------------------
+[ ] A2.1  Nouveau programme programs/arena/ (separe, aucun etat partage loterie).
+[ ] A2.2  Structs SANS logique : Round PDA ["round", round_id], Vault PDA
+          ["vault", round_id], FoodReserve PDA (global persistant), ExtractReceipt
+          PDA ["extract", round_id, nonce]. Enum d'etat + erreurs custom + tailles (space).
+[ ] A2.3  initialize_round(round_id, end_ts, server_authority, ...) : ouvre le round,
+          injecte optionnellement depuis FoodReserve (VRAI transfert de lamports).
+[ ] A2.4  join(stake) : depot VARIABLE permissionless dans le Vault (buy-in),
+          rake 5.5% preleve a l'entree, event Joined. (= buy_ticket generalise.)
+[ ] A2.5  settle_extraction(round, player, amount, nonce) : authority SIGNE (modele A),
+          anti-rejeu via creation du ExtractReceipt PDA, garde amount <= vault.lamports.
+[ ] A2.6  end_round() : balaie le solde restant du Vault vers FoodReserve.
+[ ] A2.7  Events : Joined, Extracted, RoundEnded.
+[ ] A2.8  Tests Anchor (succes + ECHECS) : rejeu refuse, insolvabilite impossible,
+          mauvaise authority, round ferme, double-settle, buy-in variable coherent.
+[ ] A2.9  Prouver PAR TEST l'invariant de solvabilite : sum(payouts) <= depots + injecte.
+==> JALON : anchor test VERT sur arena. (Comme la loterie : rien d'integre avant ca.)
+
+
+--------------------------------------------------------------
+PHASE ARENA-3 — INTEGRATION SERVEUR <-> CHAINE  (settlement reel)
+--------------------------------------------------------------
+[ ] A3.1  Sign-In With Solana (SIWS) : authentifier la session sans tx ; lier wallet <-> partie.
+[ ] A3.2  Flux JOIN : le joueur depose (join tx) AVANT de spawn ; le serveur verifie
+          le depot on-chain (ou via l'indexer) avant d'autoriser l'entree.
+[ ] A3.3  Service de settlement en Rust : detient la cle authority (hot wallet au MVP),
+          ecoute les extractions du serveur de jeu, soumet settle_extraction.
+[ ] A3.4  Indexer arena (reutilise le pattern loterie) : events -> Postgres
+          (historique, soldes, resultats de rounds).
+[ ] A3.5  Gestion FoodReserve inter-rounds : report du SOL orphelin (transferts reels).
+[ ] A3.6  E2E TESTNET : join -> jouer -> extract -> payout confirme + reflete en DB.
+==> JALON : une partie complete a argent (testnet) de bout en bout.
+
+
+--------------------------------------------------------------
+PHASE ARENA-4 — ANTI-TRICHE & MATCHMAKING  (le vrai mur technique)
+  Bots = mur n1 d'un jeu de skill a argent. Travail CONTINU, jamais "fini".
+--------------------------------------------------------------
+[ ] A4.1  Revue : serveur autoritatif durci (aucune confiance au client) — audit.
+[ ] A4.2  Matchmaking par TIER de mise / skill (segrege whales / fish / bots ; resout
+          shark-vs-fish et le whale-stomping du buy-in variable).
+[ ] A4.3  Heuristiques de detection de bots (deplacements suspects) + shadow pool
+          (bot containment : suspects isoles entre eux sans le savoir).
+[ ] A4.4  Rate-limit d'entree + anti-Sybil best-effort.
+[ ] A4.5  Monitoring / alertes des derives economiques (extraction anormale, feeding).
+  NB : collusion-nourrissage DESAMORCEE par le buy-in variable (D67) ; reste best-effort.
+
+
+--------------------------------------------------------------
+PHASE ARENA-5 — MONETISATION  (APRES un jeu FUN et peuple)
+  Un skin ne vaut rien sans joueurs qui aiment le jeu. On empile APRES.
+--------------------------------------------------------------
+[ ] A5.1  Rake 5.5% integre au join (0.945 pot / 0.055 maison) + reporting du revenu.
+[ ] A5.2  Skins NFT cosmetiques (Metaplex Core) : entitlement on-chain, rendu client,
+          COSMETIQUE-ONLY (zero pay-to-win).
+[ ] A5.3  Marketplace primaire + secondaire (Tensor / Magic Eden), royalties.
+[ ] A5.4  Loterie = gacha a skins (reutilise le programme lottery).
+          -> DEBLOQUE PROD.1 : VRF Switchboard OBLIGATOIRE (skins a valeur reelle mainnet).
+[ ] A5.5  Portail multi-jeux (jeux.fr-like) : brancher un 2e jeu (agar.io) pour
+          valider la genericite du primitif escrow. Vision LT, pas MVP.
+
+
+==============================================================
+  /!\ NIMBO PLAY — BLOQUANT AVANT MAINNET (vraie valeur)  /!\
+  Rien de ceci n'est requis pour le MVP TESTNET, mais TOUT est
+  OBLIGATOIRE avant de toucher de la vraie valeur.
+==============================================================
+[ ] APROD.1  ANTI-BOT niveau production : le mur n1. Course a l'armement continue.
+[ ] APROD.2  CUSTODY : cle authority en KMS/HSM + MULTISIG ; passer au Modele B
+             (attestation ed25519 verifiee on-chain) + settlement optimiste / fraud-proofs.
+[ ] APROD.3  VRF Switchboard pour la loterie-gacha (aleatoire non manipulable).
+[ ] APROD.4  Audit securite serieux du programme arena (escrow = fonds reels).
+[ ] APROD.5  RESILIENCE : si le serveur crash en pleine partie, les fonds ne doivent
+             pas rester bloques -> mecanisme de timeout / remboursement ON-CHAIN.
+[ ] APROD.6  JURIDIQUE : PARKE par decision utilisateur (domicilie Dubai). Note, non traite
+             (cf D68). Ne pas re-soulever.
+[ ] APROD.7  INFRA SCALE : rooms / shards, orchestration (Agones/K8s), multi-region (latence).
 ==============================================================
