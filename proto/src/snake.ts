@@ -155,14 +155,23 @@ export function updateSnake(
         snake.tracers.pop();
     }
 
-    // 7) follow-the-leader (littensy approach): each tracer eases toward
-    //    the one ahead of it; alpha = distance traveled / spacing
+    // 7) follow-the-leader: each tracer eases toward where its leader
+    //    WAS at the start of this frame (pre-update position), NEVER
+    //    where it just moved. Chasing the already-updated position was
+    //    the "vanishing body" bug: with boost + one slow frame,
+    //    alpha hits 1 and every tracer lands on its updated leader in
+    //    a chain reaction — the whole body collapses onto the head in
+    //    a single tick (0px long, no render, no hitbox).
     const alpha = Math.min((speed * dt) / SNAKE_SPACING, 1);
-    let previous = snake.head;
+    let prevX = snake.head.x;
+    let prevY = snake.head.y;
     for (const tracer of snake.tracers) {
-        tracer.x += (previous.x - tracer.x) * alpha;
-        tracer.y += (previous.y - tracer.y) * alpha;
-        previous = tracer;
+        const keepX = tracer.x;
+        const keepY = tracer.y;
+        tracer.x += (prevX - tracer.x) * alpha;
+        tracer.y += (prevY - tracer.y) * alpha;
+        prevX = keepX;
+        prevY = keepY;
     }
 }
 
