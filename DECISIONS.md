@@ -194,7 +194,7 @@ Conséquences verrouillées :
 | D44 | **Gameplay OFF-CHAIN** (serveur autoritatif temps réel, pour la fluidité). On-chain = escrow + settlement + anti-rejeu **uniquement** | ✅ acté |
 | D45 | Modèle de confiance **assumé** : le serveur off-chain est un **oracle de confiance sur de l'argent réel** (≠ *provably fair* de la loterie). Décentraliser = durcissement mainnet | ✅ acté |
 | D46 | Mise d'entrée **VARIABLE** : plus de mise → serpent spawn plus gros (plus de pouvoir / plus de risque) | ✅ acté |
-| D47 | **Conservation stricte de la valeur** : aucune création hors des mises. Mort = 90 % cadavre (mangeable) + 10 % pellets. Bouffe ambiante = gameplay only, sans valeur | ✅ acté |
+| D47 | **Conservation stricte de la valeur** : aucune création hors des mises. Mort (rév. 2026-07-23) = **70 % cadavre** (loot du tueur, orbes sur le corps) + **30 % recyclé MAP-WIDE en pellets classiques** à prix unitaire fixe (offre ambiante auto-gérée + frein anti-snowball : 30 % de chaque kill échappe au tueur). Reliquat sub-pellet → cadavre (conservation exacte). ~~Bouffe ambiante = gameplay only, sans valeur~~ **Amendé par D71** : valeur **financée** (jamais mintée) | ✅ acté (rév. 70/30) |
 | D48 | **Pas de cash-out instantané** : *extract points* périodiques + **timer de canalisation 4 s** vulnérable | ✅ acté |
 | D49 | **Parties à durée limitée** (rounds). Join à tout moment + **repay pour respawn**. Rage-quit/déco = serpent immobile & tuable | ✅ acté |
 | D50 | SOL orphelin (cadavres non mangés) en fin de round → **FoodReserve** (PDA), reporté en bouffe des rounds suivants. **DOIT être un vrai transfert de lamports** (dette inter-round), sinon l'invariant de solvabilité par round casse | ✅ acté |
@@ -234,6 +234,11 @@ Conséquences verrouillées :
 | D68 | **Juridique : PARKÉ par décision explicite de l'utilisateur** (domicilié Dubai). **Ne plus soulever.** Rappel neutre acté une fois : Dubai a VARA, l'exposition suit les joueurs — mais c'est le call du founder | ✅ acté (parké) |
 | D69 | Discipline : **un jeu fun d'abord** (prototype jetable, zéro Solana), puis escrow générique, puis intégration, puis monétisation. **Testnet avant mainnet** | ✅ acté |
 | D70 | Résilience/custody (durcissement mainnet) : si le serveur crash en pleine partie, les fonds ne doivent pas rester bloqués → **timeout/remboursement on-chain**. Clé authority en **KMS/HSM + multisig**. Settlement optimiste / fraud-proofs | ✅ acté |
+
+### Économie des pellets (décision user 2026-07-23)
+| # | Décision | Statut |
+|---|---|---|
+| D71 | **Pellets ambiants à valeur FINANCÉE par les mises** : au `join`, split mise = **5,5 % rake (D62) + ~2 % pellet fund → FoodReserve + solde = valeur de spawn**. La FoodReserve a 2 affluents : ce % + le SOL orphelin (D50). **AUCUN pellet sans valeur** (raffiné 2026-07-23) : un pellet ne spawn que si la réserve peut le payer → réserve vide = **l'OFFRE se raréfie** (la map se vide), jamais de pellets menteurs. L'écran dit toujours la vérité : pellet visible = argent réel. Corollaire : le gros de la valeur au sol vient des **cadavres** (le trafic de joueurs EST l'afflux économique — simulé au proto par le churn des bots). Injections maison = **optionnelles, bornées, marketing** — JAMAIS structurelles (faucet = nourrir les bots). ⚠️ Pas une défense anti-bot : garder le % petit, le gros de la valeur reste dans les cadavres (PvP). Taux exact = curseur d'équilibrage | ✅ acté |
 
 ### Backlog phase 2 spécifique Nimbo Play (NE PAS commencer sans accord)
 - Modèle B (attestation ed25519) pour un settlement décentralisé

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>proto</title>
+  </head>
+  <body>
+    <!-- Launch menu (A0.7bis): DOM overlay above the canvas. The game
+         world runs behind it (spectator cam) until PLAY is clicked. -->
+    <div id="menu">
+      <div id="menu-card">
+        <h1>NIMBO ARENA</h1>
+        <p id="menu-status"></p>
+        <input id="pseudo" maxlength="16" placeholder="pseudo (optional)" autocomplete="off" />
+        <div id="stakes">
+          <button class="stake selected" data-stake="0">FREE</button>
+          <button class="stake" data-stake="0.10">0.10&#9678;</button>
+          <button class="stake" data-stake="0.25">0.25&#9678;</button>
+          <button class="stake" data-stake="0.50">0.50&#9678;</button>
+          <button class="stake" data-stake="1">1&#9678;</button>
+        </div>
+        <button id="play">PLAY</button>
+        <p id="menu-banked"></p>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

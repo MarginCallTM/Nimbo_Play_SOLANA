@@ -27,10 +27,30 @@
 
   Décisions encore OUVERTES (à trancher en cours de route) :
    - Cadence / placement des extract points (à régler au playtest ARENA-0).
-   - Formule serveur de "la valeur d'un joueur" (mise -> taille -> valeur).
+   - Formule serveur de "la valeur d'un joueur" — DEMI-TRANCHÉE (2026-07-23) :
+     le règlement se fait TOUJOURS sur le SCORE (registre comptable :
+     SOL -> score au join à taux fixe, conservation stricte en jeu,
+     score -> SOL à l'extraction au même taux). La TAILLE = f(score) est
+     un AFFICHAGE (describeSnakeFromScore), jamais une entrée du calcul
+     d'argent -> les courbes de croissance sont des curseurs d'équilibrage
+     librement réglables au playtest. Reste à fixer : le taux SOL<->score.
    - Modèle A vs B pour le settlement : A (serveur = authority signataire)
      RECOMMANDÉ pour le MVP, B (attestation ed25519) = durcissement mainnet.
      Les tâches A2.x/A3.x ci-dessous supposent le modèle A.
+
+  RÉFÉRENCE D'ÉTUDE (choisie le 2026-07-23) : littensy/slither
+   https://github.com/littensy/slither  (MIT, maintenu, TS)
+   /!\ Jeu ROBLOX (roblox-ts -> Luau) : PAS une base de code (rien ne
+   tourne en navigateur) -> on ÉTUDIE l'approche, on ÉCRIT notre code.
+   Intérêt : architecture = exactement notre cible (simulation autoritative
+   serveur, client = rendu seul, types partagés, tests + bench du tick).
+   Correspondances (à lire AVANT d'implémenter chaque étape) :
+    - A0.2/A0.3 mouvement & segments -> src/server/world/services/snakes/snake-tick.ts
+    - A0.4 collisions + grille       -> snakes/snake-grid.ts + collision/collision-tick.ts
+    - A0.5 bots                      -> src/server/bots/bot-behavior.ts
+    - ARENA-1 tick serveur & perfs   -> world.server.ts + test/world/world-tick.bench.ts
+   REJETÉ : knagaitsev/slither.io-clone (AUCUNE licence = inexploitable
+   légalement ; Phaser 2.6 abandonné 2018 ; client-only). Ne pas y revenir.
 
 
 --------------------------------------------------------------
@@ -38,20 +58,106 @@ PHASE ARENA-0 — PROTOTYPE DE FUN  (jetable, ZÉRO Solana, ZÉRO réseau)
   But : répondre à UNE question -> est-ce que le jeu est KIFFANT ?
   Rien d'autre ne commence tant que ce n'est pas un OUI franc.
 --------------------------------------------------------------
-[ ] A0.1  Setup client : PixiJS + TypeScript, boucle requestAnimationFrame
+[x] A0.1  Setup client : PixiJS + TypeScript, boucle requestAnimationFrame
           HORS React (Pixi monté dans un ref, pas de re-render 60fps).
-[ ] A0.2  Boucle single-player : 1 serpent contrôlable (souris), caméra qui
+          -> FAIT (2026-07-23) : proto/ scaffoldé (Vite vanilla-ts, npm), pixi.js v8,
+             boucle ticker + deltaTime validée (balle fluide plein écran).
+[x] A0.2  Boucle single-player : 1 serpent contrôlable (souris), caméra qui
           suit, map bornée, rendu fluide de milliers d'entités (sprites batchés).
-[ ] A0.3  Bouffe ambiante (gameplay only, SANS valeur) : le serpent grossit
-          en mangeant ; gestion de la longueur / des segments.
-[ ] A0.4  Collisions : serpent vs bouffe (grossir), tête vs corps adverse (mort).
+          + BOOST (clic maintenu = vitesse x2 ; réf littensy SNAKE_BOOST_SPEED).
+          -> FAIT (2026-07-23) : serpent souris (angle/desiredAngle, braquage
+             borné), follow-the-leader par lerp, caméra container, bordure
+             glissante, boost clic/espace. Sprites batchés -> validés en A0.3.
+          -> NB : validé au feel utilisateur ; le "rendu de milliers
+             d'entités" sera réellement prouvé avec les pellets (A0.3).
+[x] A0.3  Bouffe ambiante (gameplay only, SANS valeur) : le serpent grossit
+          en mangeant ; introduit la variable SCORE dont tout dérive
+          (longueur/rayon/turn speed, réf describeSnakeFromScore).
+          + COÛT GAMEPLAY DU BOOST (même step, c'est la boucle complète) :
+            sprint = score qui baisse + traînée d'orbes mangeables semées
+            à la queue (réf dropCandyWhileBoosting) + PLANCHER : à la
+            taille de base le sprint se coupe (réf snakeIsBoosting).
+          La SÉMANTIQUE DE VALEUR de ces orbes (mock SOL, conservation
+          exacte) reste en A0.6/A0.7.
+          -> FAIT (2026-07-23, validé playtest) : grille spatiale (grid.ts),
+             1000 pellets en sprites batchés 1 texture (food.ts), score ->
+             describeSnakeFromScore (longueur/rayon/braquage), drain boost
+             par quanta d'orbes 1.5 (conservation exacte, plancher OK),
+             aimant 25px, HUD score/length/fps. Le corps du serpent reste
+             un Graphics par frame : à passer en sprites si le FPS plie.
+[x] A0.4  Collisions : serpent vs bouffe (grossir), tête vs corps adverse (mort).
           Partitionnement spatial (grille) DÈS le proto (O(n^2) = mort).
-[ ] A0.5  Bots basiques (IA simple) pour peupler l'arène et tester le ressenti PvP.
-[ ] A0.6  Mécanique de VALEUR mockée (pas de SOL) : taille = "valeur" affichée ;
+          -> FAIT (2026-07-23, validé playtest) : collision.ts (grille des
+             segments REBUILD par frame, broad/narrow phase), règles slither
+             (tête vs corps adverse = mort, bordure mortelle, se croiser
+             soi-même légal, tête-à-tête = double mort), cadavre = score
+             entier semé en orbes couleur du mort (conservation exacte),
+             main.ts restructuré multi-serpents (entités {snake,gfx}).
+[x] A0.5  Bots basiques (IA simple) pour peupler l'arène et tester le ressenti PvP.
+          -> FAIT (2026-07-23, validé playtest) : bot.ts, priority steering
+             (1 survivre > 2 manger > 3 errer), perception via les MÊMES
+             grilles spatiales (probe devant la tête, vision bouffe 400px),
+             6 bots (palettes distinctes), score de spawn aléatoire 20-80
+             (embryon du buy-in variable), respawn auto. Tuning post-
+             playtest : courbes score->taille ralenties et sorties en
+             constantes (GROWTH_LENGTH_PER_SCORE 0.3, GROWTH_RADIUS_FACTOR
+             0.02) — principe acté : la VALEUR (score) est sacrée, la
+             TAILLE n'est que son affichage.
+[x] A0.6  Mécanique de VALEUR mockée (pas de SOL) : taille = "valeur" affichée ;
           extract points qui spawn périodiquement ; timer de canalisation 4s vulnérable.
-[ ] A0.7  Règle 90/10 à la mort : 90% de la valeur reste sur le cadavre (mangeable),
-          10% redistribué en pellets. Conservation visible à l'écran.
-[ ] A0.8  Buy-in variable mocké : spawn plus gros si "mise" plus grande.
+          -> FAIT (2026-07-23, validé playtest) : extract.ts (machine à états
+             cooldown/actif/fermé ; événements one-frame spawned/extracted/
+             detonated vs états continus), canalisation 4s PUREMENT SPATIALE
+             (sortir = hard reset), cash-out = la valeur QUITTE l'arène (pas
+             de cadavre). Itérations post-playtest : map x2.25 (rayon 3000),
+             minimap slither (joueur + extract SEULEMENT, fog of war), banner
+             d'alerte au spawn, chrono à l'écran, fermeture façon BOMBE
+             (3 clignotements rouges + gonflement) qui TUE quiconque est
+             dans la zone (mort normale -> loot sur place). Étiquettes de
+             valeur mock-◎ au-dessus de chaque serpent.
+[x] A0.7  Règle de mort — RÉVISÉE (user, 2026-07-23) : 70% de la valeur reste
+          sur le cadavre (loot du tueur), 30% RECYCLÉ MAP-WIDE en pellets
+          classiques à prix unitaire fixe (offre ambiante auto-gérée par
+          l'activité mortelle + frein anti-snowball). Reliquat sub-pellet
+          -> cadavre (conservation exacte). Conservation visible à l'écran.
+          (Version initiale 90/10 avec scatter local : remplacée.)
+          + SÉMANTIQUE DE VALEUR (dette d'A0.3/A0.6, tranchée ici) : séparer
+          SCORE (croissance gameplay, gagné sur TOUTE bouffe) et VALUE
+          (mock-SOL, conservée). DÉCISION USER 2026-07-23 (amende le
+          "bouffe ambiante sans valeur" du CLAUDE.md §0) : la bouffe
+          ambiante nourrit AUSSI la value, mais FINANCÉE par une réserve
+          finie (mock de la FoodReserve PDA d'A2.2/A2.6 : SOL orphelin
+          balayé entre rounds + injections maison) — jamais mintée du
+          néant, sinon sum(extractions) > sum(dépôts) = INSOLVABLE.
+          RAFFINÉ (user, 2026-07-23) : AUCUN pellet sans valeur — un
+          pellet ne spawn que si la réserve le paie ; réserve vide =
+          l'OFFRE se raréfie (respawn sauté, map qui se vide). L'afflux
+          vient du trafic : churn des bots (durée de vie 30-90s -> crash,
+          cadavre 90/10, nouvelle mise au respawn). Invariant HUD :
+          arena + banked + reserve = constante + buy-ins.
+[x] A0.7bis MENU DE LANCEMENT (idée user 2026-07-23, validée — confort de
+          test + socle produit) : écran simple par-dessus le canvas (overlay
+          DOM, pas de UI Pixi) — pseudo optionnel (affiché au-dessus du
+          serpent), bouton JOUER. À la mort : retour menu + "rejouer"
+          (préfigure le "repayer pour respawn"). FUSIONNE avec A0.8 : c'est
+          sur cet écran que vit la mise (boutons présélectionnés).
+          TIERS (user, 2026-07-23) : FREE / 0.10 / 0.25 / 0.50 / 1 SOL.
+          FREE = taille fictive, valeur 0 ; dans le proto le worth mangé
+          RETOURNE à la réserve (pas de passager clandestin). /!\ EN PROD :
+          le mode free vit sur un SERVEUR SÉPARÉ (arène sans argent) —
+          jamais mélangé aux arènes payantes (free-rider = faucet à bots).
+[x] A0.8  Buy-in variable mocké : spawn plus gros si "mise" plus grande.
+          -> FAIT (2026-07-23) : mise brute -> taille (score = stake/taux),
+             valeur nette après split D71. Tiers : FREE / 0.10 / 0.25 /
+             0.50 / 1 SOL. Bots recalibrés sur les mêmes tiers (0.10-0.60).
+[x] A0.x  DURCISSEMENTS POST-PLAYTEST (2026-07-23, validés) :
+          - Grâce de spawn 3s (translucide, intangible, immortel, ne
+            ramasse rien) -> fix des spawnkills du churn.
+          - Clamp du deltaTime (MAX_DT=3) -> fix du tunneling des têtes
+            à travers les corps lors des micro-freezes. Leçon ARENA-1 :
+            le serveur aura un tick FIXE pour la même raison.
+          - Rendu des serpents en SPRITES batchés (1 texture partagée)
+            -> fix des frames blanches du gros Graphics + perfs.
 ==> JALON GO/NO-GO : PLAYTEST. Est-ce FUN ? Si non -> itérer le gameplay AVANT
     d'écrire la moindre ligne de Solana ou de netcode de prod.
 
@@ -90,7 +196,8 @@ PHASE ARENA-2 — PRIMITIF D'ESCROW ON-CHAIN  (programme Anchor GÉNÉRIQUE)
 [ ] A2.3  initialize_round(round_id, end_ts, server_authority, ...) : ouvre le round,
           injecte optionnellement depuis FoodReserve (VRAI transfert de lamports).
 [ ] A2.4  join(stake) : dépôt VARIABLE permissionless dans le Vault (buy-in),
-          rake 5.5% prélevé à l'entrée, event Joined. (= buy_ticket généralisé.)
+          SPLIT (D71) : rake 5.5% -> maison + ~2% pellet fund -> FoodReserve
+          + solde = valeur de spawn. Event Joined. (= buy_ticket généralisé.)
 [ ] A2.5  settle_extraction(round, player, amount, nonce) : authority SIGNE (modèle A),
           anti-rejeu via création du ExtractReceipt PDA, garde amount <= vault.lamports.
 [ ] A2.6  end_round() : balaie le solde restant du Vault vers FoodReserve.
@@ -143,6 +250,15 @@ PHASE ARENA-5 — MONÉTISATION  (APRÈS un jeu FUN et peuplé)
           -> DÉBLOQUE PROD.1 : VRF Switchboard OBLIGATOIRE (skins à valeur réelle mainnet).
 [ ] A5.5  Portail multi-jeux (jeux.fr-like) : brancher un 2e jeu (agar.io) pour
           valider la généricité du primitif escrow. Vision LT, pas MVP.
+[ ] A5.6  IDÉE À TRANCHER (2026-07-23, pas un engagement) : "boost fee" —
+          une part de la valeur drainée par le sprint est conservée en fees
+          au lieu d'être resemée en orbes. Techniquement trivial (le serveur
+          est le comptable ; matérialisation au end_round via split treasury,
+          cf A2.6). /!\ DOIT être AFFICHÉE et documentée, jamais invisible :
+          une fee cachée est mesurable par les joueurs (taux de drop vs
+          drain) et sa découverte détruit la confiance — contraire au
+          pilier "conservation visible" (A0.7). Évaluer le rake total
+          effectif (entrée 5.5% + boost) avant d'empiler.
 
 
 ==============================================================

@@ -1,0 +1,105 @@
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden; /* pas de scrollbars autour du canvas plein ecran */
+  background: #0b1020;
+}
+
+canvas {
+  display: block; /* inline par defaut -> laisse un liseret blanc en bas */
+}
+
+/* --- launch menu (A0.7bis) --- */
+#menu {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 16, 32, 0.75);
+  font-family: monospace;
+  z-index: 10;
+}
+#menu.hidden {
+  display: none;
+}
+#menu-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 32px 40px;
+  background: #101830;
+  border: 1px solid #4a5578;
+  border-radius: 12px;
+  color: #e2e8f0;
+  text-align: center;
+  min-width: 320px;
+}
+#menu-card h1 {
+  font-size: 28px;
+  letter-spacing: 4px;
+  color: #3981f6;
+}
+#menu-status {
+  color: #8fa0c0;
+  font-size: 14px;
+  min-height: 1em;
+}
+#pseudo {
+  padding: 10px 12px;
+  background: #0b1020;
+  border: 1px solid #4a5578;
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-family: monospace;
+  font-size: 14px;
+  outline: none;
+  text-align: center;
+}
+#pseudo:focus {
+  border-color: #3981f6;
+}
+#stakes {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.stake {
+  padding: 10px 12px;
+  background: #0b1020;
+  border: 1px solid #4a5578;
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-family: monospace;
+  font-size: 14px;
+  cursor: pointer;
+}
+.stake.selected {
+  border-color: #39f68f;
+  color: #39f68f;
+}
+#play {
+  padding: 12px;
+  background: #3981f6;
+  border: none;
+  border-radius: 8px;
+  color: #ffffff;
+  font-family: monospace;
+  font-size: 16px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  cursor: pointer;
+}
+#play:hover {
+  background: #2b6fd6;
+}
+#menu-banked {
+  color: #39f68f;
+  font-size: 13px;
+}

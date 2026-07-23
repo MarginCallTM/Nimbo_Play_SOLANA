@@ -13,7 +13,7 @@
 
 **Modèle de jeu (verrouillé — détails `DECISIONS.md` §10) :**
 - Mise d'entrée **variable** : plus tu mises, plus ton serpent spawn **gros** (plus de pouvoir, plus de risque).
-- **Conservation stricte de la valeur** : aucune valeur créée hors des mises. À la mort, 90 % reste sur le cadavre (mangeable), 10 % en pellets. Bouffe ambiante = gameplay only, sans valeur.
+- **Conservation stricte de la valeur** : aucune valeur créée hors des mises. À la mort (rév. 2026-07-23), **70 %** reste sur le cadavre (mangeable) et **30 % est recyclé map-wide en pellets classiques** — l'offre ambiante s'auto-alimente par l'activité mortelle, et 30 % de chaque kill échappe au tueur (frein anti-snowball). Bouffe ambiante : nourrit la taille ET porte une petite valeur **tirée de la FoodReserve**, alimentée par (1) **~2 % de chaque mise au `join`** (split : 5,5 % rake + 2 % pellet fund + solde = valeur de spawn) et (2) le **SOL orphelin** balayé en fin de round (D50). Jamais mintée du néant, et **aucun pellet sans valeur** : un pellet ne spawn que si la réserve peut le payer — réserve vide, **l'offre se raréfie** (pellet visible = argent réel, toujours). Le gros de la valeur au sol vient des **cadavres** : le trafic de joueurs est l'afflux économique. Injections maison = optionnelles/bornées (marketing), jamais structurelles. ⚠️ Un % trop haut = revenu sans-combat **botable** ; le gros de la valeur doit rester dans les cadavres. *(D71, amendé 2026-07-23 ; version initiale : « bouffe ambiante sans valeur ».)*
 - **Pas de cash-out instantané** : des *extract points* spawnent périodiquement ; extraire = **timer de canalisation 4 s** pendant lequel on reste vulnérable.
 - **Parties à durée limitée** (rounds). Rejoindre à tout moment, **repayer pour respawn** après la mort.
 - Rage-quit / déconnexion → serpent **immobile et tuable** (fair, non-exploitable).
@@ -132,6 +132,7 @@ Frontend (Next.js + wallet)  --RPC-->  Solana devnet (programme Anchor)
 - L'aléatoire on-chain simple est **manipulable par un validateur** : c'est explicitement documenté comme acceptable en devnet uniquement, à remplacer par VRF avant tout usage réel. Le rappeler à chaque fois que le sujet revient.
 
 **Qualité de code :**
+- **Langue (règle 2026-07-23) : TOUT le code généré est en ANGLAIS** — commentaires, docstrings, identifiants, messages d'erreur, logs. Les explications pédagogiques dans le chat restent en français. Vaut pour toutes les couches (on-chain, backend, front, proto).
 - Code commenté là où un concept est non évident, pas de commentaire bruit.
 - Tests pour chaque instruction, y compris les cas d'échec (acheter un ticket sur un round fermé, claim par un non-gagnant, etc.).
 - Pas de `unwrap()` sauvage dans le code on-chain : gestion d'erreur explicite avec des erreurs Anchor custom.
