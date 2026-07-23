@@ -1,705 +1,279 @@
 ==============================================================
-  TODO — MVP LOTERIE SOLANA
-  POINT DE DÉPART : reprise du repo MarginCallTM/Solana_Loto_Rust
-    -> backend Rust/Axum + Postgres DÉJÀ EXISTANT (à reprendre)
-    -> programme on-chain Anchor : À CONSTRUIRE (n'existe pas encore)
-  Ordre : Prise en main -> Programme + tests -> Réconcilier backend -> Frontend
-  Règle d'or : on ne passe au frontend que quand `anchor test` est VERT.
-  Réseau : devnet uniquement.
 ==============================================================
-
-
---------------------------------------------------------------
-PHASE A — PRISE EN MAIN DE L'EXISTANT (reprise de repo)
---------------------------------------------------------------
-[x] A.1  Cloner le repo, lire l'arborescence, faire tourner `cargo build`
-[x] A.2  Cartographier l'archi : models / db/repositories / api/handlers / dto
-[x] A.3  Lire le schéma SQL (migrations) et le comprendre table par table
-[x] A.4  Lister ce qui marche vs. ce qui est vide (handlers d'API incomplets)
-[x] A.5  Noter les scories à corriger (ex: "UPDATE Lotteries" casse, typos commentaires)
-         -> repere aussi: api/utils non declares dans main.rs (code mort non compile),
-            handlers/lottery.rs casse (ApiReponse, Uuid::nul(), BadRequest 2 args)
-[x] A.6  Identifier l'écart d'archi : DB écrite en direct vs. modèle indexer/events (D9bis)
-[x] A.7  Décider quoi garder / refactorer / supprimer ; documenter la décision
-         -> garder le backend pour phases 8-10, refactor vers indexer/events plus tard
-
-
---------------------------------------------------------------
-PHASE 0 — ENVIRONNEMENT & OUTILLAGE
---------------------------------------------------------------
-[x] 0.1  Installer Rust (rustup) + cible/toolchain à jour            (1.95 systeme / 1.84.1 SBF)
-[x] 0.2  Installer la Solana CLI ; vérifier `solana --version`       (3.0.13 Agave)
-[x] 0.3  Installer Anchor (via avm) ; vérifier `anchor --version`    (0.31.1 - cf D41)
-[x] 0.4  Installer Node.js + un gestionnaire de paquets (pnpm/yarn/npm)  (node 24.10 + yarn 1.22)
-[ ] 0.5  Configurer la CLI sur devnet (`solana config set --url devnet`)
-         -> NON FAIT: on teste en localnet pour l'instant; devnet au moment du deploiement (7.7)
-[ ] 0.6  Générer un wallet de dev ; l'airdrop en SOL devnet
-         -> A CONFIRMER: wallet payeur ~/.config/solana/id.json (necessaire pour anchor test)
-[x] 0.7  Vérifier le .gitignore existant (target/, node_modules/, .env, keypairs)
-[x] 0.8  Placer CLAUDE.md, TODO.txt, DECISIONS.md à la racine du repo
-[x] 0.9  Remplir la section "versions réelles" de DECISIONS.md (§9)
-
-
---------------------------------------------------------------
-PHASE 1 — INTÉGRER ANCHOR AU WORKSPACE EXISTANT
---------------------------------------------------------------
-[x] 1.1  Ajouter un dossier `programs/lottery/` à côté du `backend/` existant
-[x] 1.2  Décider : workspace Cargo unique (backend + programme) vs. Anchor séparé
-         -> CHOIX: Anchor separe; programme EXCLU du workspace racine (exclude = ["programs"])
-[x] 1.3  Comprendre Anchor.toml (programmes, réseau, wallet, scripts)
-[x] 1.4  Comprendre le Cargo.toml du programme (anchor-lang) sans casser le workspace existant
-[x] 1.5  Vérifier que `anchor build` ET `cargo build` (backend) passent côte à côte
-         -> a necessite downgrade Anchor 0.31.1 + pins de deps (cf D41 / agave#8443)
-         -> effet de bord exclusion: le .so sort dans programs/lottery/target/ (pas target/ racine)
-[x] 1.6  Vérifier que le test Anchor de base passe (`anchor test`)  -> VERT (1 passing, ping ok)
-         -> fait: aligne @coral-xyz/anchor@0.31.1 (JS) ; wallet payeur OK ; .so redirige vers
-            target/ racine via .cargo/config.toml ; deplace deploy.ts -> migrations/ (racine)
-[x] 1.7  Arborescence cible : programs/ tests/ backend/(existant) app/ + migrations existantes
-
-
---------------------------------------------------------------
-PHASE 2 — MODÈLE DE DONNÉES ON-CHAIN (structs, pas de logique)
---------------------------------------------------------------
-[x] 2.1  Définir le compte `Lottery` (round_id, authority, ticket_price,
-         total_tickets, state, winner_index, pot_amount, end_timestamp, claimed, bumps)
-[x] 2.2  Définir l'enum `LotteryState` (Open / Drawing / Closed)
-[x] 2.3  Définir le compte `Ticket` (round_id, buyer, index, bump)
-[x] 2.4  Définir le PDA `Vault` (porte-monnaie, seeds ["vault", round_id])
-         -> pas de struct: ne detient que des lamports (D39)
-[x] 2.5  Calculer la taille (space) de chaque compte ; documenter le calcul
-         -> Lottery::LEN = 93 o, Ticket::LEN = 57 o (8 discriminator + champs Borsh)
-[x] 2.6  Définir les seeds/bumps de chaque PDA et les documenter
-         -> constantes LOTTERY_SEED / VAULT_SEED / TICKET_SEED (anti-typo)
-[x] 2.7  Définir les erreurs custom (#[error_code]) prévisibles  -> enum LotteryError (9 variants)
-[x] 2.8  `anchor build` OK avec les structs (toujours sans logique)
-         -> VERT (exit 0); seul warning = realloc deprecated, vient de la macro Anchor (inoffensif)
-
-
---------------------------------------------------------------
-PHASE 3 — INSTRUCTION : initialize_lottery
---------------------------------------------------------------
-[x] 3.1  Définir le contexte de comptes (Accounts) + contraintes (init, seeds, payer)
-[x] 3.2  Implémenter : set authority, ticket_price, end_timestamp (now + durée)
-         -> checked_add + ok_or(MathOverflow) ; require!(duration > 0)
-[x] 3.3  Initialiser state=Open, total_tickets=0, pot_amount=0, winner_index=None, claimed=false
-[x] 3.4  Initialiser le Vault PDA
-         -> PAS d'init: financement paresseux au 1er buy_ticket (D20bis, bug Anchor init+SystemAccount)
-            on declare juste le vault pour stocker ctx.bumps.vault
-[x] 3.5  Émettre un event LotteryInitialized (round_id, authority, ticket_price, end_timestamp)
-[x] 3.6  Tests : création OK ; durée invalide rejetée ; double init rejeté  -> 4 passing
-         -> NB: lancer les tests via `make test` (exporte CARGO_TARGET_DIR vers target/ racine)
-            sinon anchor deploie un .so perime (effet de bord exclude workspace)
-
-
---------------------------------------------------------------
-PHASE 4 — INSTRUCTION : buy_ticket
---------------------------------------------------------------
-[x] 4.1  Contexte de comptes (Lottery, Vault, Ticket à créer, buyer signer)
-         -> seeds derives des champs du compte (lottery.round_id, .bump, .vault_bump)
-            Ticket seede par l'index global lottery.total_tickets (D21bis)
-[x] 4.2  Garde temporelle : refuser si now >= end_timestamp  -> SalesEnded
-[x] 4.3  Garde d'état : refuser si state != Open  -> LotteryNotOpen
-[x] 4.4  Transférer ticket_price (SOL) du buyer vers le Vault (CPI System Program)
-         -> CpiContext::new + anchor_lang::system_program::transfer
-[x] 4.5  Créer le Ticket PDA avec index = total_tickets courant
-[x] 4.6  Incrémenter total_tickets et pot_amount (checked arithmetic)
-[x] 4.7  Émettre l'event TicketBought (round_id, buyer, index)
-[x] 4.8  Tests : achat OK ; achat après échéance rejeté ; fonds insuffisants ;
-         état du Vault et compteurs cohérents après N achats  -> 8 passing
-         -> test echeance: round duration=1s + sleep(2s) ; test fonds: airdrop 0.01 SOL < prix 0.1
-
-
---------------------------------------------------------------
-PHASE 5 — INSTRUCTION : draw_winner  (aléatoire isolé)
---------------------------------------------------------------
-[x] 5.1  Contexte : Lottery + authority (Signer, has_one = authority)
-         -> has_one = authority @ LotteryError::Unauthorized (erreur dediee ajoutee)
-[x] 5.2  Garde temporelle : refuser si now < end_timestamp  -> TooEarlyToDraw
-[x] 5.3  Garde d'état : refuser si state != Open ; transition directe Open -> Closed
-         -> Drawing reste defini dans l'enum mais inutilise au MVP (utile pour VRF async phase 2)
-[x] 5.4  Cas limite : 0 ticket vendu -> fermer sans gagnant (winner_index=None), ne pas planter
-         -> if total_tickets == 0 (evite un modulo par zero)
-[x] 5.5  Fonction d'aléatoire ISOLÉE pseudo_random_index(total_tickets, now)
-         -> slot + timestamp + total_tickets, renvoie un index dans [0, total_tickets[
-[x] 5.6  Stocker winner_index=Some(index) ; documente EN GROS comme MANIPULABLE
-         (devnet uniquement, remplacer par VRF -> cf PROD.1)
-[x] 5.7  Émettre l'event WinnerDrawn (round_id, winner_index: Option<u64>)
-[x] 5.8  Tests : tirage avant échéance rejeté ; non-authority rejeté ;
-         double tirage rejeté ; cas 0 ticket ; index dans les bornes  -> 13 passing
-
-
---------------------------------------------------------------
-PHASE 6 — INSTRUCTION : claim_prize
---------------------------------------------------------------
-[x] 6.1  Contexte : Lottery, Vault, Ticket gagnant, winner (recipient), payer signer
-         -> RENOMME en `payout` (modele PUSH, cf D26) ; recipient force == ticket.buyer
-[x] 6.2  Vérifier state == Closed  -> LotteryNotClosed
-[x] 6.3  Vérifier que le Ticket présenté correspond bien au winner_index  -> NotTheWinner
-         -> + winner_index doit etre Some sinon NoWinner (cas 0 ticket)
-[x] 6.4  Vérifier que le recipient == buyer du ticket gagnant  -> address = ticket.buyer
-[x] 6.5  Transférer le pot du Vault vers le gagnant (signer seeds du PDA)
-         -> CpiContext::new_with_signer + signer_seeds [VAULT_SEED, round_id, vault_bump]
-[x] 6.6  Marquer le prix comme réclamé (anti double-claim)  -> claimed=true AVANT transfert (CEI)
-[x] 6.7  Émettre l'event PrizeClaimed (round_id, winner, amount)
-[x] 6.8  Tests : payout OK ; mauvais destinataire rejeté ; double-payout rejeté ;
-         payout avant tirage rejeté ; solde du gagnant correct apres payout  -> 17 passing
-         -> fee payer != winner (sinon le gagnant paie les frais et le delta != pot)
-         -> attente d'echeance via waitUntilExpired (horloge ON-CHAIN, pas sleep) = tests stables
-         -> cas 0 ticket / NoWinner non teste isolement: impossible de fournir un ticket gagnant
-            quand 0 vendu (contraintes de comptes rejettent avant); couvert par 5.x (draw sans gagnant)
-
-
---------------------------------------------------------------
-PHASE 7 — DURCISSEMENT & REVUE SÉCURITÉ DU PROGRAMME
---------------------------------------------------------------
-[x] 7.1  Revue : toutes les contraintes de comptes (owner, seeds, signer)  -> OK
-         -> faux compte impossible (discriminator + seeds + bump) ; vault/ticket epingles a lottery ;
-            payout: address = ticket.buyer empeche de detourner le pot (modele push)
-[x] 7.2  Revue : aucune arithmétique nue sur les lamports (checked_*)  -> OK
-         -> seul wrapping_* = pseudo_random_index (brassage de bits, volontaire)
-[x] 7.3  Revue : aucun unwrap() sauvage ; erreurs custom partout  -> OK
-[x] 7.4  Revue : autorités (qui peut appeler quoi) cohérentes  -> OK
-         -> draw_winner: has_one authority ; payout: permissionless par design (fonds -> gagnant)
-[x] 7.5  Vérifier le rent / exemption des comptes créés  -> OK (init gere ; vault >> min avec prix reels)
-[x] 7.6  Faire tourner la suite complète de tests (succès + échecs)  -> 18 passing
-         -> FINDING corrige: ajout require!(ticket_price > 0) + erreur InvalidTicketPrice + test
-[x] 7.7  Déployer sur devnet ; vérifier l'IDL généré  -> FAIT le 2026-06-20
-         -> DEBLOQUE: Agave a RE-ACTIVE les deploys --arch v0 sur devnet (cf maj issue #13297, 19/06).
-            Recette: cargo build-sbf --manifest-path programs/lottery/Cargo.toml --arch v0
-                     puis solana program deploy --url devnet (CARGO_TARGET_DIR=racine).
-         -> Program LIVE: DD5CPAQWUtKSBajtNT9w4QbJysQnuWeDZ6yCdXKAYwro
-            owner BPFLoaderUpgradeable, authority = wallet FMzJ..., ~1.82 SOL bloques dans le compte programme.
-         -> Voie propre long terme (non requise tant que v0 marche): --arch v3 + platform-tools >= v1.53 (on a v1.51).
-         -> SMOKE TEST OK le 2026-06-20: scripts/smoke-devnet.ts (ping) confirme via tx que le programme
-            S'EXECUTE sur le runtime 4.1 de devnet (pas seulement charge). Execution validee.
-         -> RESTE A FAIRE dans 7.7 (optionnel): publier l'IDL on-chain sur devnet (make idl-devnet) pour que les clients le fetchent.
-==> JALON : MVP ON-CHAIN COMPLET ET VERT (atteint en LOCALNET). Frontend peut demarrer sur localnet.
-
-
---------------------------------------------------------------
-PHASE 8 — BASE DE DONNÉES (REPRISE de l'existant)
---------------------------------------------------------------
-[x] 8.1  Réutiliser le schéma existant (users, lotteries, tickets, transactions)  -> 4 tables conservées
-[x] 8.2  Vérifier l'alignement des champs avec les events on-chain réels  -> analyse d'écart faite
-[x] 8.3  Ajuster le schéma pour coller au programme Anchor finalisé  -> schéma réécrit (fidélité max):
-         + round_id BIGINT UNIQUE (clé naturelle on-chain), lottery_account UNIQUE, authority
-         + total_tickets/winner_index/ticket_index en BIGINT (u64), pot_amount (ex-prize_pool)
-         + state ('Open'/'Drawing'/'Closed') + claimed, buyer_address/winner_address (pubkeys = source de vérité)
-         + ancres d'idempotence: round_id, lottery_account, signature, (lottery_id, ticket_index)
-         + SUPPRIME le CHECK end_time>created_at (cassait le rejeu d'historique)
-[x] 8.4  Corriger les scories (typos SQL, tx_type CHECK = vrais noms d'instructions)
-[x] 8.5  Confirmer le rôle : cache reconstructible, jamais de logique critique (D9)  -> OK
-         -> models Rust + repositories alignés sur le nouveau schéma; cargo check vert (API parquée).
-[x] 8.6  TEST: monter un Postgres, appliquer la migration, vérifier insert/select via repositories
-         -> FAIT: backend/src/db/repositories/tests.rs, 5 tests #[sqlx::test] (base éphémère/test),
-            round-trip Lottery/Ticket/Transaction + 2 cas d'échec d'idempotence (round_id, ticket_index)
-            + enum tx_type vs CHECK. 5 passed. Lancé via DATABASE_URL=... cargo test (Postgres NATIF).
-
-
---------------------------------------------------------------
-PHASE 8bis — OUTILLAGE / DOCKER (reproductibilité dev, valeur portfolio)
---------------------------------------------------------------
-  Rappel conceptuel: Postgres = la base; Docker = la boîte standardisée qui fait tourner un service
-  (Postgres, l'API, l'indexer) à l'identique partout. Docker n'apporte PAS la scalabilité DB en soi
-  (ça = index, pooling/PgBouncer, réplicas, managé). En prod: API/indexer dockerisés + Postgres MANAGÉ.
-[x] 8bis.1  docker-compose.yml avec service postgres:16 (volume persistant, healthcheck, port 5433:5432)
-            -> port hôte 5433 car le Postgres natif occupe déjà 5432
-[x] 8bis.2  .env + .env.example (POSTGRES_*, DATABASE_URL); .gitignore: .env ignoré, !.env.example versionné
-[x] 8bis.3  README (anglais): overview, architecture, getting started (docker compose up + migrate + tests)
-[x] 8bis.4  Rejouer le test 8.6 contre le Postgres dockerisé -> 5 passed sur :5433 (parité dev/prod OK)
-            + sqlx migrate run sur la base du conteneur -> 4 tables créées (migration valide de zéro)
-[ ] 8bis.5  (plus tard) dockeriser l'API Rust + l'indexer; prod -> Postgres managé (Supabase/Neon/RDS)
-
-
---------------------------------------------------------------
-PHASE 9 — INDEXER : events on-chain -> cache DB (en RUST) (D9bis)
---------------------------------------------------------------
-  Décisions verrouillées:
-   - Indexer ecrit en RUST (reutilise models/ + repositories deja testes).
-   - Scaffold mort api/ + utils/ SUPPRIME (non compile, non teste); l'API REST
-     lecture-seule pour le frontend est repoussee a une phase ulterieure (cf 9.7).
-   - Principe D9: l'indexer RECOPIE ce que la chaine a tranche, il ne CALCULE jamais
-     (pas de choix de gagnant ni de calcul de pot cote indexer).
-[x] 9.1  Curseur de reprise: table indexer_state (migration DEDIEE 20260623…),
-         model IndexerState + IndexerStateRepository (get / save_cursor en UPSERT),
-         test round-trip INSERT + UPDATE (ON CONFLICT)  -> 6 tests passing
-         -> lecon migrations: une migration appliquee est IMMUABLE; tout changement
-            = nouveau fichier (sqlx migrate add). reset = dev only (cache D9).
-[x] 9.2  Squelette du binaire indexer (src/bin/indexer.rs) + connexion RPC devnet
-         (charge la config, ouvre le pool DB, lit le curseur, log, ne crashe pas)
-         -> FAIT: extraction d'une bibliotheque src/lib.rs (pub mod db; pub mod models;)
-            partagee par les 2 binaires; main.rs (API) + src/bin/indexer.rs (indexer) la consomment
-            via `use lottery_api::...` (lib/bin pattern: un bin ne peut pas voir le code d'un autre).
-         -> config via .env (DATABASE_URL, SOLANA_RPC_URL=devnet, PROGRAM_ID=DD5CP...).
-         -> RPC async: solana_client::nonblocking::rpc_client::RpcClient (v2.3.13, API verifiee).
-            get_version()/get_slot() confirment la connexion; lit le curseur via IndexerStateRepository::get.
-         -> smoke run OK: connecte a devnet, "No cursor yet" (table vide), exit propre.
-         -> NB dette: warning future-incompat sqlx-postgres 0.7.4 (dans la dep, pas notre code) -> upgrade 0.8 plus tard.
-[x] 9.3  Recuperation des signatures du programme + decodage des events Anchor
-         (discriminators 8 octets) via l'IDL ; valider owner/longueur (donnee non fiable)
-         -- PARTIE 1 (DECODAGE) = FAIT le 2026-06-23 --
-         -> nouveau module lib::indexer (src/indexer/mod.rs + src/indexer/events.rs),
-            declare dans src/lib.rs (pub mod indexer;). Pattern: logique PURE et TESTABLE
-            dans la lib, le binaire src/bin/indexer.rs la consommera.
-         -> events.rs: 4 structs Borsh (LotteryInitialized/TicketBought/WinnerDrawn/PrizeClaimed)
-            qui MIRROIRENT les #[event] on-chain (ordre des champs IDENTIQUE = obligatoire Borsh).
-            Pubkey gardee en [u8;32] brut (decouple de anchor-lang/solana-sdk; -> base58 en 9.4).
-         -> discriminateurs (8 octets) RECOPIES de target/idl/lottery.json (= sha256("event:<Nom>")[..8]).
-         -> decode_program_events(logs, program_id): suit la pile invoke/success des logs et ne
-            decode "Program data: <b64>" QUE si NOTRE programme est au sommet (garde-fou OWNER, CPI-safe).
-            + garde longueur (>=8) + try_from_slice (refuse octets en trop) + jamais de panic (skip).
-         -> emit! Anchor -> sol_log_data -> ligne "Program data: <base64>" = [disc 8o ++ champs Borsh].
-            (NB: emit! peut etre tronque par certains RPC sous charge; emit_cpi! = piste phase 2.)
-         -> 2 tests unitaires PURS (sans RPC/DB) PASSENT: cas nominal + cas securite (event d'un
-            AUTRE programme ignore). Lancer: `cargo test -p lottery-api events`.
-         -> deps ajoutees dans backend/Cargo.toml: borsh 1 (derive), base64 0.22,
-            solana-transaction-status-client-types 2.3.13 (PAS le crate complet solana-transaction-status,
-            absent de l'arbre -> on prend la version client-types EXACTE = celle de solana-client, anti-conflit de types).
-         -> cargo build -p lottery-api OK.
-         -- PARTIE 2 (FETCH RPC) = FAIT le 2026-06-24 --
-         -> PREREQUIS FAIT (2026-06-24): devnet contient desormais de VRAIES tx applicatives
-            a indexer (avant: seul le ping de 7.7). Scripts de seed crees:
-            - scripts/seed-devnet.ts : 1 cycle complet init+buy x2+draw+payout = les 4 events.
-            - scripts/seed-devnet-multi.ts : 5 acheteurs DISTINCTS finances par transfert depuis
-              le wallet principal (pas d'airdrop, fiable); 2 d'entre eux achetent 2 tickets
-              -> 7 tickets, valide EN PRATIQUE le modele d'index GLOBAL du Ticket PDA (cf D21bis:
-              le ticket est seede par lottery.total_tickets, pas par buyer).
-            Bonus: 1er test E2E reel du programme sur devnet (init->buy->draw->payout) -> OK.
-            Lancer: yarn run ts-mocha -p ./tsconfig.json -t 1000000 "scripts/seed-devnet*.ts".
-         [x] get_signatures_for_address_with_config(program_id, {limit:1000, commitment, ..Default})
-             -> page de signatures (du + recent au + ancien).
-         [x] pour chaque sig: get_transaction_with_config(sig, {encoding: Json,
-             max_supported_transaction_version: Some(0), commitment: confirmed}).
-         [x] SAUTER si meta.err.is_some() (tx echouee = effets annules on-chain).
-             extraire meta.log_messages (OptionSerializer -> Option::from) -> decode_program_events(&logs, &program_id_str).
-         [x] pour 9.3: juste LOGGER les events decodes (dispatch DB = 9.4, boucle+curseur = 9.5).
-         -> chemins d'import CONFIRMES contre la source des crates 2.3.13 (pas de devinette):
-            GetConfirmedSignaturesForAddress2Config = solana_client::rpc_client (derive Default),
-            RpcTransactionConfig = solana_client::rpc_config (derive Copy), UiTransactionEncoding =
-            solana_transaction_status_client_types, CommitmentConfig/Signature = solana_sdk.
-            OptionSerializer<T> -> Option<T> via impl From (Option::from, pas d'import du type).
-         -> RESULTAT (cargo run --bin indexer sur devnet): 33 signatures, les 4 events decodes
-            sur tous les rounds de seed. Coherence VALIDEE: WinnerDrawn.winner_index -> buyer du
-            ticket de cet index == PrizeClaimed.winner, et amount == nb_tickets * ticket_price.
-            Garde-fou OWNER confirme en reel: ping (7.7) + tx de deploiement = 0 event (ignores).
-         -> A FAIRE en 9.5 (note): traiter ancien->recent (page.rev()) pour une reconstruction propre.
-[x] 9.4  Dispatch idempotent vers repositories (LotteryInitialized / TicketBought /
-         WinnerDrawn / PrizeClaimed), ancre sur UNIQUE (signature, (lottery_id, ticket_index))
-         -> FAIT le 2026-06-24. Methodes idempotentes ajoutees aux repos (ON CONFLICT DO NOTHING;
-            total_tickets/pot_amount RECALCULES via COUNT, jamais incrementes -> rejouable).
-            Nouveau module lib::indexer::dispatch (dispatch_event): aiguille chaque LotteryEvent
-            vers les repos; derive le PDA lottery_account depuis round_id, pubkeys -> base58,
-            end_timestamp i64 -> TIMESTAMPTZ. winner_address rempli au PrizeClaimed (cf limites).
-            Binaire: traite ancien->recent (.iter().rev()) pour respecter l'ordre des FK.
-         -> VALIDE en DB (devnet): 4 rounds, 19 buy_ticket, total_tickets/pot/winner coherents.
-            Idempotence confirmee: relancer l'indexer ne double-compte pas.
-[x] 9.5  Boucle de polling + avancement du curseur (traiter -> upsert -> save_cursor)
-         + retries / reprise RPC (reconnexion, dernier slot/signature traite)
-         -> FAIT le 2026-06-25. Binaire = daemon: loop { run_cycle; sleep(POLL_INTERVAL_SECS=10) }.
-            run_cycle: lit le curseur -> fetch incremental (until=curseur) AVEC pagination
-            backwards (before = derniere sig de la page, boucle tant que page pleine=1000) ->
-            traite ancien->recent (dispatch) -> save_cursor EN DERNIER (apres batch durable).
-            Resilience: un cycle en erreur est LOGGE et retente au tick suivant (pas de crash);
-            curseur avance seulement apres succes -> reprise propre + idempotent (cf 9.4).
-         -> VALIDE en reel: 1er run "No cursor yet" -> backfill 31 events; seed lance a cote ->
-            "Indexed 5 event(s)" au tick suivant SANS re-telecharger les 31 (preuve du curseur).
-[x] 9.6  Test e2e: rejouer une sequence d'events depuis zero -> etat DB deterministe
-         (validation concrete de la reconstructibilite D9)
-         -> FAIT le 2026-06-26. Test #[sqlx::test] replay_is_deterministic_and_idempotent
-            (dans src/indexer/dispatch.rs): events SYNTHETIQUES (pas de RPC), rejoue
-            init -> 3 buys -> draw -> payout via dispatch_event sur une base ephemere.
-            Verifie l'etat exact (total_tickets=3, pot=0.3 SOL, winner_index=Some(1),
-            winner_address, state=Closed, claimed) PUIS rejoue la meme sequence et verifie
-            que RIEN ne change (3 tickets, 6 transactions) = preuve d'idempotence/D9. VERT.
-==> JALON: PHASE 9 (INDEXER) COMPLETE ET TESTEE. 9.7 (API REST lecture) repoussee.
-[ ] 9.7  (plus tard) API REST en LECTURE seule pour le frontend (historique/stats),
-         reecrite proprement par-dessus models/repositories (l'ancien scaffold est supprime)
-
-  LIMITES CONNUES DE L'INDEXER (assumees, a garder en tete pour l'exactitude):
-   - winner_address rempli SEULEMENT au PrizeClaimed (choix de design). Entre draw_winner
-     et payout, winner_index est connu mais winner_address = NULL. Si le front doit afficher
-     le gagnant AVANT le claim -> resoudre winner_index -> buyer du ticket (JOIN sur tickets).
-   - emit! Anchor passe par les logs (sol_log_data) -> certains RPC publics TRONQUENT les logs
-     sous charge => event potentiellement manque. Parade robuste = emit_cpi! (CPI non tronquable),
-     en backlog PHASE 2. Sur devnet public: fiabilite "best effort".
-   - Niveau d'engagement = 'confirmed' (rapide). Une tx confirmee mais NON finalisee pourrait
-     theoriquement disparaitre sur un fork => on aurait indexe un truc annule. Exactitude max =
-     'finalized' (plus lent). Trade-off acceptable en devnet pedagogique; a revoir avant prod.
-
-
---------------------------------------------------------------
-PHASE 10 — FRONTEND NEXT.JS
---------------------------------------------------------------
-  Décisions verrouillées (2026-06-26):
-   - Stack: @solana/wallet-adapter (Phantom) + client Anchor classique (@coral-xyz/anchor 0.31.1).
-     Choix coherent avec l'on-chain et le mieux documente (cf CLAUDE.md, stack verrouille).
-   - SOURCE DES DONNEES (MVP): le front lit le round courant DIRECTEMENT on-chain via RPC
-     (source de verite). L'historique des rounds passes (10.8/10.9) et l'API REST lecture
-     seule (9.7) sont REPOUSSES A APRES LE MVP. >> Une fois le MVP front livre, on construira
-     l'API REST (9.7) en Rust par-dessus models/repositories, et le front basculera ses pages
-     historique/stats dessus (au lieu de scanner la chaine).
-   - Decouverte du round courant: par config/env (round_id connu) au MVP, pas de getProgramAccounts.
-   - METHODE DE BUILD: un front de reference (genere sur Lovable) sert de MODELE VISUEL.
-     On le RECONSTRUIT de zero a l'identique, pedagogiquement. REVISION 2026-06-29: Claude
-     GENERE et ECRIT le code lui-meme (Write/Edit dans les fichiers), mais PAR PETITS MORCEAUX
-     et de maniere pedagogique (explication de chaque bloc avant/apres). L'utilisateur ne retape
-     plus a la main (faible valeur pedagogique pour du React/TS/CSS): il doit COMPRENDRE le code
-     genere et etre capable d'AJOUTER/MODIFIER des blocs lui-meme. SPECIFIQUE AU FRONT: pour
-     l'on-chain Rust, la regle "retape a la main" reste valable. Niveau: bases JS/web, NOUVEAU sur React.
-   - CARTOGRAPHIE app-reference/ (lecture seule, 2026-06-26): landing page mono-page 100% MOCKEE,
-     tout dans src/routes/index.tsx (9 sections React). Stack reference = TanStack Start (≠ cible)
-     + React 19 + Tailwind v4 (oklch) + shadcn/ui (new-york) + lucide + sonner + react-query.
-     Design system = src/styles.css (a PORTER): fonts Archivo Black + Inter; --primary violet
-     oklch(0.55 0.22 295), --accent teal; degrades --gradient-brand / --gradient-hero; utilitaires
-     .brand-text/.cta-glow/.card-soft/.float-y/.ticker-track. Assets PNG (theme en cours de
-     bascule "tresor" -> "candy": coton_candy/lolipop/orange_candy/solana/cloud...).
-   - VISUEL NON FIGE: la maquette evoluera encore (l'utilisateur la peaufine). => on construit
-     d'ABORD tout ce qui est INDEPENDANT du visuel (socle + web3), la reconstruction des sections
-     visuelles vient EN DERNIER, une fois app-reference fige.
-   - STRUCTURE NEXT.JS: App Router + src-dir (routes dans app/src/app/), alias @/* -> app/src/*.
-     REGLE CLE: tout composant qui touche wallet/tx/useState = Client Component ("use client").
-     Providers wallet dans le layout; lectures on-chain via react-query; ecritures au clic.
-   - REVISION 2026-07-01 (reprise phase 10):
-     * SOCLE TRANCHE: on RECONSTRUIT en Next.js (choix confirme vs garder l'export Lovable).
-       Une export Lovable (TanStack Start + Vite + bun) avait ete deposee dans app/; elle a ete
-       DEPLACEE vers app-reference/ (commit b79d28d) comme MODELE VISUEL en LECTURE SEULE, et app/
-       a ete VIDE puis re-scaffolde en Next.js 16 propre. Ce repo n'est PAS connecte a Lovable.
-     * PACKAGE MANAGER du front = npm (choix utilisateur; bun non installe). next.config.ts:
-       turbopack.root = __dirname (evite le conflit avec le yarn.lock racine du workspace Anchor).
-     * NOUVELLE PALETTE = BLEU (plus violet). Source: ~/Documents/Solana_front_react/globals.css
-       (--primary oklch(0.62 0.19 259.81) = #3981f6). METHODE DE FUSION validee: on GARDE le
-       design system candy de app-reference/src/styles.css (structure, utilitaires .brand-text/
-       .cta-glow/.card-soft/.float-y/.ticker-track, animations chest/floaty/marquee), et on
-       REMPLACE uniquement (a) les VALEURS de couleur -> palette bleue, (b) les POLICES -> Inter
-       partout (font-display = Inter, PLUS d'Archivo Black), (c) les 4 degrades de marque
-       (--gradient-brand, --gradient-hero, --shadow-cta, .jackpot-text) recoloris violet->bleu.
-       success reste VERT (semantique). radius garde a 0.625rem (candy arrondi).
-     * EXIGENCE: rebuild PIXEL-PERFECT du LAYOUT candy de Lovable, recolorie en bleu.
-
-  >>> DECOUPAGE EN SOUS-PHASES (ordre d'execution) <<<
-
-  -- 10.A  SOCLE NEXT.JS (independant du visuel -- A FAIRE MAINTENANT) --
-[x] 10.1  Scaffold create-next-app dans app/ (App Router, TS, Tailwind v4, ESLint, src-dir,
-          alias @/*). Verifier `npm run dev` -> page par defaut, puis nettoyer le boilerplate.
-          -> FAIT (2026-07-01): Next.js 16.2.9 / React 19.2 / Tailwind v4, npm. Boot OK (HTTP 200,
-             Ready ~310ms). Fix turbopack.root dans next.config.ts. Boilerplate page.tsx nettoye.
-             NB: ne lancer QU'UN SEUL `npm run dev` (instances empilees = OOM heap).
-[x] 10.2  Porter le design system: globals.css (tokens oklch :root + utilitaires .brand-text/
-          .cta-glow/.card-soft/.float-y/.ticker-track), font Inter via next/font.
-          Verifier que le theme s'applique sur une page nue.
-          -> FAIT (2026-07-01): app/src/app/globals.css = design system candy fusionne, recolorie
-             en BLEU (cf REVISION 2026-07-01). Inter cablee dans layout.tsx (--font-inter). Verifie
-             sur page.tsx de smoke-test: --primary=#3981f6, gradient-brand bleu, utilitaires OK.
-[x] 10.3  Fondamentaux React: lib/utils.ts (helper cn), init shadcn/ui (button + card),
-          1er composant affiche. Apprentissage: composant / props / JSX / className.
-          -> FAIT (2026-07-01): lib/utils.ts (cn), components.json (new-york, rsc:true,
-             css=src/app/globals.css), button.tsx + card.tsx REPRIS de app-reference (pixel-perfect).
-             Deps: clsx tailwind-merge class-variance-authority @radix-ui/react-slot lucide-react.
-             Rendu OK sur page.tsx (variantes Button + Card, couleur bleue appliquee).
-
-  -- 10.B  PROVIDERS & CLIENT ANCHOR (plomberie web3 -- independant du visuel) --
-[x] 10.4  lib/constants.ts: PROGRAM_ID, RPC devnet, round_id courant via env NEXT_PUBLIC_*.
-          (2026-07-04 : fait + .env.local ; new PublicKey() valide la base58 au chargement.)
-[x] 10.5  providers.tsx ("use client"): ConnectionProvider + WalletProvider + WalletModalProvider
-          (Phantom/devnet), cable dans layout.tsx.
-          (2026-07-04 : fait ; wallets=[] volontaire, Wallet Standard auto-detecte les extensions.)
-[x] 10.6  Bouton "Connect wallet" (hook useWallet): connexion + adresse tronquee + disconnect.
-          1er vrai usage d'un hook Solana.
-          (2026-07-04 : fait ; garde d'hydratation "mounted" pour matcher le SSR, integre au header.)
-[x] 10.7  lib/anchor.ts: copier l'IDL target/idl/lottery.json dans le front, construire l'objet
-          Program (VERIFIER la signature @coral-xyz/anchor 0.31.1), exposer via un hook useProgram.
-          (2026-07-04 : fait ; IDL + types copies dans src/lib/idl/ -- A RE-COPIER apres chaque
-          anchor build. Signature 0.30+ verifiee : new Program(idl as Lottery, provider), adresse
-          lue depuis idl.address + check de coherence avec PROGRAM_ID. Deux factories exportees
-          (getReadonlyProgram / getProgram) plutot qu'un hook -- le hook viendra avec 10.9 si utile.)
-
-  -- 10.C  LECTURES ON-CHAIN --
-[x] 10.8  Derivation des PDA cote front (lottery, vault) avec les MEMES seeds que le programme.
-          (2026-07-06 : fait, src/lib/pda.ts -- u64 LE via DataView/BigInt, TextEncoder (pas de
-          polyfill Buffer). VERIFIE contre devnet : lottery + ticket #0 du round 1782381011
-          matchent les comptes on-chain reels.)
-[x] 10.9  Lire le compte Lottery courant (account.lottery.fetch) -> pot, total_tickets, state,
-          end_timestamp, winner_index. Encapsule dans react-query (cache + refetch).
-          (2026-07-06 : fait -- @tanstack/react-query@5 installe, QueryClientProvider ajoute a
-          providers.tsx (useState initializer, staleTime 10s), hook src/hooks/use-lottery.ts
-          (fetchNullable + poll 30s, lecture SANS wallet). .env.local: ROUND_ID=1782381011 (round
-          Closed reel des smoke-tests devnet ; round_id=1 n'existe pas on-chain). Bloc debug TEMP
-          <LotteryDebug /> sur /vaults a supprimer en 10.17. Rappels: u64 -> BN (.toString()),
-          enum state -> objet {open:{}}, pot en lamports.)
-[x] 10.10 Compte a rebours depuis end_timestamp + (si besoin) solde du vault pour le pot affiche.
-          (2026-07-10 : fait -- hook src/hooks/use-countdown.ts. Countdown ABSOLU : recalcule
-          endTimestamp - now() a CHAQUE tick (pas un compteur decremente), donc auto-correcteur
-          si l'onglet dort + colle a l'horloge que la chaine applique. Garde SSR : secondsLeft=null
-          jusqu'au montage client (evite le hydration mismatch de Date.now()), flags ready/expired.
-          Demontre sur le vrai round via <LotteryDebug> (/vaults) : round 1782381011 est Closed
-          -> affiche "Draw closed" (branche expired validee en reel). Le tick seconde/seconde se
-          verra sur un round OUVERT (echeance future) une fois 10.13 fait.
-          DECISION scope : PAS de lecture du solde lamports du Vault -- le pot affiche = lottery.potAmount
-          (suivi on-chain, D9 : la chaine a tranche, on recopie). Lire le vault serait trompeur
-          (contient aussi le min rent-exempt, et vide apres payout alors que potAmount reste juste).)
-
-  -- 10.D  ECRITURES (transactions signees) --
-[ ] 10.11 buy_ticket: methods.buyTicket()...rpc(), signature wallet, refetch apres confirmation.
-[ ] 10.12 payout (claim): pour le gagnant; resoudre winner_index -> ticket -> buyer; garde-fous
-          UI (visible seulement si gagnant ET state=Closed ET !claimed).
-[ ] 10.13 (admin, optionnel) initialize_lottery + draw_winner par l'authority = outil interne,
-          PAS expose au public (cf CLAUDE.md: draw reserve a l'authority).
-
-  -- 10.E  RECONSTRUCTION VISUELLE (APRES que app-reference soit FIGE) --
-[x] 10.14 Importer les assets figes (theme final) dans app/public (ou src/assets).
-          -> Fait au fil de l'eau: 3 coffres vaults, logo-mark.png (detoure via Vision),
-             icon.png (favicon), cloud-graduate.png. Source brute official_logo.png (2 Mo)
-             a sortir de public/ un jour (poids mort expose).
-[x] 10.15 Reconstruire section par section en composants, MOCKS d'abord (Header, Hero,
-          round unique, HowItWorks, Trust, Stats, FinalCTA, Footer). Claude ecrit par morceaux,
-          l'utilisateur comprend et adapte (cf revision methode de build 2026-06-29).
-          -> HOMEPAGE TERMINEE (2026-07-02): Ticker, Header, Hero (globe cobe interactif
-             recolore palette via filtre CSS invert+hue-rotate, 8 etiquettes villes stats mock,
-             rangee "Powered by" 5 logos, fondu blanc bas de hero), HowItWorks (juste apres le
-             Hero, degrades de jonction haut+bas), WhySolvault (carte code animee buy_ticket +
-             PointerHighlight Aceternity sur "Blockchain."), Faq (accordion shadcn, 6 questions),
-             Footer. Sections Lotteries & Stats de la reference SAUTEES (choix utilisateur);
-             la carte du round vivra dans le Hero une fois branchee (10.17).
-             Copy deja corrigee partout: pas de VRF, un seul round, claim par le gagnant,
-             mention devnet dans FAQ + footer -> 10.16 quasi fait (reste badge hero "mainnet"
-             + ticker/live-activity a verifier). Deps ajoutees: motion (deja la), radix-ui
-             v1.6 via shadcn accordion.
-          -> PAGE /vaults AJOUTEE (2026-07-03): portage corporate de vaults.tsx (reference,
-             copie dans app-reference/src/routes/). Composants dans app/src/components/vaults/
-             (vaults-data mock, VaultPicker client avec countdown+ventes simulees, WinnerCta,
-             FinishedRounds onglets). 1 vault live (= notre round unique) + 2 "Coming soon".
-             Nav header/footer -> /vaults, ancres passees en "/#...". Footer redesign minimal
-             type Rain.fi avec disclaimer educatif fourni par l'utilisateur.
-          -> FINITIONS DESIGN (2026-07-03/04) -- 10.15 TERMINE, phase design close:
-             * /vaults passee en THEME SOMBRE bleu nuit page-scoped (classe "dark" sur la
-               racine; palette .dark de globals.css teintee hue 265 + overrides sombres de
-               --gradient-hero/--shadow-card + .brand-text eclairci). Homepage reste claire.
-             * REBRANDING: Solvault -> "Nimbo Play" (tous les textes visibles + metadata).
-               Identifiants de code (WhySolvault, why-solvault.tsx, ancre /#why) GARDES --
-               renommage a faire si le nom est definitif. Logo officiel detoure ->
-               header + footer (logo-mark.png) + favicon (src/app/icon.png, convention Next).
-               Police marque: Fredoka via next/font (--font-brand, utilitaire font-brand).
-             * Langage boutons: actions -> rounded-[10px] (style Rain.fi), "Connect wallet"
-               et badges/statuts restent en pilule. 2 vaults live (Daily+Weekly) + 1 coming
-               soon; images coffres par vault (champ image? optionnel, fallback icone lucide).
-             * WinnerCta refait (badge or "unclaimed", titre "You might already have won.",
-               checklist reassurance, pile CTA primaire/secondaire) + GlowBorder: liseret
-               dore suivant la souris (masques padding/border-box + background-attachment
-               fixed, composant client components/ui/glow-border.tsx).
-             * Section MyTicketsDashboard (banniere stats + modale accessible) avec
-               DashboardCard animee (motion/react, variants spring, overlay confirm).
-               shadcn ajoutes: badge, avatar, separator. QR code = api.qrserver.com (SEULE
-               requete externe du site, mock a remplacer).
-             * Hero "Get a Ticket" -> Link /vaults (prefetch). Bouton achat -> "Connect
-               wallet" (etat honnete sans wallet).
-             TOUT est encore mock -> la suite est 10.B (4->7): providers wallet + client
-             Anchor, puis 10.C/10.D. Rappel 10.17: le programme n'a qu'UN round a la fois,
-             deux vaults "live" est une fiction UI a resoudre au branchement.
-[ ] 10.16 CORRIGER LE CONTENU vers la verite (badge devnet, retirer "mainnet"/"VRF",
-          UN seul round). Obligatoire cf CLAUDE.md (ne pas vendre l'alea simple comme sur).
-[ ] 10.17 Brancher les sections sur les vraies donnees (remplacer les mocks par 10.C + 10.D).
-
-  -- 10.F  ETATS UI & ROBUSTESSE --
-[ ] 10.18 Etats UI: wallet deconnecte, tx pending (spinner), toasts succes/erreur (sonner),
-          round closed/drawing, "tu as gagne -> claim", aucun round actif (empty state).
-[ ] 10.19 Config RPC: gestion erreurs/retries basique, commitment 'confirmed', garde rate-limit.
-
-  -- 10.G  HISTORIQUE (REPOUSSE APRES LE MVP -- depend de l'API REST 9.7) --
-[ ] 10.20 (apres 9.7) Lire l'historique depuis l'API REST Rust (PAS la chaine directement).
-[ ] 10.21 (apres 9.7) Page historique des rounds + stats depuis la DB.
-
-
---------------------------------------------------------------
-PHASE 11 — INTÉGRATION DE BOUT EN BOUT & FINITIONS
---------------------------------------------------------------
-[ ] 11.1  Scénario complet : init -> achats -> draw -> claim, via l'UI sur devnet
-[ ] 11.2  Vérifier que l'indexer/DB reflète bien tout le cycle
-[ ] 11.3  Mettre en place un cron qui appelle draw_winner à l'échéance
-[ ] 11.4  README : architecture, setup, lancement, captures
-[ ] 11.5  Nettoyage du code + commentaires + cohérence de nommage
-==> JALON : MVP LIVRABLE POUR LE PORTFOLIO.
-
-
-==============================================================
-  /!\ BLOQUANT AVANT TOUT USAGE REEL / MAINNET  /!\
-  (rien de ceci n'est requis pour le MVP devnet, mais TOUT
-   est OBLIGATOIRE avant de toucher de la vraie valeur)
-==============================================================
-[ ] PROD.1  ALEATOIRE — remplacer IMPERATIVEMENT l'alea on-chain "simple"
-            (slot hash + timestamp + total_tickets) du draw_winner par une
-            source non manipulable : Switchboard VRF (alea verifiable deux-parties).
-            RAISON: l'alea on-chain actuel est MANIPULABLE PAR UN VALIDATEUR
-            (il controle slot hash/timestamp) -> un attaquant pourrait biaiser
-            le tirage en sa faveur. Acceptable UNIQUEMENT en devnet pedagogique.
-            L'alea est volontairement ISOLE dans une seule fonction pour rendre
-            ce remplacement quasi sans reecriture du reste (cf D29/D30/D31).
-[ ] PROD.2  Audit interne serieux du programme (re-revue securite complete,
-            relecture de toutes les contraintes de comptes, autorites, arithmetique).
-[ ] PROD.3  Revoir le modele d'autorite de draw_winner (cron centralise = point
-            de defaillance unique ; envisager permissionless + incitation, ou multisig).
-[ ] PROD.4  Tests de charge / cas limites a grande echelle (beaucoup de tickets,
-            collisions d'index concurrentes, rounds simultanes).
-[ ] PROD.5  Gestion des fonds: verifier rent-exemption du vault en toutes circonstances,
-            recuperation des comptes (close) et des lamports residuels.
-[ ] PROD.6  Considerer un mecanisme de remboursement / annulation si un round
-            ne peut pas se conclure (ex: 0 ticket, bug, draw jamais appele).
-==============================================================
-
-
-==============================================================
-  PHASE 2 (BACKLOG — NE PAS COMMENCER SANS ACCORD)
-==============================================================
-[ ] Switchboard VRF (aléatoire deux-parties à la Megapot/Pyth)
-[ ] Système de tiers de prix (plusieurs gagnants, plusieurs paliers)
-[ ] Tickets en SPL token
-[ ] Page publique "provably fair" / vérification
-[ ] Dashboard de stats
-[ ] Déclenchement permissionless de draw_winner
-[ ] Déploiement mainnet (uniquement après audit interne sérieux)
-==============================================================
-
-
-
-
-==============================================================
-==============================================================
-  NIMBO PLAY — BRANCHE JEU P2E  (PIVOT 2026-07-10)
-  Produit phare : ecosysteme de jeux de SKILL a argent sur Solana.
-  1er jeu = clone slither.io. La loterie ci-dessus = side-feature / gacha.
-  Cf CLAUDE.md §0 + DECISIONS.md §10 (D42-D70).
-  REGLE D'OR : UN jeu FUN d'abord (prototype jetable, ZERO Solana) avant
-  d'investir contrat / netcode / monetisation. Le socle on-chain = AGNOSTIQUE
-  du jeu (escrow generique). Testnet avant mainnet.
-  Ordre : Fun -> Netcode autoritatif -> Escrow on-chain -> Integration ->
-          Anti-triche/matchmaking -> Monetisation -> Bloquants mainnet.
+  TODO — NIMBO PLAY  (écosystème de jeux P2E de SKILL sur Solana)
+  PIVOT 2026-07-10 (cf CLAUDE.md §0 + DECISIONS.md §10, D42–D70)
+    -> PRODUIT PHARE : jeux d'arcade PvP à mise en SOL (1er jeu =
+       clone slither.io). Human vs human, extraction par le skill.
+    -> LOTERIE : MVP quasi complet, reléguée en SIDE-FEATURE
+       (gacha à skins). Détail en PARTIE 2 de ce fichier.
+  RÈGLE D'OR : UN jeu FUN d'abord (prototype jetable, ZÉRO Solana)
+  avant d'investir contrat / netcode de prod / monétisation.
+  Le socle on-chain = AGNOSTIQUE du jeu (escrow générique).
+  Testnet avant mainnet.
+  Ordre : Fun -> Netcode autoritatif -> Escrow on-chain ->
+          Intégration -> Anti-triche/matchmaking -> Monétisation ->
+          Bloquants mainnet.
+  NB : l'historique détaillé des tâches loterie terminées (phases
+  A, 0..9, 10.A-C) a été condensé le 2026-07-23 ; le détail vit
+  dans l'historique git de TODO.txt (<= commit 7b00569).
 ==============================================================
 ==============================================================
 
 
+##############################################################
+  PARTIE 1 — PRODUIT PHARE : ARENA (jeu P2E)
+  >>> PROCHAINE ÉTAPE : PHASE ARENA-0 <<<
+##############################################################
+
+  Décisions encore OUVERTES (à trancher en cours de route) :
+   - Cadence / placement des extract points (à régler au playtest ARENA-0).
+   - Formule serveur de "la valeur d'un joueur" (mise -> taille -> valeur).
+   - Modèle A vs B pour le settlement : A (serveur = authority signataire)
+     RECOMMANDÉ pour le MVP, B (attestation ed25519) = durcissement mainnet.
+     Les tâches A2.x/A3.x ci-dessous supposent le modèle A.
+
+
 --------------------------------------------------------------
-PHASE ARENA-0 — PROTOTYPE DE FUN  (jetable, ZERO Solana, ZERO reseau)
-  But : repondre a UNE question -> est-ce que le jeu est KIFFANT ?
+PHASE ARENA-0 — PROTOTYPE DE FUN  (jetable, ZÉRO Solana, ZÉRO réseau)
+  But : répondre à UNE question -> est-ce que le jeu est KIFFANT ?
   Rien d'autre ne commence tant que ce n'est pas un OUI franc.
 --------------------------------------------------------------
 [ ] A0.1  Setup client : PixiJS + TypeScript, boucle requestAnimationFrame
-          HORS React (Pixi monte dans un ref, pas de re-render 60fps).
-[ ] A0.2  Boucle single-player : 1 serpent controlable (souris), camera qui
-          suit, map bornee, rendu fluide de milliers d'entites (sprites batches).
+          HORS React (Pixi monté dans un ref, pas de re-render 60fps).
+[ ] A0.2  Boucle single-player : 1 serpent contrôlable (souris), caméra qui
+          suit, map bornée, rendu fluide de milliers d'entités (sprites batchés).
 [ ] A0.3  Bouffe ambiante (gameplay only, SANS valeur) : le serpent grossit
           en mangeant ; gestion de la longueur / des segments.
-[ ] A0.4  Collisions : serpent vs bouffe (grossir), tete vs corps adverse (mort).
-          Partitionnement spatial (grille) DES le proto (O(n^2) = mort).
-[ ] A0.5  Bots basiques (IA simple) pour peupler l'arene et tester le ressenti PvP.
-[ ] A0.6  Mecanique de VALEUR mockee (pas de SOL) : taille = "valeur" affichee ;
-          extract points qui spawn periodiquement ; timer de canalisation 4s vulnerable.
-[ ] A0.7  Regle 90/10 a la mort : 90% de la valeur reste sur le cadavre (mangeable),
-          10% redistribue en pellets. Conservation visible a l'ecran.
-[ ] A0.8  Buy-in variable mocke : spawn plus gros si "mise" plus grande.
-==> JALON GO/NO-GO : PLAYTEST. Est-ce FUN ? Si non -> iterer le gameplay AVANT
-    d'ecrire la moindre ligne de Solana ou de netcode de prod.
+[ ] A0.4  Collisions : serpent vs bouffe (grossir), tête vs corps adverse (mort).
+          Partitionnement spatial (grille) DÈS le proto (O(n^2) = mort).
+[ ] A0.5  Bots basiques (IA simple) pour peupler l'arène et tester le ressenti PvP.
+[ ] A0.6  Mécanique de VALEUR mockée (pas de SOL) : taille = "valeur" affichée ;
+          extract points qui spawn périodiquement ; timer de canalisation 4s vulnérable.
+[ ] A0.7  Règle 90/10 à la mort : 90% de la valeur reste sur le cadavre (mangeable),
+          10% redistribué en pellets. Conservation visible à l'écran.
+[ ] A0.8  Buy-in variable mocké : spawn plus gros si "mise" plus grande.
+==> JALON GO/NO-GO : PLAYTEST. Est-ce FUN ? Si non -> itérer le gameplay AVANT
+    d'écrire la moindre ligne de Solana ou de netcode de prod.
 
 
 --------------------------------------------------------------
-PHASE ARENA-1 — SERVEUR AUTORITATIF & NETCODE  (toujours ZERO Solana)
-  But : multijoueur temps reel, serveur-autoritatif (= fondation anti-triche).
+PHASE ARENA-1 — SERVEUR AUTORITATIF & NETCODE  (toujours ZÉRO Solana)
+  But : multijoueur temps réel, serveur-autoritatif (= fondation anti-triche).
   Le client n'envoie QUE ses inputs ; le serveur simule TOUT.
 --------------------------------------------------------------
-[ ] A1.1  Choix serveur MVP : Node + Colyseus (rooms autoritatives, schema
-          binaire, matchmaking de base). Types TS partages client/serveur.
-[ ] A1.2  Client = inputs seulement (direction, boost). ZERO calcul de
-          position / kill / taille cote client (base de l'anti-triche).
-[ ] A1.3  Tick de simulation fixe (~30Hz) DECOUPLE du broadcast (~15-20Hz).
-[ ] A1.4  Serialisation BINAIRE des snapshots (pas de JSON).
-[ ] A1.5  Netcode : client-side prediction (ton serpent bouge immediatement).
+[ ] A1.1  Choix serveur MVP : Node + Colyseus (rooms autoritatives, schéma
+          binaire, matchmaking de base). Types TS partagés client/serveur.
+[ ] A1.2  Client = inputs seulement (direction, boost). ZÉRO calcul de
+          position / kill / taille côté client (base de l'anti-triche).
+[ ] A1.3  Tick de simulation fixe (~30Hz) DÉCOUPLÉ du broadcast (~15-20Hz).
+[ ] A1.4  Sérialisation BINAIRE des snapshots (pas de JSON).
+[ ] A1.5  Netcode : client-side prediction (ton serpent bouge immédiatement).
 [ ] A1.6  Netcode : entity interpolation (les autres serpents rendus ~100ms
-          dans le passe, lisses entre snapshots).
-[ ] A1.7  Netcode : server reconciliation (correction douce des ecarts de prediction).
-[ ] A1.8  Area of Interest : n'envoyer a chaque joueur que les entites proches.
-[ ] A1.9  Rage-quit / deconnexion : serpent immobile et tuable + fenetre de reconnexion.
-[ ] A1.10 Test multijoueur reel avec latence simulee ; stabilite d'une room sous charge.
-==> JALON : une room jouable, fluide, autoritative, a plusieurs. Toujours sans argent.
+          dans le passé, lissés entre snapshots).
+[ ] A1.7  Netcode : server reconciliation (correction douce des écarts de prediction).
+[ ] A1.8  Area of Interest : n'envoyer à chaque joueur que les entités proches.
+[ ] A1.9  Rage-quit / déconnexion : serpent immobile et tuable + fenêtre de reconnexion.
+[ ] A1.10 Test multijoueur réel avec latence simulée ; stabilité d'une room sous charge.
+==> JALON : une room jouable, fluide, autoritative, à plusieurs. Toujours sans argent.
 
 
 --------------------------------------------------------------
-PHASE ARENA-2 — PRIMITIF D'ESCROW ON-CHAIN  (programme Anchor GENERIQUE)
-  But : le programme Solana, AGNOSTIQUE du jeu (reutilisable par le portail).
-  Reutilise a fond les patterns loterie (PDA, vault, CPI, has_one, anti-rejeu).
-  REGLE : pas de logique tant que les structs ne compilent pas (cf loterie phase 2).
+PHASE ARENA-2 — PRIMITIF D'ESCROW ON-CHAIN  (programme Anchor GÉNÉRIQUE)
+  But : le programme Solana, AGNOSTIQUE du jeu (réutilisable par le portail).
+  Réutilise à fond les patterns loterie (PDA, vault, CPI, has_one, anti-rejeu).
+  RÈGLE : pas de logique tant que les structs ne compilent pas (cf loterie phase 2).
 --------------------------------------------------------------
-[ ] A2.1  Nouveau programme programs/arena/ (separe, aucun etat partage loterie).
+[ ] A2.1  Nouveau programme programs/arena/ (séparé, aucun état partagé loterie).
 [ ] A2.2  Structs SANS logique : Round PDA ["round", round_id], Vault PDA
           ["vault", round_id], FoodReserve PDA (global persistant), ExtractReceipt
-          PDA ["extract", round_id, nonce]. Enum d'etat + erreurs custom + tailles (space).
+          PDA ["extract", round_id, nonce]. Enum d'état + erreurs custom + tailles (space).
 [ ] A2.3  initialize_round(round_id, end_ts, server_authority, ...) : ouvre le round,
           injecte optionnellement depuis FoodReserve (VRAI transfert de lamports).
-[ ] A2.4  join(stake) : depot VARIABLE permissionless dans le Vault (buy-in),
-          rake 5.5% preleve a l'entree, event Joined. (= buy_ticket generalise.)
-[ ] A2.5  settle_extraction(round, player, amount, nonce) : authority SIGNE (modele A),
-          anti-rejeu via creation du ExtractReceipt PDA, garde amount <= vault.lamports.
+[ ] A2.4  join(stake) : dépôt VARIABLE permissionless dans le Vault (buy-in),
+          rake 5.5% prélevé à l'entrée, event Joined. (= buy_ticket généralisé.)
+[ ] A2.5  settle_extraction(round, player, amount, nonce) : authority SIGNE (modèle A),
+          anti-rejeu via création du ExtractReceipt PDA, garde amount <= vault.lamports.
 [ ] A2.6  end_round() : balaie le solde restant du Vault vers FoodReserve.
 [ ] A2.7  Events : Joined, Extracted, RoundEnded.
-[ ] A2.8  Tests Anchor (succes + ECHECS) : rejeu refuse, insolvabilite impossible,
-          mauvaise authority, round ferme, double-settle, buy-in variable coherent.
-[ ] A2.9  Prouver PAR TEST l'invariant de solvabilite : sum(payouts) <= depots + injecte.
-==> JALON : anchor test VERT sur arena. (Comme la loterie : rien d'integre avant ca.)
+[ ] A2.8  Tests Anchor (succès + ÉCHECS) : rejeu refusé, insolvabilité impossible,
+          mauvaise authority, round fermé, double-settle, buy-in variable cohérent.
+[ ] A2.9  Prouver PAR TEST l'invariant de solvabilité : sum(payouts) <= dépôts + injecté.
+==> JALON : anchor test VERT sur arena. (Comme la loterie : rien d'intégré avant ça.)
 
 
 --------------------------------------------------------------
-PHASE ARENA-3 — INTEGRATION SERVEUR <-> CHAINE  (settlement reel)
+PHASE ARENA-3 — INTÉGRATION SERVEUR <-> CHAÎNE  (settlement réel)
 --------------------------------------------------------------
 [ ] A3.1  Sign-In With Solana (SIWS) : authentifier la session sans tx ; lier wallet <-> partie.
-[ ] A3.2  Flux JOIN : le joueur depose (join tx) AVANT de spawn ; le serveur verifie
-          le depot on-chain (ou via l'indexer) avant d'autoriser l'entree.
-[ ] A3.3  Service de settlement en Rust : detient la cle authority (hot wallet au MVP),
-          ecoute les extractions du serveur de jeu, soumet settle_extraction.
-[ ] A3.4  Indexer arena (reutilise le pattern loterie) : events -> Postgres
-          (historique, soldes, resultats de rounds).
-[ ] A3.5  Gestion FoodReserve inter-rounds : report du SOL orphelin (transferts reels).
-[ ] A3.6  E2E TESTNET : join -> jouer -> extract -> payout confirme + reflete en DB.
-==> JALON : une partie complete a argent (testnet) de bout en bout.
+[ ] A3.2  Flux JOIN : le joueur dépose (join tx) AVANT de spawn ; le serveur vérifie
+          le dépôt on-chain (ou via l'indexer) avant d'autoriser l'entrée.
+[ ] A3.3  Service de settlement en Rust : détient la clé authority (hot wallet au MVP),
+          écoute les extractions du serveur de jeu, soumet settle_extraction.
+[ ] A3.4  Indexer arena (réutilise le pattern loterie) : events -> Postgres
+          (historique, soldes, résultats de rounds).
+[ ] A3.5  Gestion FoodReserve inter-rounds : report du SOL orphelin (transferts réels).
+[ ] A3.6  E2E TESTNET : join -> jouer -> extract -> payout confirmé + reflété en DB.
+==> JALON : une partie complète à argent (testnet) de bout en bout.
 
 
 --------------------------------------------------------------
 PHASE ARENA-4 — ANTI-TRICHE & MATCHMAKING  (le vrai mur technique)
-  Bots = mur n1 d'un jeu de skill a argent. Travail CONTINU, jamais "fini".
+  Bots = mur n°1 d'un jeu de skill à argent. Travail CONTINU, jamais "fini".
 --------------------------------------------------------------
 [ ] A4.1  Revue : serveur autoritatif durci (aucune confiance au client) — audit.
-[ ] A4.2  Matchmaking par TIER de mise / skill (segrege whales / fish / bots ; resout
+[ ] A4.2  Matchmaking par TIER de mise / skill (ségrège whales / fish / bots ; résout
           shark-vs-fish et le whale-stomping du buy-in variable).
-[ ] A4.3  Heuristiques de detection de bots (deplacements suspects) + shadow pool
-          (bot containment : suspects isoles entre eux sans le savoir).
-[ ] A4.4  Rate-limit d'entree + anti-Sybil best-effort.
-[ ] A4.5  Monitoring / alertes des derives economiques (extraction anormale, feeding).
-  NB : collusion-nourrissage DESAMORCEE par le buy-in variable (D67) ; reste best-effort.
+[ ] A4.3  Heuristiques de détection de bots (déplacements suspects) + shadow pool
+          (bot containment : suspects isolés entre eux sans le savoir).
+[ ] A4.4  Rate-limit d'entrée + anti-Sybil best-effort.
+[ ] A4.5  Monitoring / alertes des dérives économiques (extraction anormale, feeding).
+  NB : collusion-nourrissage DÉSAMORCÉE par le buy-in variable (D67) ; reste best-effort.
 
 
 --------------------------------------------------------------
-PHASE ARENA-5 — MONETISATION  (APRES un jeu FUN et peuple)
-  Un skin ne vaut rien sans joueurs qui aiment le jeu. On empile APRES.
+PHASE ARENA-5 — MONÉTISATION  (APRÈS un jeu FUN et peuplé)
+  Un skin ne vaut rien sans joueurs qui aiment le jeu. On empile APRÈS.
 --------------------------------------------------------------
-[ ] A5.1  Rake 5.5% integre au join (0.945 pot / 0.055 maison) + reporting du revenu.
-[ ] A5.2  Skins NFT cosmetiques (Metaplex Core) : entitlement on-chain, rendu client,
-          COSMETIQUE-ONLY (zero pay-to-win).
+[ ] A5.1  Rake 5.5% intégré au join (0.945 pot / 0.055 maison) + reporting du revenu.
+[ ] A5.2  Skins NFT cosmétiques (Metaplex Core) : entitlement on-chain, rendu client,
+          COSMÉTIQUE-ONLY (zéro pay-to-win).
 [ ] A5.3  Marketplace primaire + secondaire (Tensor / Magic Eden), royalties.
-[ ] A5.4  Loterie = gacha a skins (reutilise le programme lottery).
-          -> DEBLOQUE PROD.1 : VRF Switchboard OBLIGATOIRE (skins a valeur reelle mainnet).
+[ ] A5.4  Loterie = gacha à skins (réutilise le programme lottery ; c'est ICI que
+          la PARTIE 2 ci-dessous reprend du service).
+          -> DÉBLOQUE PROD.1 : VRF Switchboard OBLIGATOIRE (skins à valeur réelle mainnet).
 [ ] A5.5  Portail multi-jeux (jeux.fr-like) : brancher un 2e jeu (agar.io) pour
-          valider la genericite du primitif escrow. Vision LT, pas MVP.
+          valider la généricité du primitif escrow. Vision LT, pas MVP.
 
 
 ==============================================================
-  /!\ NIMBO PLAY — BLOQUANT AVANT MAINNET (vraie valeur)  /!\
+  /!\ ARENA — BLOQUANT AVANT MAINNET (vraie valeur)  /!\
   Rien de ceci n'est requis pour le MVP TESTNET, mais TOUT est
   OBLIGATOIRE avant de toucher de la vraie valeur.
 ==============================================================
-[ ] APROD.1  ANTI-BOT niveau production : le mur n1. Course a l'armement continue.
-[ ] APROD.2  CUSTODY : cle authority en KMS/HSM + MULTISIG ; passer au Modele B
-             (attestation ed25519 verifiee on-chain) + settlement optimiste / fraud-proofs.
-[ ] APROD.3  VRF Switchboard pour la loterie-gacha (aleatoire non manipulable).
-[ ] APROD.4  Audit securite serieux du programme arena (escrow = fonds reels).
-[ ] APROD.5  RESILIENCE : si le serveur crash en pleine partie, les fonds ne doivent
-             pas rester bloques -> mecanisme de timeout / remboursement ON-CHAIN.
-[ ] APROD.6  JURIDIQUE : PARKE par decision utilisateur (domicilie Dubai). Note, non traite
+[ ] APROD.1  ANTI-BOT niveau production : le mur n°1. Course à l'armement continue.
+[ ] APROD.2  CUSTODY : clé authority en KMS/HSM + MULTISIG ; passer au Modèle B
+             (attestation ed25519 vérifiée on-chain) + settlement optimiste / fraud-proofs.
+[ ] APROD.3  VRF Switchboard pour la loterie-gacha (aléatoire non manipulable) (= PROD.1).
+[ ] APROD.4  Audit sécurité sérieux du programme arena (escrow = fonds réels).
+[ ] APROD.5  RÉSILIENCE : si le serveur crash en pleine partie, les fonds ne doivent
+             pas rester bloqués -> mécanisme de timeout / remboursement ON-CHAIN.
+[ ] APROD.6  JURIDIQUE : PARKÉ par décision utilisateur (domicilié Dubai). Noté, non traité
              (cf D68). Ne pas re-soulever.
-[ ] APROD.7  INFRA SCALE : rooms / shards, orchestration (Agones/K8s), multi-region (latence).
+[ ] APROD.7  INFRA SCALE : rooms / shards, orchestration (Agones/K8s), multi-région (latence).
+==============================================================
+
+
+##############################################################
+  PARTIE 2 — LOTERIE (side-feature / futur gacha à skins)
+  EN PAUSE depuis le pivot. Reprise prévue vers ARENA-5 (A5.4).
+  La numérotation historique (9.x / 10.x / 11.x / PROD.x) est
+  CONSERVÉE : DECISIONS.md et CLAUDE.md y font référence.
+##############################################################
+
+--------------------------------------------------------------
+ÉTAT DES LIEUX — CE QUI EST FAIT ET VERT (phases A, 0..9, 10.A-C)
+  (résumé opérationnel ; détail complet dans le git log de TODO.txt)
+--------------------------------------------------------------
+[x] Phases A/0/1 — env & workspace : Anchor 0.31.1 (D41), programme EXCLU du
+    workspace racine (exclude=["programs"]) -> TOUJOURS tester via `make test`
+    (exporte CARGO_TARGET_DIR vers target/ racine, sinon .so périmé déployé).
+[x] Phases 2..7 — programme lottery COMPLET : initialize_lottery, buy_ticket,
+    draw_winner, payout (modèle push, D26). 18 tests verts (succès + échecs).
+    Revue sécurité passée (contraintes de comptes, checked_*, CEI, autorités).
+    DÉPLOYÉ DEVNET (2026-06-20) : Program ID DD5CPAQWUtKSBajtNT9w4QbJysQnuWeDZ6yCdXKAYwro
+      Recette : cargo build-sbf --manifest-path programs/lottery/Cargo.toml --arch v0
+                puis solana program deploy --url devnet (CARGO_TARGET_DIR=racine).
+      Smoke test OK (scripts/smoke-devnet.ts). Seed E2E OK (scripts/seed-devnet*.ts).
+    -> Optionnel restant : publier l'IDL on-chain (make idl-devnet).
+    /!\ L'aléa du draw = pseudo-random slot+timestamp : MANIPULABLE par un
+        validateur. Acceptable devnet UNIQUEMENT (cf PROD.1 / APROD.3).
+[x] Phases 8/8bis — DB Postgres : schéma aligné sur les events on-chain (ancres
+    d'idempotence round_id / signature / (lottery_id, ticket_index)), repos Rust
+    testés (#[sqlx::test]). Docker compose postgres:16 sur port hôte 5433.
+    Rôle = cache RECONSTRUCTIBLE, zéro logique critique (D9).
+[x] Phase 9 — INDEXER Rust complet : décodage events Anchor (discriminators IDL,
+    garde-fou owner CPI-safe), dispatch idempotent (ON CONFLICT DO NOTHING,
+    compteurs RECALCULÉS), daemon polling + curseur (table indexer_state),
+    backfill paginé ancien->récent. Rejouabilité prouvée par test e2e synthétique.
+    LIMITES CONNUES (assumées) :
+     - winner_address rempli SEULEMENT au PrizeClaimed ; avant le claim,
+       résoudre winner_index -> buyer via JOIN tickets si besoin d'affichage.
+     - emit! passe par les logs -> RPC publics peuvent TRONQUER sous charge
+       (event manqué). Parade = emit_cpi!, en backlog. Devnet = best effort.
+     - commitment 'confirmed' (pas 'finalized') : à revoir avant prod.
+[x] Phase 10.A-C — front app/ (Next.js 16, npm, App Router, Tailwind v4) :
+    design system candy recolorié BLEU, homepage + /vaults (thème sombre)
+    TERMINÉES visuellement mais encore MOCKÉES ; branding "Nimbo Play" fait.
+    Plomberie web3 OK : providers wallet (Phantom/devnet), bouton connect,
+    client Anchor (lib/anchor.ts), PDA côté front (lib/pda.ts), lecture du
+    round via react-query (hooks/use-lottery.ts) + countdown (use-countdown.ts).
+    Rappels techniques :
+     - RE-COPIER src/lib/idl/ après chaque anchor build.
+     - Round courant via env NEXT_PUBLIC_ROUND_ID (.env.local, actuel 1782381011).
+     - Bloc debug TEMP <LotteryDebug /> sur /vaults à retirer au branchement (10.17).
+     - Ne lancer QU'UN SEUL `npm run dev` (instances empilées = OOM).
+     - UI "2 vaults live" = fiction : le programme n'a qu'UN round à la fois.
+
+  NOTE POST-PIVOT (à trancher au moment de la reprise) : le front app/ est déjà
+  brandé "Nimbo Play" -> vocation probable = devenir le PORTAIL du jeu ; les
+  pages loterie/vaults seraient recyclées en UI du gacha à skins (A5.4).
+
+--------------------------------------------------------------
+RESTE À FAIRE LOTERIE — GELÉ jusqu'à la reprise (~A5.4)
+--------------------------------------------------------------
+  -- Écritures front (10.D) --
+[ ] 10.11 buy_ticket : methods.buyTicket()...rpc(), signature wallet, refetch après confirmation.
+[ ] 10.12 payout (claim) : pour le gagnant ; résoudre winner_index -> ticket -> buyer ;
+          garde-fous UI (visible seulement si gagnant ET state=Closed ET !claimed).
+[ ] 10.13 (admin, optionnel) initialize_lottery + draw_winner par l'authority = outil
+          interne, PAS exposé au public.
+  -- Contenu & branchement (10.E) --
+[ ] 10.16 CORRIGER LE CONTENU vers la vérité (badge devnet, retirer "mainnet"/"VRF",
+          UN seul round). Obligatoire cf CLAUDE.md (ne pas vendre l'aléa simple comme sûr).
+[ ] 10.17 Brancher les sections sur les vraies données (remplacer les mocks par 10.C + 10.D).
+  -- États UI & robustesse (10.F) --
+[ ] 10.18 États UI : wallet déconnecté, tx pending (spinner), toasts succès/erreur (sonner),
+          round closed/drawing, "tu as gagné -> claim", aucun round actif (empty state).
+[ ] 10.19 Config RPC : gestion erreurs/retries basique, commitment 'confirmed', garde rate-limit.
+  -- API REST & historique (9.7 + 10.G) --
+[ ] 9.7   API REST en LECTURE seule pour le front (historique/stats), réécrite
+          proprement par-dessus models/repositories (l'ancien scaffold est supprimé).
+[ ] 10.20 (après 9.7) Lire l'historique depuis l'API REST Rust (PAS la chaîne directement).
+[ ] 10.21 (après 9.7) Page historique des rounds + stats depuis la DB.
+  -- Intégration finale (phase 11) --
+[ ] 11.1  Scénario complet : init -> achats -> draw -> claim, via l'UI sur devnet.
+[ ] 11.2  Vérifier que l'indexer/DB reflète bien tout le cycle.
+[ ] 11.3  Cron qui appelle draw_winner à l'échéance.
+[ ] 11.4  README : architecture, setup, lancement, captures.
+[ ] 11.5  Nettoyage du code + commentaires + cohérence de nommage.
+  -- Outillage --
+[ ] 8bis.5 Dockeriser l'API Rust + l'indexer ; prod -> Postgres managé (Supabase/Neon/RDS).
+
+--------------------------------------------------------------
+/!\ LOTERIE — BLOQUANT AVANT TOUT USAGE RÉEL (gacha à valeur) /!\
+--------------------------------------------------------------
+[ ] PROD.1  ALÉATOIRE — remplacer IMPÉRATIVEMENT l'aléa on-chain "simple" par
+            Switchboard VRF (l'aléa actuel est MANIPULABLE par un validateur ;
+            l'aléa est ISOLÉ dans pseudo_random_index pour un swap quasi sans
+            réécriture, cf D29/D30/D31). (= APROD.3, déclenché par A5.4.)
+[ ] PROD.2  Audit interne sérieux du programme (contraintes de comptes,
+            autorités, arithmétique).
+[ ] PROD.3  Revoir le modèle d'autorité de draw_winner (cron centralisé = SPOF ;
+            envisager permissionless + incitation, ou multisig).
+[ ] PROD.4  Tests de charge / cas limites (beaucoup de tickets, collisions
+            d'index concurrentes, rounds simultanés).
+[ ] PROD.5  Gestion des fonds : rent-exemption du vault en toutes circonstances,
+            close des comptes et récupération des lamports résiduels.
+[ ] PROD.6  Mécanisme de remboursement / annulation si un round ne peut pas se
+            conclure (0 ticket, bug, draw jamais appelé).
+
+--------------------------------------------------------------
+LOTERIE — BACKLOG PHASE 2 (ne pas commencer sans accord)
+--------------------------------------------------------------
+[ ] Système de tiers de prix (plusieurs gagnants, plusieurs paliers)
+[ ] Tickets en SPL token
+[ ] Page publique "provably fair" / vérification
+[ ] Dashboard de stats
+[ ] emit_cpi! à la place de emit! (events non tronquables par les RPC)
+[ ] Déploiement mainnet (uniquement après audit interne sérieux)
 ==============================================================
