@@ -22,7 +22,7 @@
 
 ##############################################################
   PARTIE 1 — PRODUIT PHARE : ARENA (jeu P2E)
-  >>> PROCHAINE ÉTAPE : PHASE ARENA-0 <<<
+  >>> PROCHAINE ÉTAPE : PHASE ARENA-1 (A1.1) <<<
 ##############################################################
 
   Décisions encore OUVERTES (à trancher en cours de route) :
@@ -133,7 +133,7 @@ PHASE ARENA-0 — PROTOTYPE DE FUN  (jetable, ZÉRO Solana, ZÉRO réseau)
           pellet ne spawn que si la réserve le paie ; réserve vide =
           l'OFFRE se raréfie (respawn sauté, map qui se vide). L'afflux
           vient du trafic : churn des bots (durée de vie 30-90s -> crash,
-          cadavre 90/10, nouvelle mise au respawn). Invariant HUD :
+          cadavre 70/30, nouvelle mise au respawn). Invariant HUD :
           arena + banked + reserve = constante + buy-ins.
 [x] A0.7bis MENU DE LANCEMENT (idée user 2026-07-23, validée — confort de
           test + socle produit) : écran simple par-dessus le canvas (overlay
@@ -158,8 +158,17 @@ PHASE ARENA-0 — PROTOTYPE DE FUN  (jetable, ZÉRO Solana, ZÉRO réseau)
             le serveur aura un tick FIXE pour la même raison.
           - Rendu des serpents en SPRITES batchés (1 texture partagée)
             -> fix des frames blanches du gros Graphics + perfs.
-==> JALON GO/NO-GO : PLAYTEST. Est-ce FUN ? Si non -> itérer le gameplay AVANT
-    d'écrire la moindre ligne de Solana ou de netcode de prod.
+          - Fix "corps qui disparaît au sprint" (gros serpents) : le
+            follow-the-leader lerpait vers la position DÉJÀ MISE À JOUR
+            du prédécesseur -> à alpha=1 (boost + frame lente) tout le
+            corps s'effondrait sur la tête en 1 tick (ni rendu ni
+            hitbox). Fix : chaque tracer suit la position PRÉ-update.
+            Prouvé par simulation (12000px -> 0px avant, stable après).
+            Leçon ARENA-1 : bug de pas de temps VARIABLE -> tick fixe
+            serveur (A1.3) élimine cette classe de bugs.
+[x] ==> JALON GO/NO-GO : PLAYTEST -> GO (user, 2026-07-23). Le proto est
+    jugé assez fun pour investir le netcode ; le tuning gameplay reste
+    ouvert en continu (constantes = curseurs), les MÉCANIQUES sont figées.
 
 
 --------------------------------------------------------------
@@ -167,17 +176,174 @@ PHASE ARENA-1 — SERVEUR AUTORITATIF & NETCODE  (toujours ZÉRO Solana)
   But : multijoueur temps réel, serveur-autoritatif (= fondation anti-triche).
   Le client n'envoie QUE ses inputs ; le serveur simule TOUT.
 --------------------------------------------------------------
-[ ] A1.1  Choix serveur MVP : Node + Colyseus (rooms autoritatives, schéma
+[x] A1.1  Choix serveur MVP : Node + Colyseus (rooms autoritatives, schéma
           binaire, matchmaking de base). Types TS partagés client/serveur.
-[ ] A1.2  Client = inputs seulement (direction, boost). ZÉRO calcul de
+          -> FAIT (2026-07-23, validé 2 onglets) : monorepo npm workspaces
+             arena/ (shared/ = contrat protocole, server/ = Colyseus 0.17,
+             client/ = Vite + @colyseus/sdk). API 0.17 VÉRIFIÉE en doc
+             (defineServer/defineRoom, messages en objet, Callbacks.get) —
+             différente de mon cut-off (0.16). PROTOCOL_VERSION rejette
+             les clients périmés au join. Room "arena" : state MapSchema
+             joueurs, join/leave/input prouvés, deltas binaires observés
+             (2 onglets synchro sans refresh). proto/ intouché (référence).
+[x] A1.2  Client = inputs seulement (direction, boost). ZÉRO calcul de
           position / kill / taille côté client (base de l'anti-triche).
-[ ] A1.3  Tick de simulation fixe (~30Hz) DÉCOUPLÉ du broadcast (~15-20Hz).
-[ ] A1.4  Sérialisation BINAIRE des snapshots (pas de JSON).
-[ ] A1.5  Netcode : client-side prediction (ton serpent bouge immédiatement).
-[ ] A1.6  Netcode : entity interpolation (les autres serpents rendus ~100ms
+          -> FAIT (2026-07-24, validé 2 onglets + tests de triche) : le
+             serveur simule le mouvement (setSimulationInterval, ms ->
+             frames 60fps), Player = champs @type synchronisés (float32
+             = moitié de la bande passante de float64) + intent NON
+             décoré (desiredAngle/wantsBoost = jamais envoyé). Input
+             validé côté serveur (Number.isFinite — NaN/Infinity/string
+             rejetés), messages hors liste blanche ignorés. Client =
+             souris -> angle envoyé à 20Hz fixe (jamais par mousemove),
+             rendu canvas 2D monde entier (Pixi porté plus tard).
+          -> PIÈGE RÉSOLU (crash serveur au 1er join, "Failed to
+             fetch" au refresh) : décorateurs legacy @colyseus/schema
+             = setters de prototype, contournés par les champs de
+             classe ES2022 -> MapSchema sans $childType -> crash à
+             l'encodage. FIX : useDefineForClassFields:false dans le
+             tsconfig serveur (obligatoire avec experimentalDecorators
+             + target ES2022). Reproduit et prouvé par script
+             join/leave/rejoin avant/après.
+          -> Leçon outillage : tsx watch ne relance PAS après un crash
+             (attend un changement de fichier) ; "Failed to fetch" =
+             toujours vérifier lsof -iTCP:2567 -sTCP:LISTEN.
+[x] A1.3  Tick de simulation fixe (~30Hz) DÉCOUPLÉ du broadcast (~15-20Hz).
+          -> FAIT (2026-07-24, validé multi-onglets) : accumulateur à
+             pas fixe (STEP 33.3ms, tick dt=TICK_DT constant — jamais
+             l'horloge), garde anti-spirale (250ms max/frame, on JETTE
+             le temps), setPatchRate(50ms). SERVER_TICK_RATE=30 /
+             BROADCAST_RATE=20 dans shared (la prediction A1.5 doit
+             simuler au même pas). Déterminisme par construction : la
+             classe de bugs "dépend du framerate" (corps disparu du
+             proto) ne peut plus exister. Collisions/gameplay pas
+             encore portés — attendu à ce stade.
+[x] A1.4  Sérialisation BINAIRE des snapshots (pas de JSON).
+          -> FAIT (2026-07-24) : déjà fournie par @colyseus/schema
+             (deltas binaires, champs indexés, float32) — travail =
+             la MESURER sur le fil (wrap de connection.events.onmessage,
+             compteur B/s dans le client, instrumentation jetable).
+             BASELINE MESURÉE (2 joueurs en mouvement) : 750 B/s,
+             20 msg/s, ~38 B/patch vs ~6000 B/s en JSON plein état
+             naïf -> x8. Référence pour LA décision à venir : quand
+             les serpents auront un corps, on ne synchronisera PAS
+             les tracers (le client les reconstruira depuis la tête,
+             follow-the-leader local) — à re-mesurer à ce moment-là.
+[x] A1.5  Netcode : client-side prediction (ton serpent bouge immédiatement).
+          -> FAIT (2026-07-24, validé à 200ms de lag simulé : contrôle
+             "agréable", tapé à la main par l'utilisateur — cœur d'algo) :
+             predictTick côté client = COPIE de ArenaRoom.tick (mêmes
+             fonctions/constantes via shared/ — raison d'être du paquet),
+             piloté par l'input LOCAL ; dt rAF borné à 3 frames (MAX_DT) ;
+             correction dure : snap si écart > 150px (A1.7 = adoucir) ;
+             visée souris depuis la position prédite (boucle input->
+             affichage 100% locale). Debug : fantôme = position self vue
+             serveur (l'écart visualise le RTT). Serveur : simulateLatency
+             optionnel via SIMULATE_LATENCY_MS. Léger écart fantôme même
+             sans lag = normal (patchs 20Hz + phase de tick, ~50-80ms).
+[x] A1.6  Netcode : entity interpolation (les autres serpents rendus ~100ms
           dans le passé, lissés entre snapshots).
-[ ] A1.7  Netcode : server reconciliation (correction douce des écarts de prediction).
-[ ] A1.8  Area of Interest : n'envoyer à chaque joueur que les entités proches.
+          -> FAIT (2026-07-24, cœur tapé par l'utilisateur ; validé à
+             200ms de lag + analyse vidéo externe : aucune saccade du
+             joueur distant) : buffer d'instantanés horodatés par joueur
+             (room.onStateChange, garde 1s), rendu à now-100ms entre les
+             2 photos encadrantes (lerp x/y + lerpAngle wrap [-PI,PI]),
+             famine réseau -> HOLD dernière photo, JAMAIS d'extrapolation.
+             Devise : soi dans le futur, les autres dans le passé.
+          -> Bug pédagogique attrapé à la relecture de frappe : signe
+             inversé dans la boucle de wrap (diff > -PI au lieu de <)
+             = boucle infinie -> onglet gelé. Piège classique du wrap.
+          -> L'analyse vidéo confirme en revanche le RUBBER-BANDING du
+             self en virage serré + sprint (écart > 150px -> snap) :
+             c'est la faiblesse assumée du snap dur d'A1.5 -> A1.7.
+[x] A1.7  Netcode : server reconciliation (correction douce des écarts de prediction).
+          -> FAIT (2026-07-24, validé : le claquement en virage sprinté
+             a disparu à 200ms de lag) : le snap dur d'A1.5 péchait 2x
+             (comparait le PASSÉ serveur au PRÉSENT client -> faux
+             positifs ~vitesse*âge ; et corrigeait 100% en 1 frame).
+             Fix : ping/pong applicatif -> RTT lissé EMA 80/20 ;
+             historique horodaté des prédictions (1s) ; erreur VRAIE =
+             vérité serveur vs notre croyance au MÊME instant (âge =
+             RTT/2 + intervalle de patch) ; absorption 5%/frame
+             (CORRECTION_RATE, curseur) ; snap réservé aux vraies
+             téléportations (>400px). Angle jamais lissé (l'input le
+             gouverne). => TRIPTYQUE NETCODE COMPLET (A1.5/6/7).
+[ ] A1.7bis PORT DE LA SIMULATION proto -> serveur (ajouté 2026-07-24 :
+          le TODO listait le netcode mais jamais explicitement le port
+          du gameplay — sous-entendu par A1.10, désormais tâche à part).
+          Ordre choisi : AVANT A1.8, car l'AoI n'a de sens qu'avec des
+          milliers d'entités (et se mesurera au compteur réseau A1.4).
+          RÈGLE DE SYNC (décidée en A1.4) : on ne synchronise JAMAIS
+          les corps — tête + score suffisent, le client reconstruit
+          (follow-the-leader local, comme le proto).
+    [x] a. shared/ : maths du serpent (describeSnakeFromScore, constantes
+          de croissance/espacement) — le client en aura besoin pour
+          reconstruire les corps. FAIT 2026-07-24.
+    [x] b. serveur : corps simulés au tick fixe (tracers follow-the-leader
+          version pré-update du proto), sync = tête+score+boost only.
+          Client : reconstruction locale du corps + rendu cercles canvas.
+          FAIT 2026-07-24, validé : corps fluides, réseau inchangé
+          (~750 B/s pour 2 serpents à corps = preuve mesurée de la
+          règle de sync). + FIX zone morte de visée (60px monde) :
+          atan2 instable curseur-près-de-la-tête cassait les cercles
+          serrés (comparé au vrai slither.io par l'utilisateur : feel
+          identique). Clamp bordure prediction aligné sur le rayon
+          dérivé du score (miroir exact du serveur).
+    [x] c. bouffe : FoodField serveur (grille spatiale du proto) +
+          MapSchema (add/remove only) ; manger -> score -> croissance.
+          FAIT 2026-07-24, validé : 2200 pellets (sqrt(random) =
+          densité uniforme), grille STATIQUE (insert/remove, jamais
+          rebuild — contrairement aux segments), état initial ~25KB
+          une fois puis quasi rien (profil naît/meurt). Artefact
+          assumé : bouchée jugée à la tête SERVEUR (~RTT de retard
+          sous lag, masqué plus tard par l'animation d'aspiration).
+    [x] d. collisions serveur (grid rebuild/frame + findDeaths du proto) :
+          tête vs corps adverse, bordure mortelle, mort -> cadavre semé,
+          respawn. Grâce de spawn 3s.
+          FAIT 2026-07-24, validé (kill en ligne, tête-à-tête double
+          mort, bordure, self-cross légal, grâce translucide). Ajouts
+          notables : Food.value synchronisé (orbes cadavre dorées x5,
+          one-shot — seuls les pellets ambiants respawnent) ; compteur
+          d'ÉPOQUE gen (uint8, % 256, égalité seulement) sur Player —
+          un respawn est une TÉLÉPORTATION, gen change => les clients
+          jettent interpolation/prédiction/corps (sinon lerp à travers
+          la carte). Artefact assumé : mort jugée aux positions
+          serveur (~RTT de "je l'avais esquivé", comme le vrai slither).
+    [x] e. boost-drain par quanta d'orbes (port de l'algo A0.3).
+          FAIT 2026-07-24, validé : dette 0.25/frame, quanta 1.5 à la
+          queue, plancher (sprint coupé sous 1.5) MIROIR côté
+          prédiction (sinon rubber-band). + RECYCLE_RATIO 30% appliqué
+          au drain ET rétrofitté à la mort (le port initial faisait
+          100% cadavre). ==> A1.7bis COMPLET : le jeu du proto tourne
+          en multijoueur autoritatif avec le triptyque netcode.
+    DÉCISION (user, 2026-07-24) : spawn de base = SCORE 0 (amende le
+    FREE_PLAY_SCORE=100 du proto). Le score est un capital GAGNÉ en
+    jouant : taille de base, sprint impossible avant d'avoir mangé
+    (gating >= 1.5). Seule une mise supérieure (0.25/0.50/1 SOL)
+    achètera un score de spawn — au port économie/menu.
+    DÉCISION (user, 2026-07-24) : RECYCLE_RATIO=0.3 — toute valeur
+    RELÂCHÉE (cadavre ET drain de sprint) route 30% de ses orbes
+    (entières, conservation exacte) vers des positions map-wide
+    aléatoires ; 70% restent sur place (cadavre / traînée de queue).
+    Généralise le 70/30 d'A0.7 au sprint : l'offre ambiante se
+    nourrit de TOUTE dépense, pas seulement des morts, et la richesse
+    ne se concentre pas là où elle a été perdue.
+    NB : rendu Pixi du proto porté plus tard (fin ARENA-1) ; on valide
+    d'abord la MÉCANIQUE en cercles canvas.
+[x] A1.8  Area of Interest : n'envoyer à chaque joueur que les entités proches.
+          (Ligne accidentellement écrasée par l'insertion d'A1.7bis,
+          restaurée.) FAIT (2026-07-24, validé + mesuré) : @view() sur
+          la map food + StateView par client + diff de bulle
+          (AOI_RADIUS 1200) toutes les 10 ticks via la grille spatiale.
+          Joueurs NON filtrés (choix : 16 têtes = miettes, minimap) ->
+          radar-à-joueurs encore scriptable, À FERMER avant l'argent
+          réel (étendre l'AoI aux joueurs). MESURE : régime 2274 B/s
+          (churn de bulle ~1.5KB/s en mouvement) vs 750 avant — le
+          gain est ailleurs : état initial ~6x plus léger, coût
+          indépendant de la taille du monde, et surtout ANTI-MAPHACK
+          (la donnée lointaine ne quitte JAMAIS le serveur — seule
+          protection incassable ; cacher côté client = obfuscation).
+          Bulle rendue visible au client (cercle pointillé debug).
 [ ] A1.9  Rage-quit / déconnexion : serpent immobile et tuable + fenêtre de reconnexion.
 [ ] A1.10 Test multijoueur réel avec latence simulée ; stabilité d'une room sous charge.
 ==> JALON : une room jouable, fluide, autoritative, à plusieurs. Toujours sans argent.
@@ -234,6 +400,17 @@ PHASE ARENA-4 — ANTI-TRICHE & MATCHMAKING  (le vrai mur technique)
           (bot containment : suspects isolés entre eux sans le savoir).
 [ ] A4.4  Rate-limit d'entrée + anti-Sybil best-effort.
 [ ] A4.5  Monitoring / alertes des dérives économiques (extraction anormale, feeding).
+[ ] A4.6  RED-TEAM ÉCONOMIQUE (idée user, 2026-07-24) : construire NOUS-MÊMES
+          le bot optimal (sur la base des clients headless d'A1.10) et
+          mesurer, économie en place : (1) est-il tuable par un humain
+          (hypothèse : oui — encerclement/blocage = géométrie, pas
+          réflexes ; extraction = fenêtre de kill BY DESIGN) ;
+          (2) surtout : son EV/heure net (rake + morts) en mode
+          "rentier profil bas" (farm ambiant sans combat, extractions
+          petites et fréquentes). EV > 0 = alarme rouge -> re-tuning
+          (valeur ambiante D71, rake, tiers A4.2). Le vrai danger
+          n'est pas le bot immortel, c'est le bot RENTABLE sans risque.
+          Prérequis : extraction + économie portées dans arena.
   NB : collusion-nourrissage DÉSAMORCÉE par le buy-in variable (D67) ; reste best-effort.
 
 
