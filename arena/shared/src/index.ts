@@ -76,6 +76,12 @@ export const SERVER_TICK_RATE = 30;              // simulation steps per second
 export const BROADCAST_RATE = 20;                // state patches per second
 export const TICK_DT = 60 / SERVER_TICK_RATE;    // "60fps frames" per tick — CONSTANT
 export const SPAWN_GRACE_TICKS = SERVER_TICK_RATE * 3; // 3s intangible after spawn
+// Disconnect rule (user, 2026-07-24): a disconnected snake freezes,
+// gray and HARMLESS (out of the collision world entirely), and turns
+// into corpse orbs where it stood after this window. Long enough to
+// survive a network blip, short enough that rage-quitting is never a
+// strategy — the money always returns to the arena.
+export const DISCONNECT_TTL_TICKS = SERVER_TICK_RATE * 5; // 5s then corpse
 
 // --- Messages -------------------------------------------------------
 

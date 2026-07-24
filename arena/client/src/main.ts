@@ -26,6 +26,10 @@ interface NetPlayer {
     score: number;
     gen: number;     // epoch marker: changes on respawn (teleport)
     graced: boolean; // spawn protection: rendered translucent
+    connected: boolean; // A1.9: false = frozen prey, rendered gray
+    // synced ONLY while frozen (flattened x,y pairs): lets clients
+    // that joined after the disconnect see the frozen body
+    frozenBody: ArrayLike<number>;
 }
 
 const statusEl = document.getElementById("status")!;
@@ -408,12 +412,31 @@ function render(now: number) {
         const cy = half + py * scale;
         const dims = describeSnakeFromScore(p.score);
         const r = Math.max(dims.radius * scale, 2.5);
-        // spawn grace: translucent, and visibly so
-        ctx.globalAlpha = p.graced ? 0.4 : 1;
-
-        // body: locally regrown, chasing the rendered head
-        const body = updateBody(id, px, py, p.score, boosting, dtFrames);
-        ctx.fillStyle = id === myId ? "#2a2" : "#a50";
+        // A1.9: an offline snake is frozen, gray and harmless — it
+        // will turn into orbs if the owner doesn't come back. Its
+        // body must FREEZE too: the server stops moving its tracers,
+        // so we stop running follow-the-leader locally, otherwise our
+        // copy collapses onto the still head in ~2s.
+        const offline = p.connected === false;
+        // translucent = intangible, one visual signal for both spawn
+        // grace and disconnection
+        ctx.globalAlpha = p.graced || offline ? 0.4 : 1;
+        // body: locally regrown, chasing the rendered head — except
+        // when frozen: redraw the last known body untouched
+        let body = offline
+            ? (bodies.get(id) ?? [])
+            : updateBody(id, px, py, p.score, boosting, dtFrames);
+        // late joiner: no local history for this frozen snake — build
+        // the body once from the server's snapshot and cache it (it
+        // also seeds follow-the-leader if the player comes back)
+        if (offline && body.length === 0 && p.frozenBody.length > 0) {
+            body = [];
+            for (let i = 0; i + 1 < p.frozenBody.length; i += 2) {
+                body.push({ x: p.frozenBody[i], y: p.frozenBody[i + 1] });
+            }
+            bodies.set(id, body);
+        }
+        ctx.fillStyle = offline ? "#555" : id === myId ? "#2a2" : "#a50";
         for (const tracer of body) {
             ctx.beginPath();
             ctx.arc(half + tracer.x * scale, half + tracer.y * scale, r, 0, 2 * Math.PI);
@@ -423,11 +446,15 @@ function render(now: number) {
         // head: me in green, others in orange, boosting in white
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-        ctx.fillStyle = boosting ? "#fff" : id === myId ? "#4f4" : "#f80";
+        ctx.fillStyle = offline ? "#777" : boosting ? "#fff" : id === myId ? "#4f4" : "#f80";
         ctx.fill();
         // name + score label
-        ctx.fillStyle = "#8f8";
-        ctx.fillText(`${p.name} (${Math.round(p.score)})`, cx + r + 2, cy - r - 2);
+        ctx.fillStyle = offline ? "#999" : "#8f8";
+        ctx.fillText(
+            `${p.name} (${Math.round(p.score)})${offline ? " (offline)" : ""}`,
+            cx + r + 2,
+            cy - r - 2,
+        );
 
         ctx.globalAlpha = 1;
         // debug: my AoI bubble — pellets only exist inside it, which

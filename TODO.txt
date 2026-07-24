@@ -344,9 +344,62 @@ PHASE ARENA-1 — SERVEUR AUTORITATIF & NETCODE  (toujours ZÉRO Solana)
           (la donnée lointaine ne quitte JAMAIS le serveur — seule
           protection incassable ; cacher côté client = obfuscation).
           Bulle rendue visible au client (cercle pointillé debug).
-[ ] A1.9  Rage-quit / déconnexion : serpent immobile et tuable + fenêtre de reconnexion.
-[ ] A1.10 Test multijoueur réel avec latence simulée ; stabilité d'une room sous charge.
-==> JALON : une room jouable, fluide, autoritative, à plusieurs. Toujours sans argent.
+[x] A1.9  Rage-quit / déconnexion : serpent immobile et tuable + fenêtre de reconnexion.
+          FAIT (2026-07-24, validé, règle AMENDÉE en cours de route) :
+          déconnexion -> serpent gelé GRIS TRANSLUCIDE, INOFFENSIF
+          (hors du monde de collision : ne tue plus, ne meurt plus au
+          contact), puis transformé en orbes-cadavre SUR PLACE après
+          DISCONNECT_TTL_TICKS (5s). Retour avant l'échéance (blip
+          réseau) = reprise exacte, corps intact. DÉCISIONS :
+          (1) « immobile et TUABLE » ABANDONNÉ après playtest : le
+          corps gelé restant létal était un mur défensif quasi
+          intuable -> le rage-quit devenait une PROTECTION. Nouvelle
+          règle : inoffensif + TTL courte, la déconnexion coûte
+          TOUJOURS tout le score (conservation : orbes au sol).
+          (2) frozenBody = l'UNIQUE exception au « never sync bodies »
+          (ArraySchema x,y rempli one-shot au freeze, vidé au retour,
+          0 octet en régime normal) : un corps gelé ne peut pas être
+          régénéré en observant le mouvement de la tête -> sans ça,
+          hitbox invisible pour les late joiners (bug trouvé en test).
+          (3) Le TICK est l'unique autorité sur l'expiration
+          (allowReconnection "manual", rejetée par la simulation) —
+          pas de second timer réseau qui pourrait diverger du jeu.
+          (4) Bug client corrigé : figer aussi le follow-the-leader
+          local, sinon le corps client s'effondre sur la tête en ~2s.
+          ⚠ NOTÉ pour A4.6 : exploit théorique « esquive par
+          débranchement » (couper la socket = intangible 5s puis
+          reconnexion) — friction au retour à prévoir avant l'argent
+          réel (ex : re-tangible après 1s de canalisation).
+[x] A1.10 Test multijoueur réel avec latence simulée ; stabilité d'une room sous charge.
+          FAIT (2026-07-24, validé + mesuré) : workspace loadtest/
+          (bots.ts) — clients HEADLESS parlant le protocole exact du
+          navigateur (join + intents 20Hz, rien d'autre) = preuve que
+          la frontière autoritative est étanche, et SQUELETTE du bot
+          red-team A4.6. Instrumentation [perf] permanente côté
+          serveur (durée de tick = LA métrique de santé d'une room).
+          MESURES (12 bots + 1 humain, room 13/16, bots longs) :
+          tick avg ~3ms / max ~22ms vs budget 33.3ms -> ~9% utilisé,
+          marge x10 ; client 6424 B/s (têtes globales + churn d'orbes)
+          vs ~30KB/s naïf. Ressenti fluide avec latence simulée.
+          LEÇONS D'ALGO BOT (3 itérations de playtest) :
+          (1) « viser l'orbe la plus proche » = orbite infinie — zone
+          aveugle du RAYON DE BRAQUAGE (R = v/ω ≈ 50px ; un point
+          dans un des 2 cercles de virage est inatteignable en
+          braquant) -> filtre géométrique + engagement de cible ;
+          le boost DOUBLE R. (2) Bots aveugles aux autres serpents =
+          boule de la mort (convergence sur les cadavres,
+          entre-tuerie, ré-appât) -> fuite des têtes proches
+          (corps invisibles : jamais synchronisés — limite notée,
+          perception réelle = A4.6). (3) OBSERVATION ÉCONOMIQUE
+          (user) : +3 orbes/s d'inflation en régime permanent —
+          ARENA-1 n'a PAS de FoodReserve (respawn ambiant = robinet
+          gratuit assumé) ; la simulation démontre en direct la
+          pathologie exacte que D71/FoodReserve doit empêcher.
+          A1.9 re-testé à l'échelle (Ctrl+C flotte = vague de gelés
+          puis de cadavres, RAS).
+==> JALON ATTEINT (2026-07-24) : une room jouable, fluide, autoritative, à
+    plusieurs. Toujours sans argent. Reste (noté A1.7bis) : porter le rendu
+    Pixi + caméra du proto sur le client réseau (cosmétique, hors jalon).
 
 
 --------------------------------------------------------------
@@ -410,6 +463,16 @@ PHASE ARENA-4 — ANTI-TRICHE & MATCHMAKING  (le vrai mur technique)
           petites et fréquentes). EV > 0 = alarme rouge -> re-tuning
           (valeur ambiante D71, rake, tiers A4.2). Le vrai danger
           n'est pas le bot immortel, c'est le bot RENTABLE sans risque.
+          (3) AJOUT (user, 2026-07-24, pendant A1.10) : au-delà du bot
+          tricheur, une SIMULATION DE POPULATION RÉALISTE — bots aux
+          profils de vrais joueurs (chasseur agressif, farmeur
+          prudent, fuyard, kamikaze) qui mangent, attaquent, fuient —
+          pour vérifier que l'économie interne (FoodReserve, 70/30,
+          rake) reste viable sous une population vivante, pas
+          seulement contre un attaquant isolé. Base : loadtest/bots.ts
+          (A1.10), qui gère déjà protocole + ciblage d'orbes avec
+          rayon de braquage ; il manque la perception des autres
+          serpents (map players, déjà synchronisée globalement).
           Prérequis : extraction + économie portées dans arena.
   NB : collusion-nourrissage DÉSAMORCÉE par le buy-in variable (D67) ; reste best-effort.
 

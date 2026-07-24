@@ -1,9 +1,10 @@
 {
     "name": "@nimbo/arena",
     "private": true,
-    "workspaces": ["shared", "server", "client"],
+    "workspaces": ["shared", "server", "client", "loadtest"],
     "scripts": {
         "dev:server": "npm run dev --workspace server",
-        "dev:client": "npm run dev --workspace client"
+        "dev:client": "npm run dev --workspace client",
+        "bots": "npm run bots --workspace loadtest --"
     }
 }

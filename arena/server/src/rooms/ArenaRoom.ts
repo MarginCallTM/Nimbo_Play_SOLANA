@@ -1,5 +1,5 @@
-import { Room, type Client } from "colyseus";
-import { Schema, MapSchema, StateView, type, view } from "@colyseus/schema";
+import { Room, type Client, type Deferred } from "colyseus";
+import { ArraySchema, Schema, MapSchema, StateView, type, view } from "@colyseus/schema";
 import {
     AOI_RADIUS,
     BOOST_ORB_VALUE,
@@ -12,6 +12,7 @@ import {
     RECYCLE_RATIO,
     SPAWN_GRACE_TICKS,
     SERVER_TICK_RATE,
+    DISCONNECT_TTL_TICKS,
     SNAKE_BOOST_COST,
     SNAKE_BOOST_SPEED,
     SNAKE_SPACING,
@@ -40,8 +41,21 @@ export class Player extends Schema {
     // assumes continuous motion (interp buffers, prediction, bodies).
     @type("uint8") gen = 0;
     @type("boolean") graced = true; // synced for translucent rendering
+    // Disconnect rule (A1.9): a disconnected snake freezes, gray and
+    // HARMLESS — out of the collision world entirely — then turns
+    // into corpse orbs after DISCONNECT_TTL_TICKS. Synced so clients
+    // can render it grayed out.
+    @type("boolean") connected = true;
+    // The ONE exception to "never sync bodies": a frozen body cannot
+    // be regrown by observing head movement (there is none), so late
+    // joiners would see a bare head over a very real hitbox. Filled
+    // once at disconnect (flattened x,y pairs), cleared on return —
+    // costs zero bytes while everyone is connected.
+    @type(["float32"]) frozenBody = new ArraySchema<number>();
 
     // --- NOT decorated -> never leaves the server ---
+    sessionId = ""; // back-reference: lets death cleanup find the maps
+    disconnectTicks = 0; // countdown to corpse while disconnected
     desiredAngle = 0;
     wantsBoost = false;
     graceTicks = SPAWN_GRACE_TICKS;
@@ -133,6 +147,17 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // AoI bookkeeping: what each client's view currently contains.
     // Refreshed every AOI_UPDATE_TICKS (the bubble doesn't need 30Hz).
     private inView = new Map<string, Set<Food>>();
+    // Pending reconnection windows (A1.9), held so the tick can
+    // cancel them when the disconnect TTL expires
+    private pendingReconnections = new Map<string, Deferred<Client>>();
+
+    // A1.10 load instrumentation: tick duration is THE health metric
+    // of an authoritative room. Blow the budget (STEP_MS) and the
+    // accumulator falls behind — the whole game slows down for
+    // everyone. Summarized every 5s.
+    private tickMsSum = 0;
+    private tickMsMax = 0;
+    private tickCount = 0;
     private aoiCounter = 0;
     private static readonly AOI_UPDATE_TICKS = 10; // ~333ms
 
@@ -201,7 +226,20 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             this.accumulator += Math.min(deltaMs, ArenaRoom.MAX_FRAME_MS);
             while (this.accumulator >= ArenaRoom.STEP_MS) {
                 this.accumulator -= ArenaRoom.STEP_MS;
+                const t0 = performance.now();
                 this.tick();
+                const ms = performance.now() - t0;
+                this.tickMsSum += ms;
+                if (ms > this.tickMsMax) this.tickMsMax = ms;
+                if (++this.tickCount >= SERVER_TICK_RATE * 5) {
+                    const avg = (this.tickMsSum / this.tickCount).toFixed(2);
+                    console.log(
+                        `[perf] tick avg=${avg}ms max=${this.tickMsMax.toFixed(2)}ms` +
+                        ` budget=${ArenaRoom.STEP_MS.toFixed(1)}ms` +
+                        ` players=${this.state.players.size} food=${this.state.food.size}`,
+                    );
+                    this.tickMsSum = this.tickMsMax = this.tickCount = 0;
+                }
             }
         });
     }
@@ -211,11 +249,25 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // derived from wall-clock time.
     tick() {
         const dt = TICK_DT;
+        // disconnected snakes whose window expired this tick — never
+        // delete from a map while iterating it
+        const expired: Player[] = [];
         this.state.players.forEach((player) => {
             // spawn grace counts down in server ticks
             if (player.graceTicks > 0) {
                 player.graceTicks -= 1;
                 if (player.graceTicks <= 0) player.graced = false;
+            }
+
+            // A1.9 disconnect rule: a disconnected snake is FROZEN
+            // and harmless — no steering, no movement, no eating, no
+            // collisions. The TICK is the single authority on its
+            // fate: when the window runs out, it becomes corpse orbs
+            // where it stood (its score returns to the arena).
+            if (!player.connected) {
+                player.disconnectTicks -= 1;
+                if (player.disconnectTicks <= 0) expired.push(player);
+                return;
             }
 
             // boost gating + drain (proto A0.3): sprinting burns score
@@ -296,6 +348,8 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             }
         });
 
+        expired.forEach((player) => this.expireDisconnected(player));
+
         // --- collision phase (ported from the proto, A0.4) ----------
         // Rebuild the segment grid from scratch: bodies moved, every
         // cell key is stale. Heads are inserted too — that makes
@@ -304,6 +358,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         let maxRadius = 0;
         this.state.players.forEach((player) => {
             if (player.graced) return; // intangible: kills nothing
+            if (!player.connected) return; // frozen: harmless (A1.9)
             const radius = describeSnakeFromScore(player.score).radius;
             if (radius > maxRadius) maxRadius = radius;
             this.segmentGrid.insert({ x: player.x, y: player.y, radius, owner: player });
@@ -315,6 +370,8 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         const deaths = new Set<Player>();
         this.state.players.forEach((player) => {
             if (player.graced) return; // intangible: cannot die
+            if (!player.connected) return; // frozen: immobile, only
+                                           // the TTL can end it (A1.9)
             const radius = describeSnakeFromScore(player.score).radius;
             // lethal border
             if (Math.hypot(player.x, player.y) > WORLD_RADIUS - radius) {
@@ -343,10 +400,11 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         }
     }
 
-    // Death resolution: the corpse seeds the arena (the kill IS the
-    // loot — strict conservation, nothing evaporates), then the player
-    // restarts small. The 70/30 economy split will live HERE.
-    private resolveDeath(player: Player) {
+    // Corpse drop, shared by two exits: death (then respawn) and the
+    // reconnection window expiring (then removal). The kill IS the
+    // loot — strict conservation, nothing evaporates. The 70/30
+    // economy split will live HERE.
+    private dropCorpse(player: Player) {
         // corpse: score becomes big orbs spread along the body
         const orbCount = Math.floor(player.score / DEATH_ORB_VALUE);
         const tracers = player.tracers;
@@ -368,6 +426,23 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
                 DEATH_ORB_VALUE,
             );
         }
+    }
+
+    // A1.9: the disconnect window ran out — the frozen snake becomes
+    // corpse orbs where it stood (strict conservation: its score
+    // returns to the arena) and the player is removed for good. Only
+    // the TICK calls this: the simulation is the single authority on
+    // death, the reconnection window just follows (manual reject).
+    private expireDisconnected(player: Player) {
+        this.dropCorpse(player);
+        this.state.players.delete(player.sessionId);
+        this.inView.delete(player.sessionId);
+        this.pendingReconnections.get(player.sessionId)?.reject(new Error("disconnect window expired"));
+        console.log(`[expired] ${player.sessionId} — corpse dropped`);
+    }
+
+    private resolveDeath(player: Player) {
+        this.dropCorpse(player);
 
         // respawn fresh ("repay to respawn" arrives with the economy)
         player.score = SPAWN_SCORE;
@@ -393,6 +468,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             throw new Error("protocol mismatch: refresh your browser");
         }
         const player = new Player();
+        player.sessionId = client.sessionId;
         player.name = options.name || "anonymous";
         player.score = SPAWN_SCORE; // fixed for now; variable buy-in later
         // random spawn inside half the world radius
@@ -408,10 +484,46 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         console.log(`[join] ${client.sessionId} name=${player.name} stake=${options.stake}`);
     }
 
-    onLeave(client: Client) {
-        this.state.players.delete(client.sessionId);
-        this.inView.delete(client.sessionId);
-        console.log(`[leave] ${client.sessionId}`);
+    // A1.9: disconnection freezes the snake — gray, harmless, out of
+    // the collision world — and arms a countdown IN THE SIMULATION
+    // (disconnectTicks). Come back before it runs out (network blip)
+    // and you resume; otherwise the tick turns the snake into corpse
+    // orbs and rejects this window ("manual" mode: no second timer
+    // that could disagree with the simulation).
+    async onLeave(client: Client) {
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
+
+        player.connected = false;
+        player.wantsBoost = false; // stale intent must not survive
+        player.disconnectTicks = DISCONNECT_TTL_TICKS;
+        // one-shot body snapshot for late joiners (see Player field)
+        for (const t of player.tracers) {
+            player.frozenBody.push(t.x, t.y);
+        }
+        console.log(`[leave] ${client.sessionId} — ${DISCONNECT_TTL_TICKS} ticks to reconnect`);
+
+        try {
+            // resolves with the NEW client if the player comes back
+            // in time; rejected by expireDisconnected() otherwise
+            const reconnection = this.allowReconnection(client, "manual");
+            this.pendingReconnections.set(client.sessionId, reconnection);
+            const newClient = await reconnection;
+            player.connected = true;
+            player.frozenBody.clear(); // moving again: back to local regrow
+            // the returning socket is brand new: fresh AoI view, and
+            // clearing inView makes the next diff resubscribe the
+            // whole bubble
+            newClient.view = new StateView();
+            this.inView.delete(client.sessionId);
+            console.log(`[rejoin] ${client.sessionId}`);
+        } catch {
+            // the simulation already resolved this snake's fate
+            // (corpse + removal in expireDisconnected) — nothing to do
+            console.log(`[gone] ${client.sessionId}`);
+        } finally {
+            this.pendingReconnections.delete(client.sessionId);
+        }
     }
 
     onDispose() {
