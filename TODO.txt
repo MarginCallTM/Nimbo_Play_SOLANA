@@ -398,8 +398,31 @@ PHASE ARENA-1 — SERVEUR AUTORITATIF & NETCODE  (toujours ZÉRO Solana)
           A1.9 re-testé à l'échelle (Ctrl+C flotte = vague de gelés
           puis de cadavres, RAS).
 ==> JALON ATTEINT (2026-07-24) : une room jouable, fluide, autoritative, à
-    plusieurs. Toujours sans argent. Reste (noté A1.7bis) : porter le rendu
-    Pixi + caméra du proto sur le client réseau (cosmétique, hors jalon).
+    plusieurs. Toujours sans argent.
+[x] A1.11 (post-jalon) Portage Pixi + caméra du proto sur le client réseau.
+          FAIT (2026-07-24, validé) : render.ts = couche Pixi pure
+          (le netcode calcule les positions, la vue les affiche —
+          même split sim/rendu que le proto). Texture partagée,
+          SnakeView, labels, minimap SELF-ONLY (pas de radar joueurs
+          dans l'UI), input proto (centre écran -> souris, boost
+          clic/espace). LEÇON MAJEURE : la vue monde-entier (x0.117)
+          MASQUAIT les artefacts netcode ; à l'échelle 1 + caméra,
+          200ms simulées = quasi injouable (écart temporel cumulé
+          ~300ms entre SA tête prédite (futur) et les ennemis
+          interpolés (passé) = 70-140px de désaccord de collision).
+          CORRECTIFS validés : (1) DEAD RECKONING — les autres sont
+          projetés à leur PRÉSENT ESTIMÉ (copie locale auto-avancée
+          au modèle partagé + convergence 15%/frame vers la
+          projection du dernier snapshot, cap 300ms) ; remplace
+          l'interpolation A1.6 (historique git) ; faux pendant leurs
+          virages (borné par leur rayon de braquage). (2) CAMÉRA
+          AMORTIE 15%/frame : les corrections A1.7 bougent la tête
+          de quelques px au lieu de secouer le monde. RESTE
+          INCOMPRESSIBLE : ~RTT/2 d'avance de sa propre tête ->
+          vraie équité de collision = LAG COMPENSATION serveur
+          (rewind), décision de design épineuse (favoriser qui ?),
+          reportée au durcissement pré-argent réel. Barre de test :
+          cible réelle = serveurs régionaux 30-80ms ; 200ms = stress.
 
 
 --------------------------------------------------------------
@@ -473,6 +496,21 @@ PHASE ARENA-4 — ANTI-TRICHE & MATCHMAKING  (le vrai mur technique)
           (A1.10), qui gère déjà protocole + ciblage d'orbes avec
           rayon de braquage ; il manque la perception des autres
           serpents (map players, déjà synchronisée globalement).
+          (4) AJOUT (user, 2026-07-24) : SCÉNARIO BASSE FRÉQUENTATION
+          (les débuts du jeu) — bots qui misent, accumulent, EXTRAIENT
+          volontairement au-delà d'un seuil et NE respawnent PAS ;
+          mesurer à N=2/3/5 : vitesse de drainage de l'arène, EV des
+          premiers arrivés. ANALYSE PRÉALABLE (2026-07-24) :
+          l'insolvabilité est IMPOSSIBLE par conservation (somme
+          extractions <= somme mises - rake, à toute population) ; le
+          vrai risque est l'ATTRACTIVITÉ (serveur vide = EV négative
+          garantie sans upside -> spirale de désertion, cold-start
+          type poker room). Leviers notés : concentrer la liquidité
+          (1 room/tier), WORLD_RADIUS+FOOD_COUNT fonction de la
+          population, injections marketing bornées au bootstrap
+          (D71, botable -> après protections) ; REJETÉ d'office :
+          bots maison financés house (= modèle LP par la porte de
+          derrière + malhonnêteté vis-à-vis des joueurs).
           Prérequis : extraction + économie portées dans arena.
   NB : collusion-nourrissage DÉSAMORCÉE par le buy-in variable (D67) ; reste best-effort.
 

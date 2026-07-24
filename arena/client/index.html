@@ -2,12 +2,24 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <title>Nimbo Arena — net test</title>
+        <title>Nimbo Arena</title>
+        <style>
+            html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1020; }
+            /* HUD overlays sit ON TOP of the Pixi canvas (DOM, not
+               stage text: free layout, no per-frame redraw cost) */
+            #overlay {
+                position: fixed; top: 8px; left: 8px; z-index: 10;
+                color: #e2e8f0; font: 13px monospace;
+                pointer-events: none; /* clicks fall through to the game */
+            }
+            #net { color: #6a9bf5; }
+        </style>
     </head>
-    <body style="background:#111; color:#8f8; font-family:monospace; margin:0; display:flex; flex-direction:column; align-items:center">
-        <p id="status">connecting...</p>
-        <p id="net" style="color:#59f"></p>
-        <canvas id="view" width="700" height="700"></canvas>
+    <body>
+        <div id="overlay">
+            <div id="status">connecting...</div>
+            <div id="net"></div>
+        </div>
         <script type="module" src="/src/main.ts"></script>
     </body>
 </html>
