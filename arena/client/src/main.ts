@@ -3,6 +3,7 @@ import {
     ARENA_ROOM,
     BOOST_ORB_VALUE,
     BROADCAST_RATE,
+    FOOD_EAT_RANGE,
     PROTOCOL_VERSION,
     SNAKE_BOOST_SPEED,
     SNAKE_SPACING,
@@ -42,6 +43,17 @@ const statusEl = document.getElementById("status")!;
 const netEl = document.getElementById("net")!;
 
 const players = new Map<string, NetPlayer>();
+// AoI-local food data (positions/values), mirrored from the server
+// state — the render layer holds the sprites, this holds the numbers
+const foods = new Map<string, { x: number; y: number; value: number }>();
+// --- Eat prediction ---------------------------------------------------
+// A1.5 applied to the WORLD: a pellet entering the PREDICTED head's
+// mouth range is hidden immediately (the world must react to you this
+// frame, not one RTT later). The server confirms by actually removing
+// it; if no confirmation lands within the timeout (we swerved at the
+// last instant and never ate it server-side), the pellet pops back.
+const predictedEaten = new Map<string, number>(); // food id -> hidden at
+const EAT_CONFIRM_TIMEOUT_MS = 1000;
 // last seen gen per player: a change means TELEPORT — every system
 // that assumes continuous motion must reset for that player
 const lastGen = new Map<string, number>();
@@ -314,14 +326,15 @@ async function main() {
         remoteRender.delete(String(id));
         view.removeSnake(String(id));
     });
-    // food add/remove drives the sprite pool directly — no local map:
-    // the render layer IS the client-side representation of food
     callbacks.onAdd("food", (food, id) => {
         const f = food as { x: number; y: number; value: number };
+        foods.set(String(id), f);
         view.addFood(String(id), f.x, f.y, f.value);
     });
     callbacks.onRemove("food", (_food, id) => {
-        view.removeFood(String(id));
+        foods.delete(String(id));
+        predictedEaten.delete(String(id)); // server confirmed our bite
+        view.removeFood(String(id));       // no-op if already hidden
     });
 
     // A1.6: photograph every OTHER player on each incoming patch —
@@ -378,7 +391,7 @@ async function main() {
         const jsonPerSec = new TextEncoder().encode(JSON.stringify(snapshot)).length * BROADCAST_RATE;
         const avg = netPackets ? Math.round(netBytes / netPackets) : 0;
         netEl.textContent =
-            `net in: ${netBytes} B/s (${netPackets} msg, avg ${avg} B/msg)` +
+            `rtt ${Math.round(rttMs)}ms — net in: ${netBytes} B/s (${netPackets} msg, avg ${avg} B/msg)` +
             ` — naive full-state JSON: ~${jsonPerSec} B/s`;
         netBytes = 0;
         netPackets = 0;
@@ -402,9 +415,10 @@ async function main() {
         if (e.code === "Space") input.boost = false;
     });
 
-    // Send intent at a fixed 20Hz — never per mousemove (that can
-    // fire at 1000Hz and flood the server)
-    setInterval(() => room.send("input", input), 50);
+    // Send intent at a fixed 30Hz, aligned with the server tick rate
+    // (sending slower than the sim adds up to a whole tick of intent
+    // lag) — and never per mousemove (that can fire at 1000Hz)
+    setInterval(() => room.send("input", input), 33);
 
     // A1.7: RTT probe. EMA smoothing (80/20) so one weird sample
     // doesn't jerk the reconciliation window around.
@@ -495,7 +509,33 @@ async function main() {
                 view.camera(cam.x, cam.y);
                 view.drawDebug(px, py, p.x, p.y, dims.radius);
                 view.drawMinimap(px, py);
+
+                // eat prediction: hide pellets the PREDICTED head is
+                // eating right now — the server's removal confirms it
+                // ~RTT later. Mirror the server's gates exactly
+                // (graced eats nothing, range from the same dims).
+                if (!p.graced) {
+                    const eatRange = dims.radius + FOOD_EAT_RANGE;
+                    for (const [fid, f] of foods) {
+                        if (predictedEaten.has(fid)) continue;
+                        const dx = f.x - px;
+                        const dy = f.y - py;
+                        if (dx * dx + dy * dy <= eatRange * eatRange) {
+                            predictedEaten.set(fid, now);
+                            view.removeFood(fid);
+                        }
+                    }
+                }
             }
+        }
+
+        // eat mispredictions: the server never confirmed — the pellet
+        // is still alive, put its sprite back
+        for (const [fid, hiddenAt] of predictedEaten) {
+            if (now - hiddenAt <= EAT_CONFIRM_TIMEOUT_MS) continue;
+            predictedEaten.delete(fid);
+            const f = foods.get(fid);
+            if (f) view.addFood(fid, f.x, f.y, f.value);
         }
     });
 }

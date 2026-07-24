@@ -469,6 +469,17 @@ PHASE ARENA-3 — INTÉGRATION SERVEUR <-> CHAÎNE  (settlement réel)
 PHASE ARENA-4 — ANTI-TRICHE & MATCHMAKING  (le vrai mur technique)
   Bots = mur n°1 d'un jeu de skill à argent. Travail CONTINU, jamais "fini".
 --------------------------------------------------------------
+[ ] A4.0  ÉQUITÉ DE COLLISION SOUS LATENCE (constat user 2026-07-24, post-Pixi :
+          hitbox non fiable à ~200ms RTT, correcte en dessous ~100ms).
+          Deux solutions CONNUES, à combiner : (1) LAG COMPENSATION
+          serveur (rewind ~500ms d'historique de positions, rejouer la
+          collision au moment vécu par le joueur) — standard industrie
+          MAIS décision de design épineuse en PvP à argent (les 2
+          joueurs sont tireur ET cible ; piste : rewind pour sauver la
+          victime, jamais pour valider un kill) ; (2) PING GATE : rooms
+          à argent réel interdites au-dessus d'un seuil de RTT (mesure
+          déjà dispo : ping/pong A1.7, affiché au HUD) + serveurs
+          régionaux (cible réelle 30-80ms). Sans (2), (1) ne suffit pas.
 [ ] A4.1  Revue : serveur autoritatif durci (aucune confiance au client) — audit.
 [ ] A4.2  Matchmaking par TIER de mise / skill (ségrège whales / fish / bots ; résout
           shark-vs-fish et le whale-stomping du buy-in variable).
