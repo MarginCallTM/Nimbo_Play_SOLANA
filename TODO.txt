@@ -22,7 +22,7 @@
 
 ##############################################################
   PARTIE 1 — PRODUIT PHARE : ARENA (jeu P2E)
-  >>> PROCHAINE ÉTAPE : PHASE ARENA-1 (A1.1) <<<
+  >>> PROCHAINE ÉTAPE : PHASE ARENA-2 (A2.2 — structs sans logique) <<<
 ##############################################################
 
   Décisions encore OUVERTES (à trancher en cours de route) :
@@ -431,12 +431,40 @@ PHASE ARENA-2 — PRIMITIF D'ESCROW ON-CHAIN  (programme Anchor GÉNÉRIQUE)
   Réutilise à fond les patterns loterie (PDA, vault, CPI, has_one, anti-rejeu).
   RÈGLE : pas de logique tant que les structs ne compilent pas (cf loterie phase 2).
 --------------------------------------------------------------
-[ ] A2.1  Nouveau programme programs/arena/ (séparé, aucun état partagé loterie).
-[ ] A2.2  Structs SANS logique : Round PDA ["round", round_id], Vault PDA
+[x] A2.1  Nouveau programme programs/arena/ (séparé, aucun état partagé loterie).
+          -> FAIT (2026-07-24, make build vert) : keypair générée par
+             l'utilisateur AVANT le 1er build (Program ID définitif dès
+             declare_id! : 8qGdXYu3prvvvhCEfMnatdv5BAQyVL5NWsh7v5esEF2d),
+             Cargo.toml répliqué de lottery (anchor-lang 0.31.1,
+             overflow-checks=true), Cargo.lock COPIÉ de lottery (hérite
+             les pins D41 — jamais de cargo update), Anchor.toml à jour,
+             lib.rs = declare_id + module vide + modèle de confiance
+             documenté EN CLAIR dans le doc-comment (y compris ce qui
+             n'est PAS protégé). /!\ target/ non committé : la keypair
+             arena est locale (à sauvegarder au déploiement devnet).
+[x] A2.2  Structs SANS logique : Round PDA ["round", round_id], Vault PDA
           ["vault", round_id], FoodReserve PDA (global persistant), ExtractReceipt
           PDA ["extract", round_id, nonce]. Enum d'état + erreurs custom + tailles (space).
-[ ] A2.3  initialize_round(round_id, end_ts, server_authority, ...) : ouvre le round,
+          -> FAIT (2026-07-28, retapé main, make build vert) : Round LEN=127
+             (4 compteurs = registre de l'invariant D55 paid <= deposited
+             + injected), Vault = SystemAccount SANS struct (D20bis),
+             FoodReserve LEN=57 (singleton, données+lamports MÊME compte,
+             jamais sous le rent-exempt), ExtractReceipt LEN=73 (anti-rejeu
+             par EXISTENCE du PDA, init échoue si (round_id, nonce) déjà
+             réglé), ArenaError 9 variantes. Rappel : un LEN faux compile —
+             recompter à chaque relecture.
+[x] A2.3  initialize_round(round_id, end_ts, server_authority, ...) : ouvre le round,
           injecte optionnellement depuis FoodReserve (VRAI transfert de lamports).
+          -> FAIT (2026-07-28, retapé main + fixes, make build vert) : 3
+             instructions — initialize_reserve (singleton, 1er appelant =
+             authority, À APPELER DANS LA FOULÉE DU DÉPLOIEMENT sinon squat
+             = vol de réserve via round hostile) ; initialize_round
+             (permissionless, authority/treasury en args Pubkey, checks
+             InvalidDuration + InvalidSplit casté u64, vault SystemAccount
+             dérivé sans init, bumps stockés) ; inject_reserve (SÉPARÉE de
+             l'init comme décidé : débit lamports DIRECT — la réserve est
+             program-owned, pas de CPI System —, plancher rent-exempt,
+             has_one authority, RoundNotOpen, compteurs checked_add).
 [ ] A2.4  join(stake) : dépôt VARIABLE permissionless dans le Vault (buy-in),
           SPLIT (D71) : rake 5.5% -> maison + ~2% pellet fund -> FoodReserve
           + solde = valeur de spawn. Event Joined. (= buy_ticket généralisé.)
