@@ -465,17 +465,74 @@ PHASE ARENA-2 — PRIMITIF D'ESCROW ON-CHAIN  (programme Anchor GÉNÉRIQUE)
              l'init comme décidé : débit lamports DIRECT — la réserve est
              program-owned, pas de CPI System —, plancher rent-exempt,
              has_one authority, RoundNotOpen, compteurs checked_add).
-[ ] A2.4  join(stake) : dépôt VARIABLE permissionless dans le Vault (buy-in),
+[x] A2.4  join(stake) : dépôt VARIABLE permissionless dans le Vault (buy-in),
           SPLIT (D71) : rake 5.5% -> maison + ~2% pellet fund -> FoodReserve
           + solde = valeur de spawn. Event Joined. (= buy_ticket généralisé.)
-[ ] A2.5  settle_extraction(round, player, amount, nonce) : authority SIGNE (modèle A),
+          -> FAIT (2026-07-29, retapé main + fixes, make build vert) : 3 CPI
+             System depuis le wallet joueur (inverse d'inject_reserve : le
+             wallet est system-owned -> CPI + signature obligatoires),
+             split par soustraction (les poussières de division vont au
+             spawn_value : les 3 parts somment EXACTEMENT à stake), skip
+             des CPI à 0 lamport (stakes minuscules), has_one = treasury
+             (anti-substitution), DOUBLE verrou temporel (state Open ET
+             now < end_timestamp — l'état ne bascule qu'à l'appel
+             d'end_round), event Joined (pont serveur A3.2 / indexer).
+[x] A2.5  settle_extraction(round, player, amount, nonce) : authority SIGNE (modèle A),
           anti-rejeu via création du ExtractReceipt PDA, garde amount <= vault.lamports.
-[ ] A2.6  end_round() : balaie le solde restant du Vault vers FoodReserve.
-[ ] A2.7  Events : Joined, Extracted, RoundEnded.
-[ ] A2.8  Tests Anchor (succès + ÉCHECS) : rejeu refusé, insolvabilité impossible,
+          -> FAIT (2026-07-29, retapé main + fixes, make build vert) : NOUVEAU
+             CONCEPT invoke_signed — le vault est un PDA system-owned SANS clé
+             privée : CpiContext::new_with_signer + seeds [VAULT_SEED,
+             round_id, vault_bump] (le bump fait partie de la preuve), le
+             runtime re-dérive l'adresse avec NOTRE program id et accorde le
+             statut signer le temps du CPI. Anti-rejeu = init du reçu (le
+             runtime refuse, zéro require!), has_one = authority, garde
+             amount <= lamports - minimum_balance(0) (plancher rent du
+             vault ; les miettes partent au sweep d'A2.6), compteur
+             total_paid (invariant D55), PAS de check end_timestamp
+             (une extraction légitime réglée juste après la deadline reste
+             due — seule la bascule d'état par end_round ferme la porte),
+             rent du reçu payée par l'authority, event Extracted.
+[x] A2.6  end_round() : balaie le solde restant du Vault vers FoodReserve.
+          -> FAIT (2026-07-30, retapé main, make build vert) : double garde
+             (state Open sinon RoundNotOpen + now >= end_timestamp sinon
+             RoundNotEnded — personne, pas même l'authority, ne clôture en
+             avance), authority-only (un end_round permissionless pourrait
+             griefer les settlements de dernière seconde ; prix accepté :
+             serveur mort = round ouvert, close permissionless après délai
+             de grâce -> APROD), sweep INTÉGRAL via invoke_signed (vider à
+             0 exactement est légal, le vault est réapé — seul
+             0 < solde < plancher rent est interdit), la bascule state=Ended
+             ferme join/inject/settle d'un coup, total_swept_in += sweep
+             (SOL orphelin D50), event RoundEnded.
+[x] A2.7  Events : Joined, Extracted, RoundEnded.
+          -> FAIT au fil de l'eau (chaque event émis inline dans son
+             instruction : A2.4/A2.5/A2.6). Les payloads seront prouvés
+             par les tests A2.8 (listeners).
+[x] A2.8  Tests Anchor (succès + ÉCHECS) : rejeu refusé, insolvabilité impossible,
           mauvaise authority, round fermé, double-settle, buy-in variable cohérent.
-[ ] A2.9  Prouver PAR TEST l'invariant de solvabilité : sum(payouts) <= dépôts + injecté.
-==> JALON : anchor test VERT sur arena. (Comme la loterie : rien d'intégré avant ça.)
+          -> FAIT (2026-07-30, tests/arena.ts, 21 tests) : 8 succès (split
+             exact au lamport près avec stake NON-divisible, stake minuscule
+             à parts tronquées, bumps stockés vs canoniques, sweep intégral,
+             payloads des 3 events) + 13 échecs, chacun assertant le CODE
+             D'ERREUR EXACT (un test qui passe sur la mauvaise erreur = un
+             verrou qu'on croit fermé). Leçons de test apprises : assertions
+             en DELTAS (la FoodReserve est un singleton partagé), plancher
+             de rent du vault au premier join (le runtime refuse un dépôt
+             sous ~0.00089 SOL dans un compte vide), .accountsPartial()
+             (Anchor 0.30+ auto-résout les PDAs depuis l'IDL), listeners
+             d'events armés TOUS EN AMONT (la souscription log partagée
+             d'Anchor se démonte à zéro listener et race avec le re-add),
+             ts-mocha transpile SANS typecheck (erreurs de type invisibles
+             au run — lottery.ts en a 14, backlog cosmétique).
+[x] A2.9  Prouver PAR TEST l'invariant de solvabilité : sum(payouts) <= dépôts + injecté.
+          -> FAIT (2026-07-30) : scénario complet 3 joueurs (stakes variés
+             non-divisibles), injection, 2 settles, p3 jamais sorti = SOL
+             orphelin balayé. 4 assertions en escalade : compteurs on-chain
+             exacts, invariant D55, soldes RÉELS (pas ce que le programme
+             prétend), et l'équation de conservation finale :
+             deltaTreasury + deltaReserve + payouts === somme des stakes.
+==> JALON ATTEINT (2026-07-30) : anchor test VERT sur arena — 40 passing
+    (22 arena + 18 lottery). Le socle escrow est prouvé par test.
 
 
 --------------------------------------------------------------

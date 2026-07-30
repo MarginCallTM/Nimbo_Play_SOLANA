@@ -1,5 +1,6 @@
 // programs/arena/src/lib.rs
 use anchor_lang::prelude::*;
+use anchor_lang::system_program;
 
 declare_id!("8qGdXYu3prvvvhCEfMnatdv5BAQyVL5NWsh7v5esEF2d");
 
@@ -121,6 +122,216 @@ pub mod arena {
         Ok(())
     }
 
+    /// Variable buy-in (D71 split): rake -> treasury, reserve share ->
+    /// FoodReserve, remainder -> vault as the player's spawn value.
+    /// Permissionless: joining a round is the player's choice.
+    pub fn join(ctx: Context<JoinRound>, stake: u64) -> Result<()> {
+        let round = &ctx.accounts.round;
+        require!(round.state == RoundState::Open, ArenaError::RoundNotOpen);
+        // The state only flips when end_round is CALLED: also refuse joins
+        // past the deadline, or they would be swept by the pending sweep.
+        let now = Clock::get()?.unix_timestamp;
+        require!(now < round.end_timestamp, ArenaError::RoundNotOpen);
+        require!(stake > 0, ArenaError::InvalidStake);
+
+        // D71 split. Integer division truncates, so the remainder of BOTH
+        // fee shares lands in spawn_value: the three parts always sum
+        // EXACTLY to stake. Division by a non-zero constant cannot fail.
+        let rake = stake
+            .checked_mul(round.rake_bps as u64)
+            .ok_or(ArenaError::MathOverflow)?
+            / BPS_DENOMINATOR;
+        let reserve_share = stake
+            .checked_mul(round.reserve_bps as u64)
+            .ok_or(ArenaError::MathOverflow)?
+            / BPS_DENOMINATOR;
+        let spawn_value = stake
+            .checked_sub(rake)
+            .ok_or(ArenaError::MathOverflow)?
+            .checked_sub(reserve_share)
+            .ok_or(ArenaError::MathOverflow)?;
+
+        // The player's wallet is System-owned: only the System Program may
+        // debit it, with the player's signature - hence CPI transfers.
+        system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                system_program::Transfer {
+                    from: ctx.accounts.player.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
+                },
+            ),
+            spawn_value,
+        )?;
+        // Tiny stakes can truncate a share to 0: skip the empty CPI.
+        if rake > 0 {
+            system_program::transfer(
+                CpiContext::new(
+                    ctx.accounts.system_program.to_account_info(),
+                    system_program::Transfer {
+                        from: ctx.accounts.player.to_account_info(),
+                        to: ctx.accounts.treasury.to_account_info(),
+                    },
+                ),
+                rake,
+            )?;
+        }
+        if reserve_share > 0 {
+            system_program::transfer(
+                CpiContext::new(
+                    ctx.accounts.system_program.to_account_info(),
+                    system_program::Transfer {
+                        from: ctx.accounts.player.to_account_info(),
+                        to: ctx.accounts.reserve.to_account_info(),
+                    },
+                ),
+                reserve_share,
+            )?;
+        }
+
+        let round = &mut ctx.accounts.round;
+        round.total_staked = round
+            .total_staked
+            .checked_add(stake)
+            .ok_or(ArenaError::MathOverflow)?;
+        round.total_deposited = round
+            .total_deposited
+            .checked_add(spawn_value)
+            .ok_or(ArenaError::MathOverflow)?;
+        let reserve = &mut ctx.accounts.reserve;
+        reserve.total_swept_in = reserve
+            .total_swept_in
+            .checked_add(reserve_share)
+            .ok_or(ArenaError::MathOverflow)?;
+
+        emit!(Joined {
+            round_id: round.round_id,
+            player: ctx.accounts.player.key(),
+            stake,
+            spawn_value,
+        });
+        Ok(())
+    }
+
+    /// Pays `amount` from the round vault to `player`. Authority-signed
+    /// (Model A): the server's signature IS the proof of extraction.
+    /// Anti-replay: the ExtractReceipt init fails if (round_id, nonce)
+    /// was already settled - the runtime itself refuses the replay.
+    pub fn settle_extraction(
+        ctx: Context<SettleExtraction>,
+        amount: u64,
+        nonce: u64,
+    ) -> Result<()> {
+        let round = &ctx.accounts.round;
+        // Only the sweep (end_round) closes the door: a legit extraction
+        // settled just after end_timestamp must still be payable
+        require!(round.state == RoundState::Open, ArenaError::RoundNotOpen);
+
+        // Even a compromised server cannot pay out more than the vault
+        // holds above its rent-exempt floor (solvency guarantee, D55)
+        let vault_info = ctx.accounts.vault.to_account_info();
+        let vault_floor = Rent::get()?.minimum_balance(0);
+        let available = vault_info.lamports().saturating_sub(vault_floor);
+        require!(amount <= available, ArenaError::InsufficientVault);
+
+        // The vault is a SYSTEM-owned PDA: direct debit is illegal (we are
+        // not its owner) and it has no private key. invoke_signed: we hand
+        // the runtime the vault's seeds + bump, it re-derives the address
+        // with OUR program id and grants signer status for this CPI only.
+        let round_id_bytes = round.round_id.to_le_bytes();
+        let vault_seeds: &[&[u8]] = &[
+            VAULT_SEED,
+            round_id_bytes.as_ref(),
+            &[round.vault_bump],
+        ];
+        system_program::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.system_program.to_account_info(),
+                system_program::Transfer {
+                    from: ctx.accounts.vault.to_account_info(),
+                    to: ctx.accounts.player.to_account_info(),
+                },
+                &[vault_seeds],
+            ),
+            amount,
+        )?;
+
+        let receipt = &mut ctx.accounts.receipt;
+        receipt.round_id = round.round_id;
+        receipt.player = ctx.accounts.player.key();
+        receipt.amount = amount;
+        receipt.nonce = nonce;
+        receipt.settled_at = Clock::get()?.unix_timestamp;
+        receipt.bump = ctx.bumps.receipt;
+
+        let round = &mut ctx.accounts.round;
+        round.total_paid = round
+            .total_paid
+            .checked_add(amount)
+            .ok_or(ArenaError::MathOverflow)?;
+
+        emit!(Extracted {
+            round_id: round.round_id,
+            player: ctx.accounts.player.key(),
+            amount,
+            nonce,
+        });
+        Ok(())
+    }
+
+    /// Closes the round: flips the state (which shuts join, inject and
+    /// settle all at once) and sweeps the ENTIRE remaining vault balance
+    /// - orphan SOL, D50 - into the FoodReserve. Authority-only: a
+    /// permissionless close could race and block legit last-second
+    /// settlements; the server settles everything, THEN sweeps
+    pub fn end_round(ctx: Context<EndRound>) -> Result<()> {
+        let round = &ctx.accounts.round;
+        require!(round.state == RoundState::Open, ArenaError::RoundNotOpen);
+        // Not even the authority can close early: a compromised server
+        // must not be able to freeze pending extractions ahead of time.
+        let now = Clock::get()?.unix_timestamp;
+        require!(now >= round.end_timestamp, ArenaError::RoundNotEnded);
+
+        // Sweep ALL of it, rent floor included: a balance of exactly 0 is
+        // legal (the account gets reaped) - only 0 < balance < rent_floor
+        // is forbidden. This vault is round-bound and never reused.
+        let swept = ctx.accounts.vault.lamports();
+        if swept > 0 {
+            let round_id_bytes = round.round_id.to_le_bytes();
+            let vault_seeds: &[&[u8]] = &[
+                VAULT_SEED,
+                round_id_bytes.as_ref(),
+                &[round.vault_bump],
+            ];
+            system_program::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.system_program.to_account_info(),
+                    system_program::Transfer {
+                        from: ctx.accounts.vault.to_account_info(),
+                        to: ctx.accounts.reserve.to_account_info(),
+                    },
+                    &[vault_seeds],
+                ),
+                swept,
+            )?;
+        }
+
+        let reserve = &mut ctx.accounts.reserve;
+        reserve.total_swept_in = reserve
+            .total_swept_in
+            .checked_add(swept)
+            .ok_or(ArenaError::MathOverflow)?;
+
+        let round = &mut ctx.accounts.round;
+        round.state = RoundState::Ended;
+
+        emit!(RoundEnded {
+            round_id: round.round_id,
+            swept,
+        });
+        Ok(())
+    }
+
 }
 
 // --- Instruction accounts ----------------------------------------------------
@@ -188,6 +399,101 @@ pub struct InjectReserve<'info> {
         bump = round.vault_bump
     )]
     pub vault: SystemAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct JoinRound<'info> {
+    #[account(mut)]
+    pub player: Signer<'info>,
+    /// has_one: the treasury account below MUST be the one recorded at
+    /// initialization - a joiner cannot substitute his own wallet.
+    #[account(
+        mut,
+        seeds = [ROUND_SEED, round.round_id.to_le_bytes().as_ref()],
+        bump = round.bump,
+        has_one = treasury
+    )]
+    pub round: Account<'info, Round>,
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, round.round_id.to_le_bytes().as_ref()],
+        bump = round.vault_bump
+    )]
+    pub vault: SystemAccount<'info>,
+    #[account(mut)]
+    pub treasury: SystemAccount<'info>,
+    #[account(
+        mut,
+        seeds = [FOOD_RESERVE_SEED],
+        bump = reserve.bump
+    )]
+    pub reserve: Account<'info, FoodReserve>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(amount: u64, nonce: u64)]
+pub struct SettleExtraction<'info> {
+    /// The round authority (game server). Signs the settlement AND pays
+    /// the receipt rent (operational cost, reclaimable via close later)
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [ROUND_SEED, round.round_id.to_le_bytes().as_ref()],
+        bump = round.bump,
+        has_one = authority @ ArenaError::Unauthorized
+    )]
+    pub round: Account<'info, Round>,
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, round.round_id.to_le_bytes().as_ref()],
+        bump = round.vault_bump
+    )]
+    pub vault: SystemAccount<'info>,
+    /// Payout recipient, designated by the server (Model A trust)
+    #[account(mut)]
+    pub player: SystemAccount<'info>,
+    #[account(
+        init,
+        payer = authority,
+        space = ExtractReceipt::LEN,
+        seeds = [
+            EXTRACT_SEED,
+            round.round_id.to_le_bytes().as_ref(),
+            nonce.to_le_bytes().as_ref()
+        ],
+        bump
+    )]
+    pub receipt: Account<'info, ExtractReceipt>,
+    pub system_program: Program<'info, System>
+}
+
+#[derive(Accounts)]
+pub struct EndRound<'info> {
+    /// The round authority (game server): the only one allowed to sweep.
+    pub authority: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [ROUND_SEED, round.round_id.to_le_bytes().as_ref()],
+        bump = round.bump,
+        has_one = authority @ ArenaError::Unauthorized
+    )]
+    pub round: Account<'info, Round>,
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, round.round_id.to_le_bytes().as_ref()],
+        bump = round.vault_bump
+    )]
+    pub vault: SystemAccount<'info>,
+    /// Sweep destination, pinned by its seeds: no substitution possible.
+    #[account(
+        mut,
+        seeds = [FOOD_RESERVE_SEED],
+        bump = reserve.bump
+    )]
+    pub reserve: Account<'info, FoodReserve>,
+    pub system_program: Program<'info, System>,
 }
 
 // --- State accounts ----------------------------------------------------------
@@ -281,6 +587,30 @@ pub struct ExtractReceipt {
 impl ExtractReceipt {
     /// 8 (discriminator) + 8 + 32 + 8 + 8 + 8 + 1
     pub const LEN: usize = 8 + 8 + 32 + 8 + 8 + 8 + 1;
+}
+
+// --- Events ------------------------------------------------------------------
+
+#[event]
+pub struct Joined {
+    pub round_id: u64,
+    pub player: Pubkey,
+    pub stake: u64,
+    pub spawn_value: u64,
+}
+
+#[event]
+pub struct Extracted {
+    pub round_id: u64,
+    pub player: Pubkey,
+    pub amount: u64,
+    pub nonce: u64,
+}
+
+#[event]
+pub struct RoundEnded {
+    pub round_id: u64,
+    pub swept: u64,
 }
 
 // --- Errors ------------------------------------------------------------------
