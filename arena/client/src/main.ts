@@ -22,6 +22,7 @@ import {
     PLAYER_COLORS,
     type SnakeColors,
 } from "./render";
+import { signInWithSolana } from "./wallet";
 
 // Shape of the live schema references received from the server
 interface NetPlayer {
@@ -295,7 +296,15 @@ async function main() {
     // Pixi first: if the GPU init fails there is nothing to play on
     const view = await GameView.create();
 
-    const client = new Client("http://localhost:2567");
+    // A3.1 — SIWS before anything touches the room: the server's
+    // static onAuth rejects tokenless joins, so sign-in is the door.
+    const SERVER_URL = "http://localhost:2567";
+    statusEl.textContent = "sign in with your wallet…";
+    const client = new Client(SERVER_URL);
+    // the SDK sends this token with the matchmaking request; the
+    // server's onAuth receives it as its first argument
+    client.auth.token = await signInWithSolana(SERVER_URL);
+
     const options: JoinOptions = { protocol: PROTOCOL_VERSION, name: "tester", stake: 0 };
     const room = await client.joinOrCreate(ARENA_ROOM, options);
     myId = room.sessionId;

@@ -1,10 +1,21 @@
 import { defineServer, defineRoom } from "colyseus";
 import { ARENA_ROOM } from "@nimbo/shared";
 import { ArenaRoom } from "./rooms/ArenaRoom";
+import { issueChallenge } from "./auth";
 
 const server = defineServer({
     rooms: {
         [ARENA_ROOM]: defineRoom(ArenaRoom),
+    },
+    // A3.1 — SIWS challenge endpoint. The nonce lives server-side from
+    // birth: the client never chooses it, it only signs it.
+    express: (app) => {
+        app.get("/auth/challenge", (_req, res) => {
+            // the game client runs on another origin (vite :5173);
+            // a GET with no custom headers needs only this one header
+            res.set("Access-Control-Allow-Origin", "*");
+            res.json(issueChallenge());
+        });
     },
 });
 

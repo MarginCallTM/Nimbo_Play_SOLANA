@@ -26,6 +26,12 @@ import {
     type JoinOptions,
 } from "@nimbo/shared";
 import { SpatialGrid } from "../grid";
+import { verifyAuthToken } from "../auth";
+
+// What onAuth hands to onJoin once the SIWS proof checks out.
+interface AuthResult {
+    wallet: string; // base58 address, the on-chain identity (A3.2+)
+}
 
 export class Player extends Schema {
     // --- synced fields: what every client needs to render ---
@@ -54,6 +60,11 @@ export class Player extends Schema {
     @type(["float32"]) frozenBody = new ArraySchema<number>();
 
     // --- NOT decorated -> never leaves the server ---
+    // The authenticated wallet (A3.1). Deliberately NOT synced: other
+    // players seeing your address would enable wallet-targeted griefing
+    // and deanonymization. The name is the public identity; the wallet
+    // is between you, the server and the chain.
+    wallet = "";
     sessionId = ""; // back-reference: lets death cleanup find the maps
     disconnectTicks = 0; // countdown to corpse while disconnected
     desiredAngle = 0;
@@ -462,13 +473,24 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         player.gen = (player.gen + 1) % 256;
     }
 
-    onJoin(client: Client, options: JoinOptions) {
+    // A3.1 — SIWS gate. STATIC (Colyseus 0.17 recommendation): runs
+    // during matchmaking, before any room instance is touched. Falsy
+    // return or throw = the client never reaches onJoin. The truthy
+    // return value becomes client.auth / onJoin's third argument.
+    static async onAuth(token: string, _options: JoinOptions) {
+        const wallet = verifyAuthToken(token);
+        if (!wallet) throw new Error("sign-in required: connect your wallet");
+        return { wallet } satisfies AuthResult;
+    }
+
+    onJoin(client: Client, options: JoinOptions, auth: AuthResult) {
         // Throwing here rejects the join: stale clients bounce cleanly
         if (options.protocol !== PROTOCOL_VERSION) {
             throw new Error("protocol mismatch: refresh your browser");
         }
         const player = new Player();
         player.sessionId = client.sessionId;
+        player.wallet = auth.wallet; // session <-> wallet binding (A3.1)
         player.name = options.name || "anonymous";
         player.score = SPAWN_SCORE; // fixed for now; variable buy-in later
         // random spawn inside half the world radius
@@ -481,7 +503,10 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         this.state.players.set(client.sessionId, player);
         // AoI: this client only ever receives what its view contains
         client.view = new StateView();
-        console.log(`[join] ${client.sessionId} name=${player.name} stake=${options.stake}`);
+        console.log(
+            `[join] ${client.sessionId} name=${player.name}` +
+            ` wallet=${auth.wallet.slice(0, 4)}..${auth.wallet.slice(-4)} stake=${options.stake}`,
+        );
     }
 
     // A1.9: disconnection freezes the snake — gray, harmless, out of

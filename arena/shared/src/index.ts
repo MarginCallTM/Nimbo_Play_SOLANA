@@ -5,7 +5,10 @@
 
 // Bumped on every breaking protocol change; the server rejects clients
 // that present a different version (stale browser tabs after a deploy).
-export const PROTOCOL_VERSION = 1;
+// v2: SIWS authentication required to join (A3.1).
+export const PROTOCOL_VERSION = 2;
+
+export * from "./siws";
 
 // Room identifier used by the matchmaker on both sides.
 export const ARENA_ROOM = "arena";

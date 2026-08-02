@@ -22,7 +22,12 @@
 
 ##############################################################
   PARTIE 1 — PRODUIT PHARE : ARENA (jeu P2E)
-  >>> PROCHAINE ÉTAPE : PHASE ARENA-2 (A2.2 — structs sans logique) <<<
+  >>> PROCHAINE ÉTAPE : PHASE ARENA-3 (A3.1 — SIWS) <<<
+  DÉCISIONS DE REPRISE (user, 2026-07-30) : dev ARENA-3 directement
+  sur DEVNET (le "testnet" des docs = devnet en pratique Solana) ;
+  wallet branché dans arena/client (Vite vanilla, provider injecté),
+  le portail Next.js attendra ARENA-5 ; service settlement A3.3 en
+  Rust RETAPÉ À LA MAIN (même discipline que l'on-chain).
 ##############################################################
 
   Décisions encore OUVERTES (à trancher en cours de route) :
@@ -538,7 +543,45 @@ PHASE ARENA-2 — PRIMITIF D'ESCROW ON-CHAIN  (programme Anchor GÉNÉRIQUE)
 --------------------------------------------------------------
 PHASE ARENA-3 — INTÉGRATION SERVEUR <-> CHAÎNE  (settlement réel)
 --------------------------------------------------------------
-[ ] A3.1  Sign-In With Solana (SIWS) : authentifier la session sans tx ; lier wallet <-> partie.
+[x] A3.1  Sign-In With Solana (SIWS) : authentifier la session sans tx ; lier wallet <-> partie.
+          -> IMPLÉMENTÉ (2026-07-30), prouvé HEADLESS 7/7 ; VALIDÉ
+             NAVIGATEUR (2026-08-02, Phantom signIn réel). Deux fixes
+             que le headless ne POUVAIT pas attraper :
+             (1) STATEMENT ASCII-ONLY — l'ABNF SIWS (héritée d'EIP-4361)
+                 interdit le non-ASCII ; le tiret cadratin « — » faisait
+                 rejeter TOUTE la requête par Phantom (« invalid
+                 format ») avant même d'afficher le dialogue.
+             (2) FORME DE RÉPONSE — le provider INJECTÉ renvoie une
+                 forme PLATE ({ address, signedMessage, signature }),
+                 pas la forme wallet-standard ({ account: { address } }).
+                 wallet.ts tolère les deux (extractAddress + log de la
+                 forme brute en cas d'échec) : le wallet-standard est
+                 la cible ARENA-5 (multi-wallets), et la tolérance
+                 client est GRATUITE — le serveur re-vérifie tout, le
+                 client peut se tromper mais pas mentir.
+             Archi : shared/siws.ts (message SIWS canonique : build
+             pour les bots, parse pour le serveur ; la sécurité tient
+             à 3 champs signés : domain/address/nonce) ; serveur
+             auth.ts (nonces 128 bits single-use TTL 2min en Map
+             module-level + verifyAuthToken : ed25519 tweetnacl,
+             AUCUNE confiance au payload avant vérif) ; route GET
+             /auth/challenge (express hook de defineServer, CORS
+             manuel) ; static onAuth (0.17, vérifié en doc : rejet
+             AVANT onJoin, retour truthy -> client.auth) ; client
+             wallet.ts (Phantom signIn = standard SIWS, anti-phishing
+             par domaine côté wallet ET côté serveur). Player.wallet
+             NON synchronisé (privacy : pas de wallet-stalking).
+             PROTOCOL_VERSION 1 -> 2. Bots loadtest : keypair
+             éphémère + signature maison = preuve que la porte exige
+             la possession de la clé, rien d'autre (et rappel A4.4 :
+             SIWS identifie, il n'anti-Sybil PAS — les clés sont
+             gratuites). NOUVEAU loadtest/src/auth-attack.ts (probe
+             adversarial permanent, embryon A4.6) : join honnête
+             accepté ; sans jeton / jeton poubelle / REJEU (nonce
+             consommé) / mauvais domaine / signature d'une autre clé
+             que celle prétendue -> tous rejetés, raisons loggées
+             serveur only. Deps : tweetnacl + bs58 (server, loadtest),
+             @types/express (dev).
 [ ] A3.2  Flux JOIN : le joueur dépose (join tx) AVANT de spawn ; le serveur vérifie
           le dépôt on-chain (ou via l'indexer) avant d'autoriser l'entrée.
 [ ] A3.3  Service de settlement en Rust : détient la clé authority (hot wallet au MVP),

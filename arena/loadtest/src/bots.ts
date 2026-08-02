@@ -13,15 +13,21 @@
 // Usage: npm run bots [count]   (default 10, server must be running)
 
 import { Client, Callbacks } from "@colyseus/sdk";
+import nacl from "tweetnacl";
+import bs58 from "bs58";
 import {
     ARENA_ROOM,
     BOOST_ORB_VALUE,
     FOOD_EAT_RANGE,
     PROTOCOL_VERSION,
+    SIWS_STATEMENT,
     SNAKE_BOOST_SPEED,
     SNAKE_SPEED,
     WORLD_RADIUS,
+    buildSiwsMessage,
     describeSnakeFromScore,
+    type AuthChallenge,
+    type AuthTokenPayload,
     type InputMessage,
     type JoinOptions,
 } from "@nimbo/shared";
@@ -48,8 +54,41 @@ function isReachable(me: NetPlayer, f: NetFood, turnRadius: number, eatReach: nu
         && Math.hypot(f.x - rx, f.y - ry) > margin;
 }
 
+// A3.1 — bots authenticate like everyone else, minus the wallet UI:
+// an ephemeral ed25519 keypair (tweetnacl = the same curve as a Solana
+// wallet), the canonical SIWS message built by hand from a real server
+// challenge, a detached signature. If a headless client can pass the
+// door with 15 lines of crypto, the door demands exactly what it
+// should: key ownership — nothing about being a browser. (Red-team
+// note for A4.6: this also means keys are FREE — SIWS identifies, it
+// does not anti-Sybil. That was never its job; see A4.4.)
+const AUTH_DOMAIN = process.env.AUTH_DOMAIN ?? "localhost:5173";
+
+async function makeAuthToken(): Promise<string> {
+    const keys = nacl.sign.keyPair();
+    const address = bs58.encode(keys.publicKey);
+    const res = await fetch(`${SERVER_URL}/auth/challenge`);
+    if (!res.ok) throw new Error(`auth challenge failed (${res.status})`);
+    const challenge: AuthChallenge = await res.json();
+    const message = buildSiwsMessage({
+        domain: AUTH_DOMAIN,
+        address,
+        statement: SIWS_STATEMENT,
+        nonce: challenge.nonce,
+        issuedAt: new Date().toISOString(),
+    });
+    const messageBytes = new TextEncoder().encode(message);
+    const payload: AuthTokenPayload = {
+        pk: address,
+        msg: Buffer.from(messageBytes).toString("base64"),
+        sig: Buffer.from(nacl.sign.detached(messageBytes, keys.secretKey)).toString("base64"),
+    };
+    return Buffer.from(JSON.stringify(payload)).toString("base64");
+}
+
 async function spawnBot(n: number) {
     const client = new Client(SERVER_URL);
+    client.auth.token = await makeAuthToken();
     const options: JoinOptions = { protocol: PROTOCOL_VERSION, name: `bot-${n}`, stake: 0 };
     const room = await client.joinOrCreate(ARENA_ROOM, options);
 

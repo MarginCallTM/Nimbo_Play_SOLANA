@@ -52,7 +52,7 @@ describe("lottery", () => {
     const { lottery, vault } = pdasFor(roundId);
     await program.methods
       .initializeLottery(roundId, ticketPrice, duration)
-      .accounts({
+      .accountsPartial({
         lottery,
         vault,
         authority: provider.wallet.publicKey,
@@ -87,7 +87,7 @@ describe("lottery", () => {
     const ticket = ticketPdaFor(roundId, index);
     await program.methods
       .buyTicket()
-      .accounts({
+      .accountsPartial({
         lottery,
         vault,
         ticket,
@@ -110,7 +110,7 @@ describe("lottery", () => {
 
     await program.methods
       .initializeLottery(roundId, ticketPrice, duration)
-      .accounts({
+      .accountsPartial({
         lottery,
         vault,
         authority: provider.wallet.publicKey,
@@ -139,7 +139,7 @@ describe("lottery", () => {
     try {
       await program.methods
         .initializeLottery(roundId, ticketPrice, duration)
-        .accounts({
+        .accountsPartial({
           lottery,
           vault,
           authority: provider.wallet.publicKey,
@@ -162,7 +162,7 @@ describe("lottery", () => {
     try {
       await program.methods
       .initializeLottery(roundId, ticketPrice, duration)
-      .accounts({
+      .accountsPartial({
         lottery,
         vault,
         authority: provider.wallet.publicKey,
@@ -185,7 +185,7 @@ describe("lottery", () => {
     try {
       await program.methods
         .initializeLottery(roundId, ticketPrice, duration)
-        .accounts({
+        .accountsPartial({
           lottery,
           vault,
           authority: provider.wallet.publicKey,
@@ -212,7 +212,7 @@ describe("lottery", () => {
 
     await program.methods
       .buyTicket()
-      .accounts({
+      .accountsPartial({
         lottery,
         vault,
         ticket,
@@ -251,7 +251,7 @@ describe("lottery", () => {
       const ticket = ticketPdaFor(roundId, new anchor.BN(i));
       await program.methods
         .buyTicket()
-        .accounts({
+        .accountsPartial({
           lottery,
           vault,
           ticket,
@@ -290,7 +290,7 @@ describe("lottery", () => {
     try {
       await program.methods
         .buyTicket()
-        .accounts({
+        .accountsPartial({
           lottery,
           vault,
           ticket,
@@ -324,7 +324,7 @@ describe("lottery", () => {
     try {
       await program.methods
         .buyTicket()
-        .accounts({
+        .accountsPartial({
           lottery,
           vault,
           ticket,
@@ -357,7 +357,7 @@ describe("lottery", () => {
 
     await program.methods
       .drawWinner()
-      .accounts({ lottery, authority: provider.wallet.publicKey })
+      .accountsPartial({ lottery, authority: provider.wallet.publicKey })
       .rpc();
 
     const acc = await program.account.lottery.fetch(lottery);
@@ -381,7 +381,7 @@ describe("lottery", () => {
 
     await program.methods
       .drawWinner()
-      .accounts({ lottery, authority: provider.wallet.publicKey })
+      .accountsPartial({ lottery, authority: provider.wallet.publicKey })
       .rpc();
 
     const acc = await program.account.lottery.fetch(lottery);
@@ -401,7 +401,7 @@ describe("lottery", () => {
     try {
       await program.methods
         .drawWinner()
-        .accounts({ lottery, authority: provider.wallet.publicKey })
+        .accountsPartial({ lottery, authority: provider.wallet.publicKey })
         .rpc();
       assert.fail("expected the instruction to throw");
     } catch (err) {
@@ -431,7 +431,7 @@ describe("lottery", () => {
     try {
       await program.methods
         .drawWinner()
-        .accounts({ lottery, authority: intruder.publicKey })
+        .accountsPartial({ lottery, authority: intruder.publicKey })
         .signers([intruder])
         .rpc();
       assert.fail("expected the instruction to throw");
@@ -455,14 +455,14 @@ describe("lottery", () => {
     // First draw succeeds.
     await program.methods
       .drawWinner()
-      .accounts({ lottery, authority: provider.wallet.publicKey })
+      .accountsPartial({ lottery, authority: provider.wallet.publicKey })
       .rpc();
 
     // Second draw must be rejected (round is already Closed).
     try {
       await program.methods
         .drawWinner()
-        .accounts({ lottery, authority: provider.wallet.publicKey })
+        .accountsPartial({ lottery, authority: provider.wallet.publicKey })
         .rpc();
       assert.fail("expected the instruction to throw");
     } catch (err) {
@@ -493,7 +493,7 @@ describe("lottery", () => {
       const ticket = ticketPdaFor(roundId, new anchor.BN(i));
       await program.methods
         .buyTicket()
-        .accounts({
+        .accountsPartial({
           lottery,
           vault,
           ticket,
@@ -507,7 +507,7 @@ describe("lottery", () => {
 
     await program.methods
       .drawWinner()
-      .accounts({lottery, authority: provider.wallet.publicKey})
+      .accountsPartial({lottery, authority: provider.wallet.publicKey})
       .rpc();
 
     // Read who won, then derive the winning ticket PDA.
@@ -521,7 +521,7 @@ describe("lottery", () => {
     // winner's balance change equals the pot exactly.
     await program.methods
       .payout()
-      .accounts({
+      .accountsPartial({
         lottery,
         vault,
         ticket: winningTicket,
@@ -554,7 +554,7 @@ describe("lottery", () => {
     try {
       await program.methods
         .payout()
-        .accounts({
+        .accountsPartial({
           lottery,
           vault,
           ticket,
@@ -581,7 +581,7 @@ describe("lottery", () => {
     await waitUntilExpired(lottery);
     await program.methods
       .drawWinner()
-      .accounts({lottery, authority: provider.wallet.publicKey})
+      .accountsPartial({lottery, authority: provider.wallet.publicKey})
       .rpc();
     
     const drawn = await program.account.lottery.fetch(lottery);
@@ -591,7 +591,7 @@ describe("lottery", () => {
     try {
       await program.methods
         .payout()
-        .accounts({
+        .accountsPartial({
           lottery,
           vault,
           ticket: winningTicket,
@@ -618,7 +618,7 @@ describe("lottery", () => {
     await waitUntilExpired(lottery);
     await program.methods
       .drawWinner()
-      .accounts({lottery, authority: provider.wallet.publicKey})
+      .accountsPartial({lottery, authority: provider.wallet.publicKey})
       .rpc();
 
     const drawn = await program.account.lottery.fetch(lottery);
