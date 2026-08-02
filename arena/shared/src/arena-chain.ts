@@ -1,0 +1,174 @@
+// A3.2 — the on-chain vocabulary of the arena program, shared by the
+// browser client (builds the join tx), the game server (verifies the
+// deposit) and the loadtest bots (replay the same protocol headless).
+//
+// Encoded BY HAND on purpose: no Anchor client in the browser (heavy,
+// Node-polyfill hell under Vite). An Anchor instruction is just bytes:
+//   [8-byte discriminator = sha256("global:<name>")[0..8]] ++ borsh(args)
+// and an account is:
+//   [8-byte discriminator = sha256("account:<Name>")[0..8]] ++ borsh(fields)
+// The values below are copied from target/idl/arena.json — the IDL is
+// the source of truth; re-check after ANY change to the program.
+
+import { PublicKey, SystemProgram, TransactionInstruction } from "@solana/web3.js";
+
+// Fixed at first build by declare_id! — never changes across deploys.
+export const ARENA_PROGRAM_ID = new PublicKey(
+    "8qGdXYu3prvvvhCEfMnatdv5BAQyVL5NWsh7v5esEF2d"
+);
+
+// PDA seeds — byte-exact mirrors of the Rust constants.
+const ROUND_SEED = "round";
+const VAULT_SEED = "vault";
+const RESERVE_SEED = "food_reserve";
+
+// From the IDL (instructions[join].discriminator / accounts[Round]).
+const JOIN_IX_DISCRIMINATOR = new Uint8Array([206, 55, 2, 106, 113, 220, 17, 163]);
+const ROUND_ACC_DISCRIMINATOR = new Uint8Array([87, 127, 165, 51, 73, 78, 116, 174]);
+
+// --- little-endian u64 helpers (browser-safe: no Buffer) ---------------
+
+function u64Le(value: bigint): Uint8Array {
+    const out = new Uint8Array(8);
+    new DataView(out.buffer).setBigUint64(0, value, true);
+    return out;
+}
+
+// --- PDA derivation (mirror of round_id.to_le_bytes() seeds) -----------
+
+export function roundPda(roundId: bigint): PublicKey {
+    return PublicKey.findProgramAddressSync(
+        [new TextEncoder().encode(ROUND_SEED), u64Le(roundId)],
+        ARENA_PROGRAM_ID
+    )[0];
+}
+
+export function vaultPda(roundId: bigint): PublicKey {
+    return PublicKey.findProgramAddressSync(
+        [new TextEncoder().encode(VAULT_SEED), u64Le(roundId)],
+        ARENA_PROGRAM_ID
+    )[0];
+}
+
+export function reservePda(): PublicKey {
+    return PublicKey.findProgramAddressSync(
+        [new TextEncoder().encode(RESERVE_SEED)],
+        ARENA_PROGRAM_ID
+    )[0];
+}
+
+// --- join instruction ----------------------------------------------------
+
+// data = discriminator ++ stake:u64le  (join's only arg; the round is
+// identified by the Round account itself, its seeds lock the id)
+export function encodeJoinData(stakeLamports: bigint): Uint8Array {
+    const data = new Uint8Array(16);
+    data.set(JOIN_IX_DISCRIMINATOR, 0);
+    data.set(u64Le(stakeLamports), 8);
+    return data;
+}
+
+export function isJoinData(data: Uint8Array): boolean {
+    if (data.length < 8) return false;
+    return JOIN_IX_DISCRIMINATOR.every((b, i) => data[i] === b);
+}
+
+export function decodeJoinStake(data: Uint8Array): bigint {
+    // borsh args start right after the 8-byte discriminator
+    return new DataView(data.buffer, data.byteOffset + 8, 8).getBigUint64(0, true);
+}
+
+// Account order is the CONTRACT (IDL order) — swap two writable
+// accounts and the transfer pays the wrong party or fails on seeds.
+export function buildJoinInstruction(opts: {
+    player: PublicKey;
+    roundId: bigint;
+    treasury: PublicKey; // must match round.treasury (has_one)
+    stakeLamports: bigint;
+}): TransactionInstruction {
+    return new TransactionInstruction({
+        programId: ARENA_PROGRAM_ID,
+        keys: [
+            { pubkey: opts.player, isSigner: true, isWritable: true },
+            { pubkey: roundPda(opts.roundId), isSigner: false, isWritable: true },
+            { pubkey: vaultPda(opts.roundId), isSigner: false, isWritable: true },
+            { pubkey: opts.treasury, isSigner: false, isWritable: true },
+            { pubkey: reservePda(), isSigner: false, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data: encodeJoinData(opts.stakeLamports) as unknown as Buffer,
+    });
+}
+
+// --- Round account decoding ---------------------------------------------
+
+// Borsh layout after the 8-byte discriminator, offsets from the Rust
+// struct (LEN = 127, proven by A2.2 tests):
+//   round_id u64 | authority 32 | treasury 32 | rake_bps u16 |
+//   reserve_bps u16 | end_timestamp i64 | state u8 (0=Open, 1=Ended) |
+//   total_staked u64 | total_deposited u64 | total_injected u64 |
+//   total_paid u64 | round_bump u8 | vault_bump u8
+export interface RoundAccount {
+    roundId: bigint;
+    authority: PublicKey;
+    treasury: PublicKey;
+    rakeBps: number;
+    reserveBps: number;
+    endTimestamp: bigint;
+    isOpen: boolean;
+    totalStaked: bigint;
+    totalDeposited: bigint;
+    totalInjected: bigint;
+    totalPaid: bigint;
+}
+
+export function decodeRoundAccount(data: Uint8Array): RoundAccount | undefined {
+    if (data.length < 127) return undefined;
+    if (!ROUND_ACC_DISCRIMINATOR.every((b, i) => data[i] === b)) return undefined;
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    return {
+        roundId: view.getBigUint64(8, true),
+        authority: new PublicKey(data.subarray(16, 48)),
+        treasury: new PublicKey(data.subarray(48, 80)),
+        rakeBps: view.getUint16(80, true),
+        reserveBps: view.getUint16(82, true),
+        endTimestamp: view.getBigInt64(84, true),
+        isOpen: data[92] === 0,
+        totalStaked: view.getBigUint64(93, true),
+        totalDeposited: view.getBigUint64(101, true),
+        totalInjected: view.getBigUint64(109, true),
+        totalPaid: view.getBigUint64(117, true),
+    };
+}
+
+// --- economy mirror -------------------------------------------------
+
+// EXACT mirror of the on-chain split (join instruction): rake and
+// reserve are floor divisions, the spawn value is what REMAINS — the
+// three parts sum to the stake to the lamport (division dust goes to
+// the player, proven by the A2.8 tests). rake_bps/reserve_bps come
+// from the Round account, never from constants that could drift.
+export function spawnValueFromStake(
+    stakeLamports: bigint,
+    rakeBps: number,
+    reserveBps: number,
+): bigint {
+    const rake = (stakeLamports * BigInt(rakeBps)) / 10_000n;
+    const reserve = (stakeLamports * BigInt(reserveBps)) / 10_000n;
+    return stakeLamports - rake - reserve;
+}
+
+// THE tuning knob (TODO: "taux SOL<->score", half-decided 2026-07-23):
+// settlement always runs on SCORE at this fixed rate — SOL -> score at
+// join, score -> SOL at extraction, same rate both ways (strict
+// conservation). Size = f(score) stays pure display. 1000 puts the
+// 0.1 SOL tier (~92.5 net score) right in the proto's 20-80 spawn
+// range; retune freely at playtest, BUT only between rounds — changing
+// it mid-round would rewrite what players' scores are worth.
+export const SCORE_PER_SOL = 1000;
+
+export function scoreFromLamports(lamports: bigint): number {
+    // score is a float32 gameplay value: precision loss here is fine
+    // (the CHAIN keeps the exact lamports; score is the game's ledger)
+    return (Number(lamports) / 1_000_000_000) * SCORE_PER_SOL;
+}

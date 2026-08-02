@@ -6,9 +6,10 @@
 // Bumped on every breaking protocol change; the server rejects clients
 // that present a different version (stale browser tabs after a deploy).
 // v2: SIWS authentication required to join (A3.1).
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3; // 3 = A3.2: deposit-gated joins (txSig)
 
 export * from "./siws";
+export * from "./arena-chain";
 
 // Room identifier used by the matchmaker on both sides.
 export const ARENA_ROOM = "arena";
@@ -93,6 +94,23 @@ export interface JoinOptions {
     protocol: number;
     name: string;
     stake: number; // SOL tier chosen in the menu; 0 = free play
+    // A3.2 — signature of the on-chain join (deposit) transaction.
+    // Required when stake > 0: the server reads the tx back from the
+    // chain and verifies it before letting the snake spawn. Like the
+    // SIWS token, this is a CLAIM until the server checks it.
+    txSig?: string;
+}
+
+// Menu tiers (SOL). FREE plays with zero value; in production free
+// play lives on a SEPARATE server (A0.7bis: free-riders = bot faucet).
+export const STAKE_TIERS_SOL = [0, 0.1, 0.25, 0.5, 1];
+
+// The server's answer to GET /round: which round the arena is
+// currently playing on. The client builds its deposit tx from this —
+// it never hardcodes round coordinates.
+export interface RoundInfoResponse {
+    roundId: string;   // u64 as decimal string (JS numbers lose precision)
+    treasury: string;  // base58 — must match round.treasury (has_one)
 }
 
 // The ONLY thing a client is ever allowed to send during play:

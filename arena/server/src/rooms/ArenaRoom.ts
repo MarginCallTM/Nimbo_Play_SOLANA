@@ -27,10 +27,14 @@ import {
 } from "@nimbo/shared";
 import { SpatialGrid } from "../grid";
 import { verifyAuthToken } from "../auth";
+import { verifyDeposit } from "../chain";
 
 // What onAuth hands to onJoin once the SIWS proof checks out.
 interface AuthResult {
     wallet: string; // base58 address, the on-chain identity (A3.2+)
+    // A3.2 — score bought by the verified on-chain deposit (0 = free
+    // play). Computed in onAuth from the TX BYTES, never from options.
+    spawnScore: number;
 }
 
 export class Player extends Schema {
@@ -477,10 +481,26 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // during matchmaking, before any room instance is touched. Falsy
     // return or throw = the client never reaches onJoin. The truthy
     // return value becomes client.auth / onJoin's third argument.
-    static async onAuth(token: string, _options: JoinOptions) {
+    // A3.2 — the deposit gate lives here too: both proofs (identity,
+    // then money) are checked before any room instance is involved.
+    static async onAuth(token: string, options: JoinOptions) {
         const wallet = verifyAuthToken(token);
         if (!wallet) throw new Error("sign-in required: connect your wallet");
-        return { wallet } satisfies AuthResult;
+        // options.stake is DISPLAY-ONLY and options.txSig is a claim:
+        // the score is derived from the verified on-chain tx alone.
+        // No txSig = free play, whatever the options pretend.
+        let spawnScore = SPAWN_SCORE;
+        if (options.txSig) {
+            try {
+                spawnScore = await verifyDeposit(options.txSig, wallet);
+            } catch (err) {
+                // reason stays server-side (never help a probe); the
+                // client gets a generic rejection
+                console.log(`[chain] deposit rejected: ${(err as Error).message}`);
+                throw new Error("deposit verification failed");
+            }
+        }
+        return { wallet, spawnScore } satisfies AuthResult;
     }
 
     onJoin(client: Client, options: JoinOptions, auth: AuthResult) {
@@ -492,7 +512,9 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         player.sessionId = client.sessionId;
         player.wallet = auth.wallet; // session <-> wallet binding (A3.1)
         player.name = options.name || "anonymous";
-        player.score = SPAWN_SCORE; // fixed for now; variable buy-in later
+        // A3.2 — variable buy-in is real: the verified deposit bought
+        // this starting score (SPAWN_SCORE = 0 for free play)
+        player.score = auth.spawnScore;
         // random spawn inside half the world radius
         const spawnAngle = Math.random() * 2 * Math.PI;
         const spawnDist = Math.random() * WORLD_RADIUS * 0.5;

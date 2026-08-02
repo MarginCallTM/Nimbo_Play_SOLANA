@@ -2,6 +2,11 @@ import { defineServer, defineRoom } from "colyseus";
 import { ARENA_ROOM } from "@nimbo/shared";
 import { ArenaRoom } from "./rooms/ArenaRoom";
 import { issueChallenge } from "./auth";
+import { loadRound, roundInfo } from "./chain";
+
+// A3.2 — know which round we escrow against BEFORE accepting anyone:
+// a misconfigured round must kill the boot, not the first paid join.
+await loadRound();
 
 const server = defineServer({
     rooms: {
@@ -15,6 +20,17 @@ const server = defineServer({
             // a GET with no custom headers needs only this one header
             res.set("Access-Control-Allow-Origin", "*");
             res.json(issueChallenge());
+        });
+        // A3.2 — the round the arena currently escrows on. The client
+        // builds its deposit tx from this; it hardcodes nothing.
+        app.get("/round", (_req, res) => {
+            res.set("Access-Control-Allow-Origin", "*");
+            const info = roundInfo();
+            if (!info) {
+                res.status(503).json({ error: "no active round (free-only mode)" });
+                return;
+            }
+            res.json(info);
         });
     },
 });

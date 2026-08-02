@@ -9,6 +9,7 @@
     },
     "dependencies": {
         "@nimbo/shared": "*",
+        "@solana/web3.js": "^1.98.0",
         "bs58": "^6.0.0",
         "colyseus": "^0.17.0",
         "tweetnacl": "^1.0.3"

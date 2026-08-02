@@ -22,7 +22,8 @@ import {
     PLAYER_COLORS,
     type SnakeColors,
 } from "./render";
-import { signInWithSolana } from "./wallet";
+import { sendJoinDeposit, signInWithSolana } from "./wallet";
+import { showMenu } from "./menu";
 
 // Shape of the live schema references received from the server
 interface NetPlayer {
@@ -296,16 +297,35 @@ async function main() {
     // Pixi first: if the GPU init fails there is nothing to play on
     const view = await GameView.create();
 
+    // A3.2 — the player sequence, in the order the player lives it:
+    // pick a stake -> prove wallet ownership (SIWS) -> deposit on
+    // chain (paid tiers) -> join the room with both proofs.
+    const SERVER_URL = "http://localhost:2567";
+    const { stakeSol } = await showMenu();
+
     // A3.1 — SIWS before anything touches the room: the server's
     // static onAuth rejects tokenless joins, so sign-in is the door.
-    const SERVER_URL = "http://localhost:2567";
     statusEl.textContent = "sign in with your wallet…";
     const client = new Client(SERVER_URL);
     // the SDK sends this token with the matchmaking request; the
     // server's onAuth receives it as its first argument
     client.auth.token = await signInWithSolana(SERVER_URL);
 
-    const options: JoinOptions = { protocol: PROTOCOL_VERSION, name: "tester", stake: 0 };
+    // Paid tier: the deposit tx must be CONFIRMED before we knock on
+    // the room's door — the server verifies it on-chain at join time.
+    let txSig: string | undefined;
+    if (stakeSol > 0) {
+        statusEl.textContent = `depositing ${stakeSol} SOL — approve in Phantom…`;
+        txSig = await sendJoinDeposit(SERVER_URL, stakeSol);
+        statusEl.textContent = "deposit confirmed — joining…";
+    }
+
+    const options: JoinOptions = {
+        protocol: PROTOCOL_VERSION,
+        name: "tester",
+        stake: stakeSol,
+        txSig,
+    };
     const room = await client.joinOrCreate(ARENA_ROOM, options);
     myId = room.sessionId;
     statusEl.textContent = `connected — sessionId=${myId}`;

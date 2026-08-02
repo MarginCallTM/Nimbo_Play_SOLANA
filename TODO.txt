@@ -584,6 +584,47 @@ PHASE ARENA-3 — INTÉGRATION SERVEUR <-> CHAÎNE  (settlement réel)
              @types/express (dev).
 [ ] A3.2  Flux JOIN : le joueur dépose (join tx) AVANT de spawn ; le serveur vérifie
           le dépôt on-chain (ou via l'indexer) avant d'autoriser l'entrée.
+          -> IMPLÉMENTÉ (2026-08-02), à cocher après E2E navigateur.
+          DÉPLOYÉ DEVNET : programme arena 8qGdXYu3prvvvhCEfMnatdv5BAQy
+          VL5NWsh7v5esEF2d (~2 SOL de rent ; recette lottery : build-sbf
+          --arch v0 ; ⚠ SAUVEGARDER target/deploy/arena-keypair.json =
+          upgrade authority, non committée). initialize_reserve appelé
+          DANS LA FOULÉE (anti-squat A2.3) + round dev 24h ouvert via
+          scripts/init-arena-devnet.ts (idempotent, re-lançable pour
+          rouvrir un round : imprime le ROUND_ID). Round actif :
+          1785673242 (authority/treasury = wallet dev FMzJ..iLYw).
+          ARCHI (PROTOCOL_VERSION 2 -> 3) :
+          - shared/arena-chain.ts : instruction join encodée À LA MAIN
+            (discriminator sha256 de l'IDL + u64 LE, ordre des comptes
+            = contrat IDL), PDAs, décodage du compte Round par offsets
+            (127 o), miroir du split (spawnValueFromStake), et LE TAUX
+            SOL<->score TRANCHÉ MVP : SCORE_PER_SOL=1000 (0.1 SOL net
+            ~92.5 score, dans la plage de spawn du proto) — curseur,
+            à ne changer qu'ENTRE rounds. Choix : PAS d'Anchor client
+            navigateur (polyfills Vite) — web3.js seul, sans Buffer
+            dans shared (DataView/TextEncoder).
+          - client : menu.ts (port DOM d'A0.7bis, tiers FREE/0.10/
+            0.25/0.50/1), wallet.ts sendJoinDeposit (GET /round -> tx
+            join -> Phantom signAndSendTransaction -> confirmation avec
+            lastValidBlockHeight), main.ts séquence menu -> SIWS ->
+            dépôt -> joinOrCreate({stake, txSig}).
+          - serveur : chain.ts (loadRound au BOOT depuis ROUND_ID env —
+            round absent/fini = crash au boot, pas au 1er join ; sans
+            env = mode FREE-ONLY loggé), GET /round (roundId en STRING
+            — u64 > 2^53), verifyDeposit = LA porte : tx trouvée +
+            succès + âge < 10min + instruction join de NOTRE programme
+            + round = LE NÔTRE (initialize_round est permissionless !)
+            + payeur = wallet SIWS (les signatures sont PUBLIQUES —
+            sans ce lien, spawn avec le txSig d'autrui) + signature
+            single-use (réservée AVANT le RPC, relâchée sur échec).
+            Montant lu des OCTETS de la tx, jamais des options client.
+          LIMITES ASSUMÉES (notées pour A3.4/A4) : consumedSigs en
+          mémoire (restart = fenêtre de rejeu bornée par l'âge 10min ;
+          vrai fix = persistance/indexer A3.4) ; mort = respawn FREE
+          (le "repayer pour respawn" complet = menu de mort client,
+          après l'E2E) ; free-only pas encore séparé du serveur payant
+          (A0.7bis prod).
+          LANCEMENT DEV : ROUND_ID=1785673242 npm run dev:server
 [ ] A3.3  Service de settlement en Rust : détient la clé authority (hot wallet au MVP),
           écoute les extractions du serveur de jeu, soumet settle_extraction.
 [ ] A3.4  Indexer arena (réutilise le pattern loterie) : events -> Postgres
