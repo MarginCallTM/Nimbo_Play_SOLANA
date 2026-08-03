@@ -18,7 +18,11 @@ import * as fs from "fs";
 import * as os from "os";
 
 const RAKE_BPS = 550; // 5.5% house rake
-const RESERVE_BPS = 200; // 2% pellet fund
+// D74: 0 ON PURPOSE — every non-rake lamport must sit in the Vault so
+// extractions can always be paid. The pellet cut (D75, 10%) is server
+// accounting, not an on-chain flow. The reserve PDA keeps its D50
+// role (end-round sweeps + bounded marketing injections).
+const RESERVE_BPS = 0;
 const ROUND_DURATION_S = 24 * 3600; // dev round: long enough to not fight expiry
 
 describe("init arena devnet", () => {

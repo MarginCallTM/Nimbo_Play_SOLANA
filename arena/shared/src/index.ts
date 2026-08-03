@@ -6,13 +6,19 @@
 // Bumped on every breaking protocol change; the server rejects clients
 // that present a different version (stale browser tabs after a deploy).
 // v2: SIWS authentication required to join (A3.1).
-export const PROTOCOL_VERSION = 3; // 3 = A3.2: deposit-gated joins (txSig)
+export const PROTOCOL_VERSION = 5; // 5 = death = game over (died message, no auto-respawn)
 
 export * from "./siws";
 export * from "./arena-chain";
 
 // Room identifier used by the matchmaker on both sides.
 export const ARENA_ROOM = "arena";
+// D72/D76 — the free demo: a SEPARATE room, fully off-chain, bots
+// only, no wallet required. A paying player never meets a demo one.
+export const DEMO_ROOM = "demo";
+export const DEMO_SPAWN_SCORE = 30;   // tutorial snake, mid-size feel
+export const DEMO_FOOD_COUNT = 800;   // abundant FAKE food (learning space)
+export const DEMO_BOT_COUNT = 6;      // same population as the proto
 
 // --- Simulation constants -------------------------------------------
 // Shared because the client will PREDICT its own movement (A1.5) with
@@ -87,6 +93,15 @@ export const SPAWN_GRACE_TICKS = SERVER_TICK_RATE * 3; // 3s intangible after sp
 // strategy — the money always returns to the arena.
 export const DISCONNECT_TTL_TICKS = SERVER_TICK_RATE * 5; // 5s then corpse
 
+// --- Extract points (A0.6 rules, ported to the authoritative server) --
+// All durations in 60fps FRAMES (the proto's time unit — the server
+// tick advances by TICK_DT frames, so these transpose unchanged).
+export const EXTRACT_RADIUS = 130;         // px, zone radius
+export const EXTRACT_SPAWN_COOLDOWN = 600; // ~10s between extract points
+export const EXTRACT_TTL = 2400;           // ~40s: the zone's full lifetime
+export const EXTRACT_WARNING_FRAMES = 180; // last 3s: bomb blink, then it KILLS
+export const EXTRACT_CHANNEL_FRAMES = 240; // 4s of channeling to cash out
+
 // --- Messages -------------------------------------------------------
 
 // What the client presents when joining a room (menu screen data).
@@ -118,6 +133,24 @@ export interface RoundInfoResponse {
 export interface InputMessage {
     angle: number;  // desired heading, radians
     boost: boolean; // sprint intent
+}
+
+// Server -> client, once, when YOUR channel completes: your value has
+// left the arena and become a settlement claim. Amount/nonce as
+// STRINGS (u64 territory). The payout itself lands later (A3.3).
+export interface ExtractedMessage {
+    score: number;    // what left the arena, in game units
+    lamports: string; // score converted at SCORE_PER_SOL — the claim
+    nonce: string;    // unique per round: the on-chain anti-replay key
+}
+
+// Server -> client, once, when YOUR snake dies (border, collision,
+// zone detonation). In the paid arena death is GAME OVER: no auto-
+// respawn (D72 — playing again = depositing again). The lamports are
+// what your corpse left on the field — the "moins-value".
+export interface DiedMessage {
+    score: number;    // value lost, in game units
+    lamports: string; // same, in lamports (display: what it was worth)
 }
 
 // --- Shared math ----------------------------------------------------

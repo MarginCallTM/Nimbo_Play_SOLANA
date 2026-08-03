@@ -31,6 +31,15 @@
 ##############################################################
 
   Décisions encore OUVERTES (à trancher en cours de route) :
+   - TROUVABILITÉ des pellets du dépôt à faible population (PARKÉ
+     2026-08-03) : le joueur solo doit pouvoir manger SES pellets avant
+     d'extraire, mais ils sont éparpillés map-wide. Options examinées et
+     non retenues par le user : minimap-pellets (casse l'anti-maphack
+     AoI A1.8 + fog of war : radar à cadavres/activité, botable),
+     minimap AoI-only (n'aide presque pas), couronne autour du spawn
+     (proposé Claude, pas satisfaisant pour le user). À re-creuser
+     (pistes : densité par secteur ? flèche vers le pellet le plus
+     proche ? aimant plus large ? matérialisation progressive ?).
    - Cadence / placement des extract points (à régler au playtest ARENA-0).
    - Formule serveur de "la valeur d'un joueur" — DEMI-TRANCHÉE (2026-07-23) :
      le règlement se fait TOUJOURS sur le SCORE (registre comptable :
@@ -582,17 +591,20 @@ PHASE ARENA-3 — INTÉGRATION SERVEUR <-> CHAÎNE  (settlement réel)
              que celle prétendue -> tous rejetés, raisons loggées
              serveur only. Deps : tweetnacl + bs58 (server, loadtest),
              @types/express (dev).
-[ ] A3.2  Flux JOIN : le joueur dépose (join tx) AVANT de spawn ; le serveur vérifie
+[x] A3.2  Flux JOIN : le joueur dépose (join tx) AVANT de spawn ; le serveur vérifie
           le dépôt on-chain (ou via l'indexer) avant d'autoriser l'entrée.
-          -> IMPLÉMENTÉ (2026-08-02), à cocher après E2E navigateur.
+          -> IMPLÉMENTÉ (2026-08-02) ; VALIDÉ E2E NAVIGATEUR (2026-08-03) :
+          dépôt 0.1 SOL signé Phantom, spawn payé ~92.5, et PREUVE
+          ON-CHAIN : totalStaked=100000000, vault=92500000 lamports
+          (split 5.5%+2% exact au lamport).
           DÉPLOYÉ DEVNET : programme arena 8qGdXYu3prvvvhCEfMnatdv5BAQy
           VL5NWsh7v5esEF2d (~2 SOL de rent ; recette lottery : build-sbf
           --arch v0 ; ⚠ SAUVEGARDER target/deploy/arena-keypair.json =
           upgrade authority, non committée). initialize_reserve appelé
           DANS LA FOULÉE (anti-squat A2.3) + round dev 24h ouvert via
           scripts/init-arena-devnet.ts (idempotent, re-lançable pour
-          rouvrir un round : imprime le ROUND_ID). Round actif :
-          1785673242 (authority/treasury = wallet dev FMzJ..iLYw).
+          rouvrir un round : imprime le ROUND_ID). Round actif (ROTATIF, re-lancer le script chaque jour) :
+          1785755515 (authority/treasury = wallet dev FMzJ..iLYw).
           ARCHI (PROTOCOL_VERSION 2 -> 3) :
           - shared/arena-chain.ts : instruction join encodée À LA MAIN
             (discriminator sha256 de l'IDL + u64 LE, ordre des comptes
@@ -624,7 +636,98 @@ PHASE ARENA-3 — INTÉGRATION SERVEUR <-> CHAÎNE  (settlement réel)
           (le "repayer pour respawn" complet = menu de mort client,
           après l'E2E) ; free-only pas encore séparé du serveur payant
           (A0.7bis prod).
-          LANCEMENT DEV : ROUND_ID=1785673242 npm run dev:server
+          LANCEMENT DEV : ROUND_ID=1785755515 npm run dev:server
+[ ] A3.2bis PORT EXTRACTION proto -> serveur (ajouté 2026-08-03 : même
+          trou de planning qu'A1.7bis — le settlement n'a rien à régler
+          tant qu'on ne peut pas extraire). IMPLÉMENTÉ (2026-08-03), à
+          cocher après test navigateur :
+          - shared : constantes EXTRACT_* (frames 60fps = unité du tick,
+            transposées telles quelles), lamportsFromScore (arrondi
+            PLANCHER : la poussière sub-lamport reste au vault -> sweep
+            D50), ExtractedMessage, PROTOCOL_VERSION 3 -> 4.
+          - serveur : ExtractZone dans l'ArenaState (1 zone à la fois,
+            active/x/y/ttl synchronisés), Player.channel SYNCHRONISÉ
+            (canaliser s'affiche = LA fenêtre de kill by design),
+            machine à états A0.6 dans le tick — MULTI : chaque joueur
+            accumule SON canal, premier à 4s gagne (résolu APRÈS le
+            balayage : pas de double-extraction dans un même tick),
+            détonation = resolveDeath de quiconque est dedans, graced/
+            frozen ne canalisent pas, mort = canal forfait.
+          - EXTRACTION = CRÉANCE : score -> lamports (même taux),
+            nonce unique (bootMs*1000+n, clé anti-rejeu du futur
+            ExtractReceipt), poussée dans pendingExtractions (OUTBOX
+            MÉMOIRE du service A3.3 — crash = créances perdues,
+            persistance à trancher avec l'interface A3.3), serpent
+            despawn SANS cadavre (la valeur SORT de l'arène),
+            message "extracted" -> client reload -> rejouer = redéposer
+            (le "repayer pour respawn" tombe naturellement).
+          - client : rendu zone (pulse doré, bombe rouge clignotante
+            sous EXTRACT_WARNING_FRAMES, ttl affiché), arc de canal,
+            minimap joueur+extract only (fog of war proto).
+[ ] A3.2ter PORT ÉCONOMIE D71/D73 (ajouté 2026-08-03, BLOQUANT avant A3.3 :
+          on ne règle pas de créances sur une économie qui minte).
+          CONSTAT (user, retrouvé par lui-même = observation A1.10) :
+          le serveur sert encore le robinet gratuit d'ARENA-1 (2200
+          pellets au boot + respawn à chaque bouchée) ; depuis A3.2bis
+          c'est une FAILLE réelle (join FREE -> farm score minté ->
+          extraction en VRAIS lamports pris aux déposants ; D55 borne
+          au vault mais ne distingue pas une créance mintée).
+          MODÈLE CIBLE (D72/D73) :
+          - part pellet de CHAQUE mise MATÉRIALISÉE en pellets au join
+            (fractions de lamports) ; 1 joueur = SES pellets ; map
+            presque vide à faible population = VOULU ;
+          - ZÉRO respawn gratuit (regarnissage = joins + cadavres
+            70/30 + traînées de boost uniquement) ;
+          - FREE = démo hors-chaîne SÉPARÉE avec bots only (D72) —
+            retirer/reroute le bouton FREE du serveur payant ;
+          - invariant de conservation loggé [eco] : somme(scores) +
+            somme(sol au sol) + outbox = somme(valeurs injectées).
+          DÉCISIONS TRANCHÉES (user, 2026-08-03, via 4 questions) :
+          D74 fund pellets AU VAULT (reserve_bps=0, garde-fou au boot
+          serveur) ; D75 pellet cut 10% (contre reco 2% — ⚠ botable
+          réitéré, à mesurer en A4.6) ; 70/30 inchangé ; D76 démo
+          construite MAINTENANT (sans wallet — proposition Claude).
+          -> CŒUR IMPLÉMENTÉ (2026-08-03) : shared PELLET_CUT_BPS=1000
+          + splitStake (le spawn prend la poussière) ; script init
+          RESERVE_BPS=0 -> NOUVEAU ROUND 1785758653 ; chain.ts refuse
+          un round à reserve_bps!=0 et verifyDeposit rend {spawnScore,
+          pelletScore} ; ArenaRoom : ZÉRO bouffe au boot, ZÉRO respawn
+          à la bouchée, matérialisation au join (pellets entiers
+          map-wide, reliquat sur le serpent), onAuth EXIGE txSig
+          (D72), registre [eco] toutes les 10s (in-play + ground +
+          extracted - injected = drift, doit rester ~0) + FIX de
+          conservation trouvé par le registre : le reliquat sub-orbe
+          des cadavres s'évaporait (jusqu'à 5 score/mort) -> rendu au
+          cadavre (règle D47).
+          -> TEST [eco] VALIDÉ (user, 2026-08-03) : drift stable.
+          + UX FIN DE RUN (demandes user 2026-08-03, PROTOCOL 4 -> 5) :
+          - MORT = GAME OVER (règle actée en passant : plus d'auto-
+            respawn à score 0 — incohérent en arène 100% payante D72 ;
+            resolveDeath = cadavre + message "died" {score, lamports}
+            + RETRAIT de la room ; rejouer = redéposer). Écran GAME
+            OVER rouge "◎X left on the field" (la moins-value), bouton
+            BACK TO MENU -> reload (reset netcode intégral).
+          - EXTRACTED : écran vert "◎X secured" + claim #nonce, même
+            flux (remplace le reload auto 5s).
+          - Étiquette au-dessus de chaque tête = SOL LIVE "nom ◎0.0845"
+            (règle mock-◎ du proto : le score est le registre, ◎ est
+            ce qu'il vaut), plus de score brut.
+          + DÉMO D76 IMPLÉMENTÉE (2026-08-03) : DemoRoom EXTENDS
+          ArenaRoom (même sim héritée ; membres passés protected) —
+          3 différences : porte ouverte (onAuth statique sans SIWS ni
+          dépôt, spawn 30), population = 6 bots SERVEUR (steering
+          A1.10 porté : survivre > fuir > manger, filtre rayon de
+          braquage, engagement de cible ; churn par respawn) + 800
+          pellets FAKE librement respawnés MAIS comptés injected (le
+          [eco] reste vérifiable en démo), sorties sans créance
+          (extractPlayer override : rien ne touche l'outbox, écrans
+          "demo, nothing real"). Client : FREE -> room "demo" SANS
+          wallet (ni SIWS ni Phantom). Room séparée = un payant ne
+          croise JAMAIS un démo (D72).
+          RESTE : (a) test navigateur : démo (bots vivants, écrans
+          demo) + arène payante (game-over ◎, labels ◎ live) ;
+          (b) puis COMMIT A3.2bis+ter et ouverture d'A3.3.
+          LANCEMENT DEV : ROUND_ID=1785758653 npm run dev:server
 [ ] A3.3  Service de settlement en Rust : détient la clé authority (hot wallet au MVP),
           écoute les extractions du serveur de jeu, soumet settle_extraction.
 [ ] A3.4  Indexer arena (réutilise le pattern loterie) : events -> Postgres

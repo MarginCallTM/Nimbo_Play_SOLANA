@@ -172,3 +172,28 @@ export function scoreFromLamports(lamports: bigint): number {
     // (the CHAIN keeps the exact lamports; score is the game's ledger)
     return (Number(lamports) / 1_000_000_000) * SCORE_PER_SOL;
 }
+
+// Exit side of the ledger: score -> lamports at the SAME rate as the
+// entry (strict conservation). Rounded DOWN: the sub-lamport dust
+// stays in the vault (swept to the FoodReserve at end_round, D50) —
+// the house never owes more than the ledger says.
+export function lamportsFromScore(score: number): bigint {
+    return BigInt(Math.floor((score / SCORE_PER_SOL) * 1_000_000_000));
+}
+
+// D74/D75 — the pellet cut is SERVER accounting: on-chain the round
+// runs with reserve_bps = 0 so every non-rake lamport sits in the
+// Vault (extractions can always be paid, D55). The tuning knob:
+export const PELLET_CUT_BPS = 1000; // 10% of the stake becomes pellets (D75)
+
+// The full entry split. rakeBps comes from the Round account; the
+// pellet cut is ours. Floor divisions, spawn takes the dust — the
+// three parts sum to the stake exactly.
+export function splitStake(
+    stakeLamports: bigint,
+    rakeBps: number,
+): { pelletLamports: bigint; spawnLamports: bigint } {
+    const rake = (stakeLamports * BigInt(rakeBps)) / 10_000n;
+    const pelletLamports = (stakeLamports * BigInt(PELLET_CUT_BPS)) / 10_000n;
+    return { pelletLamports, spawnLamports: stakeLamports - rake - pelletLamports };
+}

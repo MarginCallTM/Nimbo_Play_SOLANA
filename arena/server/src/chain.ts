@@ -16,7 +16,7 @@ import {
     isJoinData,
     roundPda,
     scoreFromLamports,
-    spawnValueFromStake,
+    splitStake,
     type RoundInfoResponse,
 } from "@nimbo/shared";
 
@@ -61,6 +61,16 @@ export async function loadRound(): Promise<void> {
     const round = decodeRoundAccount(info.data);
     if (!round) throw new Error("[chain] account exists but is not a Round (wrong ROUND_ID?)");
     if (!round.isOpen) throw new Error(`[chain] round ${roundId} is already Ended`);
+    // D74 — the pellet cut is OUR accounting on top of vault money; a
+    // round that ALSO routes lamports to the reserve PDA would count
+    // the same value twice (pellets backed by lamports the vault
+    // doesn't hold). Refuse to boot rather than run insolvent.
+    if (round.reserveBps !== 0) {
+        throw new Error(
+            `[chain] round ${roundId} has reserve_bps=${round.reserveBps} — ` +
+            "D74 requires 0 (pellet cut is server-side); open a fresh round",
+        );
+    }
     const nowS = Math.floor(Date.now() / 1000);
     if (Number(round.endTimestamp) <= nowS) {
         throw new Error(`[chain] round ${roundId} deadline has passed — open a fresh one`);
@@ -89,9 +99,16 @@ export function roundInfo(): RoundInfoResponse | undefined {
     };
 }
 
-// Verify a claimed deposit and convert it into a spawn score.
+// What a verified deposit buys, in game units: the snake's starting
+// score AND the pellets materialized on the map at join (D73/D75).
+export interface DepositResult {
+    spawnScore: number;
+    pelletScore: number;
+}
+
+// Verify a claimed deposit and convert it into spawn + pellet scores.
 // Throws with a reason on ANY failure — the caller rejects the join.
-export async function verifyDeposit(txSig: string, wallet: string): Promise<number> {
+export async function verifyDeposit(txSig: string, wallet: string): Promise<DepositResult> {
     if (!current) throw new Error("no active round (server is in free-only mode)");
 
     // Reserve the signature BEFORE the async RPC work: two concurrent
@@ -140,13 +157,16 @@ export async function verifyDeposit(txSig: string, wallet: string): Promise<numb
             // from anything the client claimed. The program succeeded,
             // so the split math below matches what actually moved.
             const stake = decodeJoinStake(data);
-            const spawnValue = spawnValueFromStake(stake, current.rakeBps, current.reserveBps);
-            const score = scoreFromLamports(spawnValue);
+            const { pelletLamports, spawnLamports } = splitStake(stake, current.rakeBps);
+            const result: DepositResult = {
+                spawnScore: scoreFromLamports(spawnLamports),
+                pelletScore: scoreFromLamports(pelletLamports),
+            };
             console.log(
                 `[chain] deposit ok: ${Number(stake) / 1e9} SOL by ${wallet.slice(0, 4)}..` +
-                ` -> spawn score ${score.toFixed(1)}`,
+                ` -> spawn ${result.spawnScore.toFixed(1)} + pellets ${result.pelletScore.toFixed(1)}`,
             );
-            return score;
+            return result;
         }
         throw new Error("tx contains no arena join instruction");
     } catch (err) {

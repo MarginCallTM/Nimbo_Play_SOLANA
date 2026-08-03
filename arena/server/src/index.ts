@@ -1,6 +1,7 @@
 import { defineServer, defineRoom } from "colyseus";
-import { ARENA_ROOM } from "@nimbo/shared";
+import { ARENA_ROOM, DEMO_ROOM } from "@nimbo/shared";
 import { ArenaRoom } from "./rooms/ArenaRoom";
+import { DemoRoom } from "./rooms/DemoRoom";
 import { issueChallenge } from "./auth";
 import { loadRound, roundInfo } from "./chain";
 
@@ -11,6 +12,9 @@ await loadRound();
 const server = defineServer({
     rooms: {
         [ARENA_ROOM]: defineRoom(ArenaRoom),
+        // D72/D76 — the free tutorial world: bots, fake value, no
+        // wallet. Physically separate from the paid arena.
+        [DEMO_ROOM]: defineRoom(DemoRoom),
     },
     // A3.1 — SIWS challenge endpoint. The nonce lives server-side from
     // birth: the client never chooses it, it only signs it.

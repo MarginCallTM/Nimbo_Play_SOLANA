@@ -5,7 +5,6 @@ import {
     BOOST_ORB_VALUE,
     BROADCAST_RATE,
     DEATH_ORB_VALUE,
-    FOOD_COUNT,
     FOOD_EAT_RANGE,
     FOOD_VALUE,
     PROTOCOL_VERSION,
@@ -13,15 +12,21 @@ import {
     SPAWN_GRACE_TICKS,
     SERVER_TICK_RATE,
     DISCONNECT_TTL_TICKS,
+    EXTRACT_CHANNEL_FRAMES,
+    EXTRACT_RADIUS,
+    EXTRACT_SPAWN_COOLDOWN,
+    EXTRACT_TTL,
     SNAKE_BOOST_COST,
     SNAKE_BOOST_SPEED,
     SNAKE_SPACING,
     SNAKE_SPEED,
-    SPAWN_SCORE,
     TICK_DT,
     WORLD_RADIUS,
     describeSnakeFromScore,
     turnTowards,
+    lamportsFromScore,
+    type DiedMessage,
+    type ExtractedMessage,
     type InputMessage,
     type JoinOptions,
 } from "@nimbo/shared";
@@ -30,11 +35,13 @@ import { verifyAuthToken } from "../auth";
 import { verifyDeposit } from "../chain";
 
 // What onAuth hands to onJoin once the SIWS proof checks out.
-interface AuthResult {
+export interface AuthResult {
     wallet: string; // base58 address, the on-chain identity (A3.2+)
-    // A3.2 — score bought by the verified on-chain deposit (0 = free
-    // play). Computed in onAuth from the TX BYTES, never from options.
+    // A3.2 — bought by the verified on-chain deposit, computed in
+    // onAuth from the TX BYTES, never from options. pelletScore is
+    // materialized on the map at join (D73/D75).
     spawnScore: number;
+    pelletScore: number;
 }
 
 export class Player extends Schema {
@@ -62,6 +69,12 @@ export class Player extends Schema {
     // once at disconnect (flattened x,y pairs), cleared on return —
     // costs zero bytes while everyone is connected.
     @type(["float32"]) frozenBody = new ArraySchema<number>();
+
+    // Extraction channel progress, in frames (0..EXTRACT_CHANNEL_
+    // FRAMES). Synced ON PURPOSE: a channeling snake is announcing
+    // "my value is about to leave" — everyone seeing the bar climb is
+    // the kill window the design promises (A0.6).
+    @type("float32") channel = 0;
 
     // --- NOT decorated -> never leaves the server ---
     // The authenticated wallet (A3.1). Deliberately NOT synced: other
@@ -104,6 +117,17 @@ interface Segment {
     owner: Player;
 }
 
+// The single extract point (proto model: one at a time). Always
+// present in the state; `active` flips its phases — cooldown (false)
+// and live (true). ttl counts down in frames so every client renders
+// the same bomb countdown without extra messages.
+export class ExtractZone extends Schema {
+    @type("boolean") active = false;
+    @type("float32") x = 0;
+    @type("float32") y = 0;
+    @type("float32") ttl = 0;
+}
+
 export class ArenaState extends Schema {
     // Players stay globally synced: 16 heads are cheap, and the
     // minimap will need them. Food is the volume — @view() takes it
@@ -111,6 +135,17 @@ export class ArenaState extends Schema {
     // its StateView subscribed to (its AoI bubble).
     @type({ map: Player }) players = new MapSchema<Player>();
     @view() @type({ map: Food }) food = new MapSchema<Food>();
+    @type(ExtractZone) extract = new ExtractZone();
+}
+
+// A completed extraction, waiting for the settlement service (A3.3)
+// to submit settle_extraction on-chain. The nonce is the anti-replay
+// key: one ExtractReceipt PDA per (round_id, nonce).
+export interface PendingExtraction {
+    wallet: string;
+    lamports: bigint;
+    nonce: bigint;
+    at: number; // unix ms, diagnostic only
 }
 
 export class ArenaRoom extends Room<{ state: ArenaState }> {
@@ -155,16 +190,36 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // is never rebuilt per tick. The SEGMENT grid is the opposite:
     // bodies move every tick, so it is cleared and refilled each tick
     // (a moved item's cell key is stale — proto lesson).
-    private foodGrid = new SpatialGrid<Food>();
+    protected foodGrid = new SpatialGrid<Food>();
     private segmentGrid = new SpatialGrid<Segment>();
     private nextFoodId = 0;
 
     // AoI bookkeeping: what each client's view currently contains.
     // Refreshed every AOI_UPDATE_TICKS (the bubble doesn't need 30Hz).
-    private inView = new Map<string, Set<Food>>();
+    protected inView = new Map<string, Set<Food>>();
     // Pending reconnection windows (A1.9), held so the tick can
     // cancel them when the disconnect TTL expires
     private pendingReconnections = new Map<string, Deferred<Client>>();
+
+    // --- extraction (A0.6 state machine, multiplayer flavor) --------
+    private extractCooldown = EXTRACT_SPAWN_COOLDOWN;
+    // Settlement outbox: what A3.3 will drain. In-memory for now —
+    // a server crash loses unsold claims (players keep the tx-less
+    // proof of nothing). Persistence is part of the A3.3 interface.
+    readonly pendingExtractions: PendingExtraction[] = [];
+    // Nonce = boot-time ms * 1000 + counter: unique per round even
+    // across restarts (two boots in the same millisecond don't happen;
+    // 1000 extractions in one ms don't either).
+    private nextNonce = BigInt(Date.now()) * 1000n;
+
+    // --- conservation ledger (D73 invariant, logged as [eco]) --------
+    // Everything that ever ENTERED this arena (spawn + pellet scores
+    // of verified deposits) vs everything currently in it or out of
+    // it. in-play + on-ground + extracted == injected, always — any
+    // drift is minting or evaporation, i.e. a bug.
+    protected injectedScore = 0;
+    protected extractedScore = 0;
+    private ecoCounter = 0;
 
     // A1.10 load instrumentation: tick duration is THE health metric
     // of an authoritative room. Blow the budget (STEP_MS) and the
@@ -204,7 +259,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         }
     }
 
-    private addFood(x: number, y: number, value: number) {
+    protected addFood(x: number, y: number, value: number) {
         const food = new Food();
         food.x = x;
         food.y = y;
@@ -214,18 +269,10 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         this.foodGrid.insert(food);
     }
 
-    private spawnAmbient() {
-        // sqrt on the radius = uniform density over the DISC (plain
-        // random would pile everything up near the center)
-        const angle = Math.random() * 2 * Math.PI;
-        const dist = WORLD_RADIUS * 0.98 * Math.sqrt(Math.random());
-        this.addFood(Math.cos(angle) * dist, Math.sin(angle) * dist, FOOD_VALUE);
-    }
-
     // Anti-concentration (RECYCLE_RATIO): a released orb lands at a
     // random map spot instead of where it was lost — keeps the ambient
     // supply alive everywhere. One-shot like any non-ambient orb.
-    private scatterRandom(value: number) {
+    protected scatterRandom(value: number) {
         const angle = Math.random() * 2 * Math.PI;
         const dist = WORLD_RADIUS * 0.95 * Math.sqrt(Math.random());
         this.addFood(Math.cos(angle) * dist, Math.sin(angle) * dist, value);
@@ -233,7 +280,9 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
 
     onCreate(_options: JoinOptions) {
         console.log(`[room] created — sim ${SERVER_TICK_RATE}Hz fixed, broadcast ${BROADCAST_RATE}Hz`);
-        for (let i = 0; i < FOOD_COUNT; i++) this.spawnAmbient();
+        // D73: NO boot-time food. Every pellet on this map is backed
+        // by deposited lamports — the arena starts empty and fills
+        // with the players' own money.
         // Simulation rate and broadcast rate are independent knobs:
         // collision precision does not cost bandwidth, and vice versa.
         this.setPatchRate(1000 / BROADCAST_RATE);
@@ -340,9 +389,10 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
                         this.foodGrid.remove(food);
                         this.state.food.delete(food.id);
                         player.score += food.value;
-                        // only ambient pellets respawn elsewhere;
-                        // corpse orbs are one-shot loot
-                        if (food.value === FOOD_VALUE) this.spawnAmbient();
+                        // D73: NO free respawn — eaten value moved
+                        // into the eater, nothing is minted. The map
+                        // refills through joins, corpses and boost
+                        // trails only.
                     }
                 }
             }
@@ -407,12 +457,135 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         });
         deaths.forEach((player) => this.resolveDeath(player));
 
+        this.extractTick(dt);
+
         // AoI refresh, decimated: every N ticks, not every tick
         this.aoiCounter += 1;
         if (this.aoiCounter >= ArenaRoom.AOI_UPDATE_TICKS) {
             this.aoiCounter = 0;
             this.updateViews();
         }
+
+        // [eco] conservation audit, every 10s. drift != 0 = a bug
+        // minting or evaporating value somewhere (float32 sums may
+        // wobble by hundredths — anything beyond that, investigate).
+        this.ecoCounter += 1;
+        if (this.ecoCounter >= SERVER_TICK_RATE * 10) {
+            this.ecoCounter = 0;
+            let inPlay = 0;
+            this.state.players.forEach((p) => (inPlay += p.score));
+            let onGround = 0;
+            this.state.food.forEach((f) => (onGround += f.value));
+            const drift = inPlay + onGround + this.extractedScore - this.injectedScore;
+            console.log(
+                `[eco] in-play=${inPlay.toFixed(1)} ground=${onGround.toFixed(1)}` +
+                ` extracted=${this.extractedScore.toFixed(1)}` +
+                ` injected=${this.injectedScore.toFixed(1)} drift=${drift.toFixed(3)}`,
+            );
+        }
+    }
+
+    // A0.6 state machine, multiplayer flavor: ONE zone at a time, but
+    // EVERY eligible player runs their own channel — first to 4s wins
+    // the point, everyone else resets. The channel rule stays purely
+    // SPATIAL (inside = climb, outside = hard zero): having to sit 4s
+    // in a circle every client renders IS the vulnerability.
+    private extractTick(dt: number) {
+        const zone = this.state.extract;
+
+        // cooldown phase: nothing on the map
+        if (!zone.active) {
+            this.extractCooldown -= dt;
+            if (this.extractCooldown <= 0) {
+                // uniform over the disc, kept away from the lethal border
+                const r = WORLD_RADIUS * 0.75 * Math.sqrt(Math.random());
+                const a = Math.random() * 2 * Math.PI;
+                zone.x = r * Math.cos(a);
+                zone.y = r * Math.sin(a);
+                zone.ttl = EXTRACT_TTL;
+                zone.active = true;
+                console.log(`[extract] zone up at (${zone.x.toFixed(0)}, ${zone.y.toFixed(0)})`);
+            }
+            return;
+        }
+
+        // expiry: the zone closes like a BOMB — anyone still inside
+        // dies a normal death (corpse where they stood, A0.6 rule)
+        zone.ttl -= dt;
+        if (zone.ttl <= 0) {
+            const victims: Player[] = [];
+            this.state.players.forEach((p) => {
+                if (p.graced || !p.connected) return;
+                if (Math.hypot(p.x - zone.x, p.y - zone.y) <= EXTRACT_RADIUS) victims.push(p);
+            });
+            victims.forEach((p) => this.resolveDeath(p));
+            this.closeZone();
+            console.log(`[extract] zone detonated — ${victims.length} caught inside`);
+            return;
+        }
+
+        // channel phase — winners resolved AFTER the sweep so a tie
+        // inside one tick cannot double-spend the zone
+        let winner: Player | undefined;
+        this.state.players.forEach((player) => {
+            // graced snakes collect nothing (proto fairness rule) and
+            // frozen ones are out of the world entirely (A1.9)
+            if (player.graced || !player.connected) {
+                player.channel = 0;
+                return;
+            }
+            const inside =
+                Math.hypot(player.x - zone.x, player.y - zone.y) <= EXTRACT_RADIUS;
+            if (!inside) {
+                player.channel = 0;
+                return;
+            }
+            player.channel += dt;
+            if (player.channel >= EXTRACT_CHANNEL_FRAMES && !winner) {
+                winner = player;
+            }
+        });
+        if (winner) this.extractPlayer(winner);
+    }
+
+    // Cash-out: the value LEAVES the arena (no corpse — this is the
+    // one exit where conservation crosses the chain boundary). The
+    // score becomes a lamport claim in the settlement outbox; the
+    // snake despawns; playing again = depositing again.
+    protected extractPlayer(player: Player) {
+        const lamports = lamportsFromScore(player.score);
+        const nonce = this.nextNonce++;
+        this.extractedScore += player.score; // ledger: left the arena
+        this.pendingExtractions.push({
+            wallet: player.wallet,
+            lamports,
+            nonce,
+            at: Date.now(),
+        });
+
+        const msg: ExtractedMessage = {
+            score: player.score,
+            lamports: lamports.toString(),
+            nonce: nonce.toString(),
+        };
+        this.clients.find((c) => c.sessionId === player.sessionId)?.send("extracted", msg);
+
+        this.state.players.delete(player.sessionId);
+        this.inView.delete(player.sessionId);
+        this.closeZone();
+        console.log(
+            `[extract] ${player.sessionId} wallet=${player.wallet.slice(0, 4)}..` +
+            ` score=${player.score.toFixed(1)} -> ${lamports} lamports, nonce=${nonce}` +
+            ` (outbox: ${this.pendingExtractions.length} pending)`,
+        );
+    }
+
+    protected closeZone() {
+        const zone = this.state.extract;
+        zone.active = false;
+        zone.ttl = 0;
+        this.extractCooldown = EXTRACT_SPAWN_COOLDOWN;
+        this.state.players.forEach((p) => (p.channel = 0));
     }
 
     // Corpse drop, shared by two exits: death (then respawn) and the
@@ -423,6 +596,13 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         // corpse: score becomes big orbs spread along the body
         const orbCount = Math.floor(player.score / DEATH_ORB_VALUE);
         const tracers = player.tracers;
+        // conservation fix (2026-08-03, exposed by the [eco] ledger):
+        // the sub-orb remainder used to evaporate — up to 5 score per
+        // death. D47: the dust goes back to the corpse.
+        const remainder = player.score - orbCount * DEATH_ORB_VALUE;
+        if (remainder > 0.001) {
+            this.addFood(player.x, player.y, remainder);
+        }
         for (let i = 0; i < orbCount; i++) {
             // 30% of corpse orbs recycle map-wide (anti-concentration:
             // a whale dying must not mint a local jackpot only)
@@ -456,25 +636,24 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         console.log(`[expired] ${player.sessionId} — corpse dropped`);
     }
 
-    private resolveDeath(player: Player) {
+    // D72 — in the paid arena, death is GAME OVER: the corpse drops
+    // (value stays on the field, strict conservation) and the player
+    // LEAVES the room. No auto-respawn — playing again = depositing
+    // again. The client shows the loss and returns to the menu.
+    protected resolveDeath(player: Player) {
         this.dropCorpse(player);
 
-        // respawn fresh ("repay to respawn" arrives with the economy)
-        player.score = SPAWN_SCORE;
-        player.tracers = [];
-        const angle = Math.random() * 2 * Math.PI;
-        const dist = Math.random() * WORLD_RADIUS * 0.5;
-        player.x = Math.cos(angle) * dist;
-        player.y = Math.sin(angle) * dist;
-        player.angle = Math.random() * 2 * Math.PI;
-        player.desiredAngle = player.angle;
-        player.graceTicks = SPAWN_GRACE_TICKS;
-        player.graced = true;
+        const msg: DiedMessage = {
+            score: player.score,
+            lamports: lamportsFromScore(player.score).toString(),
+        };
+        this.clients.find((c) => c.sessionId === player.sessionId)?.send("died", msg);
 
-        // epoch bump: tells every client "this was a teleport, reset
-        // your continuity assumptions". uint8 wraps at 256 — equality
-        // comparison only, never ordering.
-        player.gen = (player.gen + 1) % 256;
+        this.state.players.delete(player.sessionId);
+        this.inView.delete(player.sessionId);
+        console.log(
+            `[death] ${player.sessionId} — ${player.score.toFixed(1)} score left on the field`,
+        );
     }
 
     // A3.1 — SIWS gate. STATIC (Colyseus 0.17 recommendation): runs
@@ -486,21 +665,22 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     static async onAuth(token: string, options: JoinOptions) {
         const wallet = verifyAuthToken(token);
         if (!wallet) throw new Error("sign-in required: connect your wallet");
+        // D72 — this room is the PAID arena, full stop: no deposit,
+        // no entry. Free play lives in the separate off-chain demo.
         // options.stake is DISPLAY-ONLY and options.txSig is a claim:
-        // the score is derived from the verified on-chain tx alone.
-        // No txSig = free play, whatever the options pretend.
-        let spawnScore = SPAWN_SCORE;
-        if (options.txSig) {
-            try {
-                spawnScore = await verifyDeposit(options.txSig, wallet);
-            } catch (err) {
-                // reason stays server-side (never help a probe); the
-                // client gets a generic rejection
-                console.log(`[chain] deposit rejected: ${(err as Error).message}`);
-                throw new Error("deposit verification failed");
-            }
+        // everything is derived from the verified on-chain tx alone.
+        if (!options.txSig) {
+            throw new Error("deposit required: this is the paid arena");
         }
-        return { wallet, spawnScore } satisfies AuthResult;
+        try {
+            const deposit = await verifyDeposit(options.txSig, wallet);
+            return { wallet, ...deposit } satisfies AuthResult;
+        } catch (err) {
+            // reason stays server-side (never help a probe); the
+            // client gets a generic rejection
+            console.log(`[chain] deposit rejected: ${(err as Error).message}`);
+            throw new Error("deposit verification failed");
+        }
     }
 
     onJoin(client: Client, options: JoinOptions, auth: AuthResult) {
@@ -513,8 +693,19 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         player.wallet = auth.wallet; // session <-> wallet binding (A3.1)
         player.name = options.name || "anonymous";
         // A3.2 — variable buy-in is real: the verified deposit bought
-        // this starting score (SPAWN_SCORE = 0 for free play)
+        // this starting score
         player.score = auth.spawnScore;
+
+        // D73/D75 — materialize this deposit's pellet cut, map-wide:
+        // whole pellets scattered, sub-pellet remainder onto the
+        // snake itself (exact conservation, same rule as corpse dust)
+        let pellets = auth.pelletScore;
+        while (pellets >= FOOD_VALUE) {
+            this.scatterRandom(FOOD_VALUE);
+            pellets -= FOOD_VALUE;
+        }
+        player.score += pellets;
+        this.injectedScore += auth.spawnScore + auth.pelletScore;
         // random spawn inside half the world radius
         const spawnAngle = Math.random() * 2 * Math.PI;
         const spawnDist = Math.random() * WORLD_RADIUS * 0.5;

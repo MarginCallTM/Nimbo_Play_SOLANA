@@ -1,6 +1,7 @@
 import { Client, Callbacks } from "@colyseus/sdk";
 import {
     ARENA_ROOM,
+    DEMO_ROOM,
     BOOST_ORB_VALUE,
     BROADCAST_RATE,
     FOOD_EAT_RANGE,
@@ -12,6 +13,9 @@ import {
     describeSnakeFromScore,
     turnTowards,
     WORLD_RADIUS,
+    SCORE_PER_SOL,
+    type DiedMessage,
+    type ExtractedMessage,
     type InputMessage,
     type JoinOptions,
 } from "@nimbo/shared";
@@ -23,7 +27,7 @@ import {
     type SnakeColors,
 } from "./render";
 import { sendJoinDeposit, signInWithSolana } from "./wallet";
-import { showMenu } from "./menu";
+import { showGameOver, showMenu } from "./menu";
 
 // Shape of the live schema references received from the server
 interface NetPlayer {
@@ -34,6 +38,7 @@ interface NetPlayer {
     boosting: boolean;
     score: number;
     gen: number;     // epoch marker: changes on respawn (teleport)
+    channel: number; // extraction channel progress, frames (public!)
     graced: boolean; // spawn protection: rendered translucent
     connected: boolean; // A1.9: false = frozen, harmless, rendered gray
     // synced ONLY while frozen (flattened x,y pairs): lets clients
@@ -300,24 +305,29 @@ async function main() {
     // A3.2 — the player sequence, in the order the player lives it:
     // pick a stake -> prove wallet ownership (SIWS) -> deposit on
     // chain (paid tiers) -> join the room with both proofs.
+    // FREE routes to the DEMO room instead (D72/D76): off-chain,
+    // bots, fake value — no wallet involved at any point.
     const SERVER_URL = "http://localhost:2567";
     const { stakeSol } = await showMenu();
+    const isDemo = stakeSol === 0;
 
-    // A3.1 — SIWS before anything touches the room: the server's
-    // static onAuth rejects tokenless joins, so sign-in is the door.
-    statusEl.textContent = "sign in with your wallet…";
     const client = new Client(SERVER_URL);
-    // the SDK sends this token with the matchmaking request; the
-    // server's onAuth receives it as its first argument
-    client.auth.token = await signInWithSolana(SERVER_URL);
-
-    // Paid tier: the deposit tx must be CONFIRMED before we knock on
-    // the room's door — the server verifies it on-chain at join time.
     let txSig: string | undefined;
-    if (stakeSol > 0) {
+    if (!isDemo) {
+        // A3.1 — SIWS before anything touches the paid room: the
+        // server's static onAuth rejects tokenless joins.
+        statusEl.textContent = "sign in with your wallet…";
+        // the SDK sends this token with the matchmaking request; the
+        // server's onAuth receives it as its first argument
+        client.auth.token = await signInWithSolana(SERVER_URL);
+
+        // The deposit tx must be CONFIRMED before we knock on the
+        // room's door — the server verifies it on-chain at join time.
         statusEl.textContent = `depositing ${stakeSol} SOL — approve in Phantom…`;
         txSig = await sendJoinDeposit(SERVER_URL, stakeSol);
         statusEl.textContent = "deposit confirmed — joining…";
+    } else {
+        statusEl.textContent = "joining the demo — no wallet needed…";
     }
 
     const options: JoinOptions = {
@@ -326,7 +336,7 @@ async function main() {
         stake: stakeSol,
         txSig,
     };
-    const room = await client.joinOrCreate(ARENA_ROOM, options);
+    const room = await client.joinOrCreate(isDemo ? DEMO_ROOM : ARENA_ROOM, options);
     myId = room.sessionId;
     statusEl.textContent = `connected — sessionId=${myId}`;
 
@@ -449,6 +459,38 @@ async function main() {
     // lag) — and never per mousemove (that can fire at 1000Hz)
     setInterval(() => room.send("input", input), 33);
 
+    // A3.2+ — YOUR extraction succeeded: the value left the arena and
+    // is now a settlement claim. Reload = clean slate back to the
+    // menu (playing again = depositing again, by design).
+    room.onMessage("extracted", async (msg: ExtractedMessage) => {
+        const sol = (Number(msg.lamports) / 1e9).toFixed(4);
+        await showGameOver({
+            title: "EXTRACTED",
+            amount: isDemo
+                ? `score ${msg.score.toFixed(1)} — demo, nothing real`
+                : `◎${sol} secured`,
+            detail: isDemo
+                ? "stake real SOL to extract real SOL"
+                : `payout pending — claim #${msg.nonce}`,
+            color: "#50fa7b",
+        });
+        location.reload();
+    });
+
+    // Death is game over (D72): the corpse stayed on the field, the
+    // run is done. Show the loss, then back to the menu.
+    room.onMessage("died", async (msg: DiedMessage) => {
+        const sol = (Number(msg.lamports) / 1e9).toFixed(4);
+        await showGameOver({
+            title: "GAME OVER",
+            amount: isDemo
+                ? `score ${msg.score.toFixed(1)} lost — demo, nothing real`
+                : `◎${sol} left on the field`,
+            color: "#f63963",
+        });
+        location.reload();
+    });
+
     // A1.7: RTT probe. EMA smoothing (80/20) so one weird sample
     // doesn't jerk the reconciliation window around.
     room.onMessage("pong", (t: number) => {
@@ -475,6 +517,15 @@ async function main() {
         }
 
         predictTick(dtFrames, now);
+
+        // extract zone: live schema ref, drawn every frame (it pulses
+        // and counts down). Our own channel bar comes from OUR synced
+        // player — the server is the only one who counts.
+        const zone = room.state.extract;
+        view.drawExtract(
+            zone.active, zone.x, zone.y, zone.ttl,
+            players.get(myId)?.channel ?? 0,
+        );
 
         // camera fallback for the first frames, before prediction has
         // its first server state to initialize from
@@ -525,8 +576,10 @@ async function main() {
             // boost feedback: white-hot head while sprinting
             const drawn = boosting ? { body: colors.body, head: "#ffffff" } : colors;
             const alpha = p.graced || offline ? 0.4 : 1;
+            // the label above every head shows LIVE SOL (proto's
+            // mock-◎ rule): score is the ledger, ◎ is what it means
             const label =
-                `${p.name} (${Math.round(p.score)})${offline ? " (offline)" : ""}`;
+                `${p.name} ◎${(p.score / SCORE_PER_SOL).toFixed(4)}${offline ? " (offline)" : ""}`;
             view.drawSnake(id, drawn, px, py, body, dims.radius, alpha, label);
 
             if (isMe) {
@@ -537,7 +590,7 @@ async function main() {
                 cam.initialized = true;
                 view.camera(cam.x, cam.y);
                 view.drawDebug(px, py, p.x, p.y, dims.radius);
-                view.drawMinimap(px, py);
+                view.drawMinimap(px, py, zone.active ? zone : undefined);
 
                 // eat prediction: hide pellets the PREDICTED head is
                 // eating right now — the server's removal confirms it

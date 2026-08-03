@@ -7,6 +7,9 @@ import { Application, Container, Graphics, Sprite, Text } from "pixi.js";
 import type { Texture } from "pixi.js";
 import {
     AOI_RADIUS,
+    EXTRACT_CHANNEL_FRAMES,
+    EXTRACT_RADIUS,
+    EXTRACT_WARNING_FRAMES,
     FOOD_RADIUS,
     FOOD_VALUE,
     SNAKE_RADIUS,
@@ -55,6 +58,8 @@ export class GameView {
     private snakeLayer = new Container();
     private debugGfx = new Graphics(); // AoI circle + server ghost
     private minimap = new Graphics();  // screen-space, bottom-right
+    private extractGfx = new Graphics(); // the zone, redrawn per frame
+    private extractLabel!: Text;
     private circleTexture!: Texture;   // shared by every segment & pellet
     private foodSprites = new Map<string, Sprite>();
     private snakes = new Map<string, SnakeView>();
@@ -86,6 +91,14 @@ export class GameView {
         view.world.addChild(decor);
         view.world.addChild(view.foodLayer);
         view.world.addChild(view.debugGfx);
+        view.world.addChild(view.extractGfx); // zone under the snakes
+        view.extractLabel = new Text({
+            text: "",
+            style: { fill: 0xffcc66, fontSize: 16, fontFamily: "monospace" },
+        });
+        view.extractLabel.anchor.set(0.5);
+        view.extractLabel.visible = false;
+        view.world.addChild(view.extractLabel);
         view.world.addChild(view.snakeLayer);
 
         // the one texture every circle sprite is an instance of
@@ -213,11 +226,12 @@ export class GameView {
             .stroke({ width: 2, color: 0x44ff44, alpha: 0.7 });
     }
 
-    // Minimap (screen space, bottom-right): world disk + SELF only.
+    // Minimap (screen space, bottom-right): world disk + SELF +
+    // EXTRACT only (proto rule: fog of war for everything else).
     // Deliberately no opponents: showing them would bake the
     // player-radar into the UI we later have to unbake (A1.8 note —
     // players still globally synced, to close before real money).
-    drawMinimap(selfX: number, selfY: number) {
+    drawMinimap(selfX: number, selfY: number, extract?: { x: number; y: number }) {
         this.minimap.clear();
         const mmX = this.app.screen.width - MINIMAP_RADIUS - 20;
         const mmY = this.app.screen.height - MINIMAP_RADIUS - 20;
@@ -226,6 +240,43 @@ export class GameView {
             .circle(mmX, mmY, MINIMAP_RADIUS)
             .fill({ color: 0x0b1020, alpha: 0.7 })
             .stroke({ width: 2, color: 0x4a5578 });
+        if (extract) {
+            this.minimap.circle(mmX + extract.x * s, mmY + extract.y * s, 5).fill(0xffcc66);
+        }
         this.minimap.circle(mmX + selfX * s, mmY + selfY * s, 4).fill(0xffffff);
+    }
+
+    // The extract zone, redrawn each frame (it pulses). channelFrames
+    // is the LOCAL player's progress — the golden ring everyone can
+    // see on other snakes comes from their synced channel field.
+    drawExtract(active: boolean, x: number, y: number, ttlFrames: number, channelFrames: number) {
+        this.extractGfx.clear();
+        if (!active) {
+            this.extractLabel.visible = false;
+            return;
+        }
+        // bomb behavior in the last seconds: red, pulsing once per
+        // second — the proto's 3-blink warning, driven by ttl alone
+        const warning = ttlFrames <= EXTRACT_WARNING_FRAMES;
+        const pulse = warning
+            ? 0.25 + 0.35 * Math.abs(Math.sin((ttlFrames / 60) * Math.PI))
+            : 0.12;
+        const color = warning ? 0xff4455 : 0xffcc66;
+        this.extractGfx
+            .circle(x, y, EXTRACT_RADIUS)
+            .fill({ color, alpha: pulse })
+            .stroke({ width: 4, color, alpha: 0.9 });
+        // own channel: a ring filling clockwise from 12 o'clock
+        if (channelFrames > 0) {
+            const frac = Math.min(channelFrames / EXTRACT_CHANNEL_FRAMES, 1);
+            this.extractGfx
+                .arc(x, y, EXTRACT_RADIUS + 12, -Math.PI / 2, -Math.PI / 2 + frac * 2 * Math.PI)
+                .stroke({ width: 6, color: 0x50fa7b });
+        }
+        this.extractLabel.visible = true;
+        this.extractLabel.position.set(x, y - EXTRACT_RADIUS - 28);
+        this.extractLabel.text = warning
+            ? `!! ${Math.ceil(ttlFrames / 60)}s !!`
+            : `EXTRACT ${Math.ceil(ttlFrames / 60)}s`;
     }
 }
