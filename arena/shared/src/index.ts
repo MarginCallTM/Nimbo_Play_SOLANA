@@ -93,6 +93,12 @@ export const SPAWN_GRACE_TICKS = SERVER_TICK_RATE * 3; // 3s intangible after sp
 // strategy — the money always returns to the arena.
 export const DISCONNECT_TTL_TICKS = SERVER_TICK_RATE * 5; // 5s then corpse
 
+// A snake that has NEVER received an input from its client does not
+// move at all (2026-08-03 bug: a crashed client's snake auto-marched
+// its 0.5 SOL stake into the lethal border). Past this window the
+// client is kicked — the A1.9 disconnect path then takes over.
+export const FIRST_INPUT_TTL_TICKS = SERVER_TICK_RATE * 30; // 30s to wake up
+
 // --- Extract points (A0.6 rules, ported to the authoritative server) --
 // All durations in 60fps FRAMES (the proto's time unit — the server
 // tick advances by TICK_DT frames, so these transpose unchanged).

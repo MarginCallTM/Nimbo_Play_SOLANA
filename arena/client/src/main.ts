@@ -337,6 +337,14 @@ async function main() {
         txSig,
     };
     const room = await client.joinOrCreate(isDemo ? DEMO_ROOM : ARENA_ROOM, options);
+
+    // joinOrCreate resolves BEFORE the first full state arrives —
+    // touching room.state in that window reads undefined children,
+    // and ONE exception in a Pixi ticker callback kills the ticker
+    // FOR GOOD (the 2026-08-03 blind-client bug: a 0.5 SOL snake
+    // auto-marched into the border). Wait for the state, then wire.
+    await new Promise<void>((resolve) => room.onStateChange.once(() => resolve()));
+
     myId = room.sessionId;
     statusEl.textContent = `connected — sessionId=${myId}`;
 
@@ -520,12 +528,16 @@ async function main() {
 
         // extract zone: live schema ref, drawn every frame (it pulses
         // and counts down). Our own channel bar comes from OUR synced
-        // player — the server is the only one who counts.
+        // player — the server is the only one who counts. The guard
+        // is belt-and-braces on top of the initial-state wait above:
+        // a throw here would kill the whole render loop.
         const zone = room.state.extract;
-        view.drawExtract(
-            zone.active, zone.x, zone.y, zone.ttl,
-            players.get(myId)?.channel ?? 0,
-        );
+        if (zone) {
+            view.drawExtract(
+                zone.active, zone.x, zone.y, zone.ttl,
+                players.get(myId)?.channel ?? 0,
+            );
+        }
 
         // camera fallback for the first frames, before prediction has
         // its first server state to initialize from
@@ -590,7 +602,7 @@ async function main() {
                 cam.initialized = true;
                 view.camera(cam.x, cam.y);
                 view.drawDebug(px, py, p.x, p.y, dims.radius);
-                view.drawMinimap(px, py, zone.active ? zone : undefined);
+                view.drawMinimap(px, py, zone?.active ? zone : undefined);
 
                 // eat prediction: hide pellets the PREDICTED head is
                 // eating right now — the server's removal confirms it

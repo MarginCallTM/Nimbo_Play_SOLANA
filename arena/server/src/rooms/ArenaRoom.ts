@@ -12,6 +12,7 @@ import {
     SPAWN_GRACE_TICKS,
     SERVER_TICK_RATE,
     DISCONNECT_TTL_TICKS,
+    FIRST_INPUT_TTL_TICKS,
     EXTRACT_CHANNEL_FRAMES,
     EXTRACT_RADIUS,
     EXTRACT_SPAWN_COOLDOWN,
@@ -32,7 +33,8 @@ import {
 } from "@nimbo/shared";
 import { SpatialGrid } from "../grid";
 import { verifyAuthToken } from "../auth";
-import { verifyDeposit } from "../chain";
+import { releaseDeposit, verifyDeposit } from "../chain";
+import { pendingClaims, recordClaim } from "../outbox";
 
 // What onAuth hands to onJoin once the SIWS proof checks out.
 export interface AuthResult {
@@ -42,6 +44,8 @@ export interface AuthResult {
     // materialized on the map at join (D73/D75).
     spawnScore: number;
     pelletScore: number;
+    // kept so a failed onJoin can release the consumed signature
+    txSig?: string;
 }
 
 export class Player extends Schema {
@@ -84,6 +88,11 @@ export class Player extends Schema {
     wallet = "";
     sessionId = ""; // back-reference: lets death cleanup find the maps
     disconnectTicks = 0; // countdown to corpse while disconnected
+    // 2026-08-03 blind-client bug: until the FIRST input arrives the
+    // snake is held completely (no movement, grace frozen) — a snake
+    // only ever moves under its player's control.
+    hasInput = false;
+    noInputTicks = 0;
     desiredAngle = 0;
     wantsBoost = false;
     graceTicks = SPAWN_GRACE_TICKS;
@@ -138,15 +147,6 @@ export class ArenaState extends Schema {
     @type(ExtractZone) extract = new ExtractZone();
 }
 
-// A completed extraction, waiting for the settlement service (A3.3)
-// to submit settle_extraction on-chain. The nonce is the anti-replay
-// key: one ExtractReceipt PDA per (round_id, nonce).
-export interface PendingExtraction {
-    wallet: string;
-    lamports: bigint;
-    nonce: bigint;
-    at: number; // unix ms, diagnostic only
-}
 
 export class ArenaRoom extends Room<{ state: ArenaState }> {
     state = new ArenaState();
@@ -162,6 +162,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             // NaN or Infinity — and NaN propagates through the whole
             // simulation. Validate every field before it touches state.
             if (typeof input?.angle !== "number" || !Number.isFinite(input.angle)) return;
+            player.hasInput = true; // the pilot is alive: snake may move
             player.desiredAngle = input.angle;
             player.wantsBoost = input.boost === true;
         },
@@ -203,10 +204,6 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
 
     // --- extraction (A0.6 state machine, multiplayer flavor) --------
     private extractCooldown = EXTRACT_SPAWN_COOLDOWN;
-    // Settlement outbox: what A3.3 will drain. In-memory for now —
-    // a server crash loses unsold claims (players keep the tx-less
-    // proof of nothing). Persistence is part of the A3.3 interface.
-    readonly pendingExtractions: PendingExtraction[] = [];
     // Nonce = boot-time ms * 1000 + counter: unique per round even
     // across restarts (two boots in the same millisecond don't happen;
     // 1000 extractions in one ms don't either).
@@ -317,12 +314,6 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         // delete from a map while iterating it
         const expired: Player[] = [];
         this.state.players.forEach((player) => {
-            // spawn grace counts down in server ticks
-            if (player.graceTicks > 0) {
-                player.graceTicks -= 1;
-                if (player.graceTicks <= 0) player.graced = false;
-            }
-
             // A1.9 disconnect rule: a disconnected snake is FROZEN
             // and harmless — no steering, no movement, no eating, no
             // collisions. The TICK is the single authority on its
@@ -332,6 +323,24 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
                 player.disconnectTicks -= 1;
                 if (player.disconnectTicks <= 0) expired.push(player);
                 return;
+            }
+
+            // Never-piloted snake (2026-08-03 bug): held completely,
+            // grace INCLUDED — it stays intangible where it spawned.
+            // Past the TTL, kick the socket; the A1.9 path above then
+            // resolves the snake by its usual rules.
+            if (!player.hasInput) {
+                player.noInputTicks += 1;
+                if (player.noInputTicks > FIRST_INPUT_TTL_TICKS) {
+                    this.clients.find((c) => c.sessionId === player.sessionId)?.leave();
+                }
+                return;
+            }
+
+            // spawn grace counts down in server ticks
+            if (player.graceTicks > 0) {
+                player.graceTicks -= 1;
+                if (player.graceTicks <= 0) player.graced = false;
             }
 
             // boost gating + drain (proto A0.3): sprinting burns score
@@ -556,10 +565,13 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         const lamports = lamportsFromScore(player.score);
         const nonce = this.nextNonce++;
         this.extractedScore += player.score; // ledger: left the arena
-        this.pendingExtractions.push({
+        // A3.3 — the debt is written to DISK before the player hears
+        // about it: a crash after this line owes correctly, a crash
+        // before it never told the player they extracted.
+        recordClaim({
             wallet: player.wallet,
-            lamports,
-            nonce,
+            lamports: lamports.toString(),
+            nonce: nonce.toString(),
             at: Date.now(),
         });
 
@@ -576,7 +588,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         console.log(
             `[extract] ${player.sessionId} wallet=${player.wallet.slice(0, 4)}..` +
             ` score=${player.score.toFixed(1)} -> ${lamports} lamports, nonce=${nonce}` +
-            ` (outbox: ${this.pendingExtractions.length} pending)`,
+            ` (outbox: ${pendingClaims().length} pending)`,
         );
     }
 
@@ -662,7 +674,13 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // return value becomes client.auth / onJoin's third argument.
     // A3.2 — the deposit gate lives here too: both proofs (identity,
     // then money) are checked before any room instance is involved.
-    static async onAuth(token: string, options: JoinOptions) {
+    static async onAuth(token: string, options: JoinOptions): Promise<AuthResult> {
+        // EVERY cheap check runs BEFORE the deposit is consumed
+        // (2026-08-03 flaw: a post-verification failure burned the
+        // deposit — "deposit already used" on retry).
+        if (options.protocol !== PROTOCOL_VERSION) {
+            throw new Error("protocol mismatch: refresh your browser");
+        }
         const wallet = verifyAuthToken(token);
         if (!wallet) throw new Error("sign-in required: connect your wallet");
         // D72 — this room is the PAID arena, full stop: no deposit,
@@ -674,7 +692,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         }
         try {
             const deposit = await verifyDeposit(options.txSig, wallet);
-            return { wallet, ...deposit } satisfies AuthResult;
+            return { wallet, ...deposit, txSig: options.txSig } satisfies AuthResult;
         } catch (err) {
             // reason stays server-side (never help a probe); the
             // client gets a generic rejection
@@ -684,7 +702,19 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     }
 
     onJoin(client: Client, options: JoinOptions, auth: AuthResult) {
+        try {
+            this.spawnPlayer(client, options, auth);
+        } catch (err) {
+            // the deposit paid for a spawn that never happened: free
+            // the signature so the SAME tx can buy the retry
+            if (auth.txSig) releaseDeposit(auth.txSig);
+            throw err;
+        }
+    }
+
+    private spawnPlayer(client: Client, options: JoinOptions, auth: AuthResult) {
         // Throwing here rejects the join: stale clients bounce cleanly
+        // (kept for the demo room, whose onAuth does not check it)
         if (options.protocol !== PROTOCOL_VERSION) {
             throw new Error("protocol mismatch: refresh your browser");
         }

@@ -174,3 +174,10 @@ export async function verifyDeposit(txSig: string, wallet: string): Promise<Depo
         throw err;
     }
 }
+
+// A failed join AFTER a successful verification must not burn the
+// deposit (2026-08-03 flaw): releasing the signature lets the player
+// retry with the same, already-paid tx.
+export function releaseDeposit(txSig: string): void {
+    consumedSigs.delete(txSig);
+}

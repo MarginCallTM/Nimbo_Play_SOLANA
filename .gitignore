@@ -22,3 +22,11 @@ Thumbs.db
 test-ledger
 node_modules
 .yarn
+# Working docs (project-internal: Claude instructions, decisions log,
+# roadmap) — kept local, not for repo visitors
+CLAUDE.md
+TODO.txt
+DECISIONS.md
+
+# Runtime data: settlement outbox (claims/acks ledger, not code)
+arena/server/settlement-outbox.jsonl

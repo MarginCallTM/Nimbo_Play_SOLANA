@@ -38,7 +38,7 @@ export class DemoRoom extends ArenaRoom {
 
     // The demo door is open: no wallet, no deposit (D76). The demo
     // snake spawns mid-size so the tutorial shows real handling.
-    static override async onAuth(_token: string, _options: JoinOptions) {
+    static override async onAuth(_token: string, _options: JoinOptions): Promise<AuthResult> {
         return {
             wallet: "demo",
             spawnScore: DEMO_SPAWN_SCORE,
@@ -88,6 +88,8 @@ export class DemoRoom extends ArenaRoom {
             bot.y = Math.sin(a) * d;
             bot.angle = Math.random() * 2 * Math.PI;
             bot.desiredAngle = bot.angle;
+            // bots have no socket: they are their own pilot
+            bot.hasInput = true;
             this.state.players.set(bot.sessionId, bot);
             this.injectedScore += bot.score;
             this.bots.set(bot.sessionId, {});

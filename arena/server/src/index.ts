@@ -1,13 +1,26 @@
 import { defineServer, defineRoom } from "colyseus";
+import express from "express";
 import { ARENA_ROOM, DEMO_ROOM } from "@nimbo/shared";
 import { ArenaRoom } from "./rooms/ArenaRoom";
 import { DemoRoom } from "./rooms/DemoRoom";
 import { issueChallenge } from "./auth";
 import { loadRound, roundInfo } from "./chain";
+import { ackClaim, loadOutbox, pendingClaims } from "./outbox";
 
 // A3.2 — know which round we escrow against BEFORE accepting anyone:
 // a misconfigured round must kill the boot, not the first paid join.
 await loadRound();
+// A3.3 — reload unsettled claims: debts survive restarts.
+loadOutbox();
+
+// Shared secret for the settlement endpoints (MVP: same box, same
+// operator). Unset = dev mode, endpoints open on localhost — the
+// service and the game server are both ours; real deployments set it.
+const SETTLEMENT_SECRET = process.env.SETTLEMENT_SECRET;
+function settlementAuthorized(req: express.Request): boolean {
+    if (!SETTLEMENT_SECRET) return true;
+    return req.get("x-settlement-secret") === SETTLEMENT_SECRET;
+}
 
 const server = defineServer({
     rooms: {
@@ -35,6 +48,33 @@ const server = defineServer({
                 return;
             }
             res.json(info);
+        });
+        // A3.3 — the settlement service's two endpoints. NO CORS on
+        // purpose: these are server-to-server, a browser has no
+        // business here.
+        app.get("/settlement/pending", (req, res) => {
+            if (!settlementAuthorized(req)) {
+                res.status(401).json({ error: "unauthorized" });
+                return;
+            }
+            res.json(pendingClaims());
+        });
+        app.post("/settlement/ack", express.json(), (req, res) => {
+            if (!settlementAuthorized(req)) {
+                res.status(401).json({ error: "unauthorized" });
+                return;
+            }
+            const { nonce, txSig } = req.body ?? {};
+            if (typeof nonce !== "string" || typeof txSig !== "string") {
+                res.status(400).json({ error: "nonce and txSig required" });
+                return;
+            }
+            if (!ackClaim(nonce, txSig)) {
+                res.status(404).json({ error: "unknown claim" });
+                return;
+            }
+            console.log(`[outbox] claim ${nonce} settled — tx ${txSig.slice(0, 16)}…`);
+            res.json({ ok: true });
         });
     },
 });
