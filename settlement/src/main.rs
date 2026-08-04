@@ -28,12 +28,16 @@ struct Claim {
     wallet: String,
     lamports: String,
     nonce: String,
+    // The round whose vault owes this claim — rounds are sealed pots
+    // (2026-08-04 gap: settling against the WRONG round would pay old
+    // debts with new depositors' money; the outbox now carries it).
+    #[serde(rename = "roundId")]
+    round_id: String,
 }
 
 struct Config {
     game_server: String,
     rpc_url: String,
-    round_id: u64,
     secret: Option<String>,
     poll: Duration,
 }
@@ -46,10 +50,6 @@ fn load_config() -> Result<Config> {
     Ok(Config {
         game_server: env_or("GAME_SERVER_URL", "http://localhost:2567"),
         rpc_url: env_or("RPC_URL", "https://api.devnet.solana.com"),
-        round_id: std::env::var("ROUND_ID")
-            .context("ROUND_ID is required (same value as the game server)")?
-            .parse()
-            .context("ROUND_ID must be a u64")?,
         secret: std::env::var("SETTLEMENT_SECRET").ok(),
         poll: Duration::from_secs(env_or("POLL_INTERVAL_S", "5").parse().unwrap_or(5)),
     })
@@ -99,7 +99,6 @@ fn ack(cfg: &Config, http: &reqwest::blocking::Client, nonce: &str, tx_sig: &str
 ///  - anything failed                -> Err: leave the claim pending,
 ///    the next loop iteration retries from scratch. Never ack an Err.
 fn settle(
-    cfg: &Config,
     rpc: &RpcClient,
     authority: &Keypair,
     claim: &Claim,
@@ -107,15 +106,18 @@ fn settle(
     let player = Pubkey::from_str(&claim.wallet).context("claim.wallet is not base58")?;
     let amount: u64 = claim.lamports.parse().context("claim.lamports is not u64")?;
     let nonce: u64 = claim.nonce.parse().context("claim.nonce is not u64")?;
+    // each claim is settled against ITS OWN round's vault, never a
+    // globally configured one
+    let round_id: u64 = claim.round_id.parse().context("claim.roundId is not u64")?;
 
     // idempotence: the chain remembers payments, not this process
-    if chain::receipt_exists(rpc, cfg.round_id, nonce)? {
+    if chain::receipt_exists(rpc, round_id, nonce)? {
         return Ok(None);
     }
 
     let ix = chain::build_settle_instruction(
         authority.pubkey(),
-        cfg.round_id,
+        round_id,
         player,
         amount,
         nonce,
@@ -144,9 +146,8 @@ fn main() -> Result<()> {
     let http = reqwest::blocking::Client::new();
 
     println!(
-        "[settlement] up — authority {}, round {}, polling {} every {:?}",
+        "[settlement] up — authority {}, polling {} every {:?}",
         authority.pubkey(),
-        cfg.round_id,
         cfg.game_server,
         cfg.poll,
     );
@@ -156,7 +157,7 @@ fn main() -> Result<()> {
             Err(e) => eprintln!("[settlement] poll failed: {e:#}"),
             Ok(claims) => {
                 for claim in &claims {
-                    match settle(&cfg, &rpc, &authority, claim) {
+                    match settle(&rpc, &authority, claim) {
                         Ok(Some(sig)) => {
                             println!(
                                 "[settlement] paid {} lamports to {} (nonce {}) — {}",

@@ -33,7 +33,7 @@ import {
 } from "@nimbo/shared";
 import { SpatialGrid } from "../grid";
 import { verifyAuthToken } from "../auth";
-import { releaseDeposit, verifyDeposit } from "../chain";
+import { releaseDeposit, roundInfo, verifyDeposit } from "../chain";
 import { pendingClaims, recordClaim } from "../outbox";
 
 // What onAuth hands to onJoin once the SIWS proof checks out.
@@ -572,6 +572,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             wallet: player.wallet,
             lamports: lamports.toString(),
             nonce: nonce.toString(),
+            roundId: roundInfo()?.roundId ?? "0", // paid arena always has one
             at: Date.now(),
         });
 

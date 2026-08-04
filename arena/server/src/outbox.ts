@@ -20,6 +20,11 @@ export interface Claim {
     wallet: string;   // base58 — the payout destination
     lamports: string; // amount owed (u64 as string)
     nonce: string;    // on-chain anti-replay key (u64 as string)
+    // The round whose vault OWES this claim (u64 as string). Rounds
+    // are sealed pots: settling a claim against another round's vault
+    // would pay old debts with new depositors' money (2026-08-04 gap,
+    // caught before it ever paid out).
+    roundId: string;
     at: number;       // unix ms, diagnostic only
 }
 
