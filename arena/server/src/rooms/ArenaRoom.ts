@@ -2,6 +2,7 @@ import { Room, type Client, type Deferred } from "colyseus";
 import { ArraySchema, Schema, MapSchema, StateView, type, view } from "@colyseus/schema";
 import {
     AOI_RADIUS,
+    ARENA_ROOM,
     BOOST_ORB_VALUE,
     BROADCAST_RATE,
     DEATH_ORB_VALUE,
@@ -17,6 +18,8 @@ import {
     EXTRACT_RADIUS,
     EXTRACT_SPAWN_COOLDOWN,
     EXTRACT_TTL,
+    MIN_LIVE_PLAYERS,
+    WAITING_TTL_TICKS,
     SNAKE_BOOST_COST,
     SNAKE_BOOST_SPEED,
     SNAKE_SPACING,
@@ -26,15 +29,18 @@ import {
     describeSnakeFromScore,
     turnTowards,
     lamportsFromScore,
+    type ArenaPhase,
     type DiedMessage,
     type ExtractedMessage,
     type InputMessage,
     type JoinOptions,
+    type RefundedMessage,
 } from "@nimbo/shared";
 import { SpatialGrid } from "../grid";
 import { verifyAuthToken } from "../auth";
 import { releaseDeposit, roundInfo, verifyDeposit } from "../chain";
 import { pendingClaims, recordClaim } from "../outbox";
+import { notifyDepositorJoined, registerArenaRoom, unregisterArenaRoom } from "../arena-registry";
 
 // What onAuth hands to onJoin once the SIWS proof checks out.
 export interface AuthResult {
@@ -93,6 +99,11 @@ export class Player extends Schema {
     // only ever moves under its player's control.
     hasInput = false;
     noInputTicks = 0;
+    // A4.2a/D80 — the deposit's pellet cut, HELD until the room goes
+    // live: materializing at join would leave orphan pellets to sweep
+    // back if the launch gate times out and refunds this player.
+    pendingPellets = 0;
+    waitingTicks = 0; // time spent waiting behind the launch gate
     desiredAngle = 0;
     wantsBoost = false;
     graceTicks = SPAWN_GRACE_TICKS;
@@ -145,6 +156,11 @@ export class ArenaState extends Schema {
     @type({ map: Player }) players = new MapSchema<Player>();
     @view() @type({ map: Food }) food = new MapSchema<Food>();
     @type(ExtractZone) extract = new ExtractZone();
+    // A4.2a launch gate (D77): "waiting" until MIN_LIVE_PLAYERS
+    // verified deposits are present, then "live" forever (the gate
+    // exists at launch only). Synced so the client can show a
+    // "waiting for opponent" screen instead of a frozen snake.
+    @type("string") phase: ArenaPhase = "waiting";
 }
 
 
@@ -277,6 +293,16 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
 
     onCreate(_options: JoinOptions) {
         console.log(`[room] created — sim ${SERVER_TICK_RATE}Hz fixed, broadcast ${BROADCAST_RATE}Hz`);
+        // A4.2a — visible to the lobby's matchmaking. PAID arena only:
+        // the demo inherits this method but must never receive a
+        // queue member (fake value, D72).
+        if (this.roomName === ARENA_ROOM) {
+            registerArenaRoom(this.roomId, () => ({
+                phase: this.state.phase,
+                connectedDepositors: this.connectedCount(),
+                capacity: this.maxClients,
+            }));
+        }
         // D73: NO boot-time food. Every pellet on this map is backed
         // by deposited lamports — the arena starts empty and fills
         // with the players' own money.
@@ -305,10 +331,30 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         });
     }
 
+    // How many piloted, socket-alive depositors are in this room —
+    // the lobby's matchmaking unit (frozen A1.9 snakes don't count:
+    // they are on their way out, not a game you can join).
+    private connectedCount(): number {
+        let count = 0;
+        this.state.players.forEach((p) => {
+            if (p.connected) count += 1;
+        });
+        return count;
+    }
+
     // One simulation step. dt is CONSTANT (TICK_DT "60fps frames", the
     // proto's time unit, so every constant keeps its meaning) — never
     // derived from wall-clock time.
     tick() {
+        // A4.2a launch gate: while waiting, NOTHING simulates — snakes
+        // are held where they spawned (grace and first-input timers
+        // frozen), nothing can eat, die or extract. The D77 invariant
+        // — never live with < MIN_LIVE_PLAYERS verified deposits — is
+        // enforced by construction: this is the only path to "live".
+        if (this.state.phase === "waiting") {
+            this.waitingTick();
+            return;
+        }
         const dt = TICK_DT;
         // disconnected snakes whose window expired this tick — never
         // delete from a map while iterating it
@@ -494,6 +540,106 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         }
     }
 
+    // A4.2a — the pre-launch tick. Three jobs only: honor the A1.9
+    // disconnect window (whose exit here is a refund, not a corpse),
+    // open the gate the moment enough deposits are present, and
+    // refund anyone whose partner never showed up. Every connected
+    // player in this room IS a verified deposit (onAuth is the door),
+    // so the invariant reduces to a head count.
+    private waitingTick() {
+        const expired: Player[] = [];
+        let ready = 0;
+        this.state.players.forEach((player) => {
+            if (!player.connected) {
+                player.disconnectTicks -= 1;
+                if (player.disconnectTicks <= 0) expired.push(player);
+                return;
+            }
+            ready += 1;
+        });
+        expired.forEach((player) => this.expireDisconnected(player));
+
+        if (ready >= MIN_LIVE_PLAYERS) {
+            this.goLive();
+            return;
+        }
+
+        const timedOut: Player[] = [];
+        this.state.players.forEach((player) => {
+            if (!player.connected) return;
+            player.waitingTicks += 1;
+            if (player.waitingTicks > WAITING_TTL_TICKS) timedOut.push(player);
+        });
+        timedOut.forEach((player) => this.refundPlayer(player, "no partner arrived"));
+    }
+
+    // The launch — one-way (a lone survivor later keeps playing, D77).
+    // The REAL game starts here for the whole cohort: fresh spawn
+    // grace, fresh first-input window, and the held pellet cuts
+    // finally hit the map (D80).
+    private goLive() {
+        this.state.phase = "live";
+        this.state.players.forEach((player) => {
+            player.graceTicks = SPAWN_GRACE_TICKS;
+            player.graced = true;
+            player.noInputTicks = 0;
+            this.materializePellets(player);
+        });
+        console.log(`[phase] live — ${this.state.players.size} players`);
+    }
+
+    // D73/D75 — materialize a deposit's pellet cut, map-wide: whole
+    // pellets scattered, sub-pellet remainder onto the snake itself
+    // (exact conservation, same rule as corpse dust). Deferred to the
+    // live transition (D80); a join into a live room runs it on the
+    // spot. The ledger counts this value as injected only NOW — held
+    // pellets are neither in play nor on the ground.
+    protected materializePellets(player: Player) {
+        let pellets = player.pendingPellets;
+        if (pellets <= 0) return;
+        this.injectedScore += pellets;
+        player.pendingPellets = 0;
+        while (pellets >= FOOD_VALUE) {
+            this.scatterRandom(FOOD_VALUE);
+            pellets -= FOOD_VALUE;
+        }
+        player.score += pellets;
+    }
+
+    // A4.2a — the waiting room's only exit besides launch: the deposit
+    // comes back as a settlement claim on the SAME rails as an
+    // extraction (outbox -> settle_extraction, anti-replay by nonce).
+    // The rake was taken on-chain at join and is NOT recovered (D77:
+    // documented edge case, treasury gesture possible). Ledger: the
+    // spawn part entered at join and leaves now; the held pellet part
+    // never entered at all.
+    protected refundPlayer(player: Player, reason: string) {
+        const lamports = lamportsFromScore(player.score + player.pendingPellets);
+        const nonce = this.nextNonce++;
+        this.extractedScore += player.score;
+        recordClaim({
+            wallet: player.wallet,
+            lamports: lamports.toString(),
+            nonce: nonce.toString(),
+            roundId: roundInfo()?.roundId ?? "0", // paid arena always has one
+            at: Date.now(),
+        });
+
+        const msg: RefundedMessage = {
+            lamports: lamports.toString(),
+            nonce: nonce.toString(),
+        };
+        this.clients.find((c) => c.sessionId === player.sessionId)?.send("refunded", msg);
+
+        this.state.players.delete(player.sessionId);
+        this.inView.delete(player.sessionId);
+        console.log(
+            `[refund] ${player.sessionId} wallet=${player.wallet.slice(0, 4)}..` +
+            ` ${lamports} lamports, nonce=${nonce} (${reason})` +
+            ` (outbox: ${pendingClaims().length} pending)`,
+        );
+    }
+
     // A0.6 state machine, multiplayer flavor: ONE zone at a time, but
     // EVERY eligible player runs their own channel — first to 4s wins
     // the point, everyone else resets. The channel rule stays purely
@@ -642,11 +788,17 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // the TICK calls this: the simulation is the single authority on
     // death, the reconnection window just follows (manual reject).
     private expireDisconnected(player: Player) {
-        this.dropCorpse(player);
-        this.state.players.delete(player.sessionId);
-        this.inView.delete(player.sessionId);
+        // A4.2a: behind the launch gate nothing was ever at risk —
+        // leaving costs the rake, not the stake (refund, no corpse)
+        if (this.state.phase === "waiting") {
+            this.refundPlayer(player, "gone while waiting");
+        } else {
+            this.dropCorpse(player);
+            this.state.players.delete(player.sessionId);
+            this.inView.delete(player.sessionId);
+            console.log(`[expired] ${player.sessionId} — corpse dropped`);
+        }
         this.pendingReconnections.get(player.sessionId)?.reject(new Error("disconnect window expired"));
-        console.log(`[expired] ${player.sessionId} — corpse dropped`);
     }
 
     // D72 — in the paid arena, death is GAME OVER: the corpse drops
@@ -727,16 +879,12 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         // this starting score
         player.score = auth.spawnScore;
 
-        // D73/D75 — materialize this deposit's pellet cut, map-wide:
-        // whole pellets scattered, sub-pellet remainder onto the
-        // snake itself (exact conservation, same rule as corpse dust)
-        let pellets = auth.pelletScore;
-        while (pellets >= FOOD_VALUE) {
-            this.scatterRandom(FOOD_VALUE);
-            pellets -= FOOD_VALUE;
-        }
-        player.score += pellets;
-        this.injectedScore += auth.spawnScore + auth.pelletScore;
+        // D73/D75/D80 — the deposit's pellet cut is HELD until the
+        // room is live: a refund behind the launch gate must not have
+        // orphan pellets to sweep back. Only the spawn part enters
+        // the ledger now; materializePellets() injects the rest.
+        player.pendingPellets = auth.pelletScore;
+        this.injectedScore += auth.spawnScore;
         // random spawn inside half the world radius
         const spawnAngle = Math.random() * 2 * Math.PI;
         const spawnDist = Math.random() * WORLD_RADIUS * 0.5;
@@ -745,6 +893,12 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         // tracers start empty: the grow loop in tick() unfolds the
         // body from the spawn point over the first seconds
         this.state.players.set(client.sessionId, player);
+        // join into a LIVE room: no gate to wait behind, the pellet
+        // cut hits the map immediately (pre-D80 behavior)
+        if (this.state.phase === "live") this.materializePellets(player);
+        // A4.2a — tell the lobby this wallet's deposit really spawned
+        // (fulfills its ready-check membership, server truth)
+        if (this.roomName === ARENA_ROOM) notifyDepositorJoined(auth.wallet);
         // AoI: this client only ever receives what its view contains
         client.view = new StateView();
         console.log(
@@ -796,6 +950,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     }
 
     onDispose() {
+        unregisterArenaRoom(this.roomId); // no-op for the demo
         console.log("[room] disposed (empty)");
     }
 }

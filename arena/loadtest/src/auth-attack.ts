@@ -3,13 +3,19 @@
 // Each scenario is an attack the door MUST stop; the honest join is
 // the control proving the door still opens for legitimate players.
 //
+// A4.2a — retargeted at the LOBBY: since D72 the arena also demands a
+// verified deposit, so every arena join is rejected regardless of the
+// SIWS token — the probe could no longer tell the door it was
+// testing. The lobby is the SIWS-only door now (same verifyAuthToken
+// on both, so the lock proven here is the lock the arena uses too).
+//
 // Usage: npx tsx src/auth-attack.ts   (server must be running)
 
 import { Client } from "@colyseus/sdk";
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import {
-    ARENA_ROOM,
+    LOBBY_ROOM,
     PROTOCOL_VERSION,
     SIWS_STATEMENT,
     buildSiwsMessage,
@@ -58,7 +64,7 @@ async function tryJoin(token: string | undefined): Promise<"accepted" | "rejecte
     const client = new Client(SERVER_URL);
     if (token !== undefined) client.auth.token = token;
     try {
-        const room = await client.joinOrCreate(ARENA_ROOM, options);
+        const room = await client.joinOrCreate(LOBBY_ROOM, options);
         await room.leave();
         return "accepted";
     } catch {

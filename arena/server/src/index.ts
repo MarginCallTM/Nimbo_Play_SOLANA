@@ -1,8 +1,9 @@
 import { defineServer, defineRoom } from "colyseus";
 import express from "express";
-import { ARENA_ROOM, DEMO_ROOM } from "@nimbo/shared";
+import { ARENA_ROOM, DEMO_ROOM, LOBBY_ROOM } from "@nimbo/shared";
 import { ArenaRoom } from "./rooms/ArenaRoom";
 import { DemoRoom } from "./rooms/DemoRoom";
+import { LobbyRoom } from "./rooms/LobbyRoom";
 import { issueChallenge } from "./auth";
 import { loadRound, roundInfo } from "./chain";
 import { ackClaim, loadOutbox, pendingClaims } from "./outbox";
@@ -28,6 +29,9 @@ const server = defineServer({
         // D72/D76 — the free tutorial world: bots, fake value, no
         // wallet. Physically separate from the paid arena.
         [DEMO_ROOM]: defineRoom(DemoRoom),
+        // A4.2a — the free matchmaking queue (D77/D81): SIWS identity,
+        // zero money until a match is all but certain.
+        [LOBBY_ROOM]: defineRoom(LobbyRoom),
     },
     // A3.1 — SIWS challenge endpoint. The nonce lives server-side from
     // birth: the client never chooses it, it only signs it.

@@ -6,7 +6,7 @@
 // Bumped on every breaking protocol change; the server rejects clients
 // that present a different version (stale browser tabs after a deploy).
 // v2: SIWS authentication required to join (A3.1).
-export const PROTOCOL_VERSION = 5; // 5 = death = game over (died message, no auto-respawn)
+export const PROTOCOL_VERSION = 6; // 6 = launch gate: waiting->live phase + refunded message (A4.2a)
 
 export * from "./siws";
 export * from "./arena-chain";
@@ -16,6 +16,11 @@ export const ARENA_ROOM = "arena";
 // D72/D76 — the free demo: a SEPARATE room, fully off-chain, bots
 // only, no wallet required. A paying player never meets a demo one.
 export const DEMO_ROOM = "demo";
+// A4.2a — the FREE matchmaking queue in front of the paid arena
+// (D77). SIWS identity required, zero money: nobody deposits before
+// a match is all but certain. NOT a security gate — the arena's real
+// door stays the verified deposit.
+export const LOBBY_ROOM = "lobby";
 export const DEMO_SPAWN_SCORE = 30;   // tutorial snake, mid-size feel
 export const DEMO_FOOD_COUNT = 800;   // abundant FAKE food (learning space)
 export const DEMO_BOT_COUNT = 6;      // same population as the proto
@@ -99,6 +104,29 @@ export const DISCONNECT_TTL_TICKS = SERVER_TICK_RATE * 5; // 5s then corpse
 // client is kicked — the A1.9 disconnect path then takes over.
 export const FIRST_INPUT_TTL_TICKS = SERVER_TICK_RATE * 30; // 30s to wake up
 
+// --- Launch gate (A4.2a / D77) --------------------------------------
+// A paid arena never goes LIVE with fewer than 2 verified deposits: a
+// lone player under the D73 economy is a guaranteed loss (their own
+// stake minus rake) — the worst possible first experience. While
+// "waiting", snakes are held where they spawned, grace and first-input
+// timers are frozen and the extract machine is off. The gate exists at
+// LAUNCH only: once live, a lone survivor keeps playing.
+export const MIN_LIVE_PLAYERS = 2;
+// How long a depositor waits for a partner before being refunded
+// (stake minus the on-chain rake, via the settlement outbox).
+export const WAITING_TTL_TICKS = SERVER_TICK_RATE * 60; // 60s
+export type ArenaPhase = "waiting" | "live";
+
+// --- Matchmaking lobby (A4.2a / D77 + D81) --------------------------
+// Two-step ready-check (D81): a FREE accept click filters the AFK
+// before anyone pays; only when every member accepted does the
+// deposit window open. In seconds — the lobby coordinates humans at
+// 1Hz, not physics at sim rate.
+export const LOBBY_ACCEPT_SECONDS = 15;  // free click window
+export const LOBBY_DEPOSIT_SECONDS = 30; // D77 ready-check: sign + confirm
+// What a lobby member is doing right now (synced on LobbyPlayer).
+export type LobbyStatus = "queued" | "accepting" | "depositing";
+
 // --- Extract points (A0.6 rules, ported to the authoritative server) --
 // All durations in 60fps FRAMES (the proto's time unit — the server
 // tick advances by TICK_DT frames, so these transpose unchanged).
@@ -157,6 +185,41 @@ export interface ExtractedMessage {
 export interface DiedMessage {
     score: number;    // value lost, in game units
     lamports: string; // same, in lamports (display: what it was worth)
+}
+
+// Server -> client, once, if the launch gate gives up (no partner
+// within WAITING_TTL_TICKS, or you left while still waiting): your
+// deposit comes back as a settlement claim on the SAME rails as an
+// extraction. The on-chain rake taken at join is the one part a
+// refund cannot recover (D77: documented edge case).
+export interface RefundedMessage {
+    lamports: string; // the claim: spawn + pellet value, in lamports
+    nonce: string;    // unique per round: the on-chain anti-replay key
+}
+
+// --- Lobby messages (A4.2a) -----------------------------------------
+// Client -> server: "accept" and "decline", no payload (D81 clicks).
+
+// Server -> client: a match formed — click ACCEPT (free) within
+// `seconds` or be dropped from the lobby.
+export interface MatchFoundMessage {
+    seconds: number;
+}
+// Server -> client: everyone accepted (or a joinable arena already
+// exists — solo fast-path, no partner to coordinate): deposit and
+// join the arena within `seconds`. The lobby marks you fulfilled when
+// your VERIFIED deposit spawns (server truth, reported by the arena),
+// never on a client claim.
+export interface DepositNowMessage {
+    seconds: number;
+}
+// Server -> client: your pending match dissolved. requeued=true — you
+// are back at the HEAD of the queue at zero cost (D77: a partner's
+// desertion never costs the innocent anything). requeued=false — you
+// were the deserter (decline, AFK, or no deposit): rejoin to play.
+export interface MatchCancelledMessage {
+    requeued: boolean;
+    reason: string;
 }
 
 // --- Shared math ----------------------------------------------------
