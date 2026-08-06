@@ -13,6 +13,15 @@
                 pointer-events: none; /* clicks fall through to the game */
             }
             #net { color: #6a9bf5; }
+            /* join feed: top-right, newest first, entries fade out via
+               the .old class (JS adds it before removal) */
+            #feed {
+                position: fixed; top: 8px; right: 8px; z-index: 10;
+                color: #ffcc66; font: 13px monospace; text-align: right;
+                pointer-events: none;
+            }
+            #feed div { transition: opacity 1s; }
+            #feed div.old { opacity: 0; }
         </style>
     </head>
     <body>
@@ -20,6 +29,7 @@
             <div id="status">connecting...</div>
             <div id="net"></div>
         </div>
+        <div id="feed"></div>
         <script type="module" src="/src/main.ts"></script>
     </body>
 </html>

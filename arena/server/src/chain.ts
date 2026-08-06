@@ -104,6 +104,9 @@ export function roundInfo(): RoundInfoResponse | undefined {
 export interface DepositResult {
     spawnScore: number;
     pelletScore: number;
+    // raw stake from the tx bytes, in lamports (string: u64-safe) —
+    // the join feed announces the gross buy-in, not the net spawn value
+    stakeLamports: string;
 }
 
 // Verify a claimed deposit and convert it into spawn + pellet scores.
@@ -161,6 +164,7 @@ export async function verifyDeposit(txSig: string, wallet: string): Promise<Depo
             const result: DepositResult = {
                 spawnScore: scoreFromLamports(spawnLamports),
                 pelletScore: scoreFromLamports(pelletLamports),
+                stakeLamports: stake.toString(),
             };
             console.log(
                 `[chain] deposit ok: ${Number(stake) / 1e9} SOL by ${wallet.slice(0, 4)}..` +

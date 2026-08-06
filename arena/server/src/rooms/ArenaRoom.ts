@@ -33,6 +33,7 @@ import {
     type DiedMessage,
     type ExtractedMessage,
     type InputMessage,
+    type JoinedMessage,
     type JoinOptions,
     type RefundedMessage,
 } from "@nimbo/shared";
@@ -50,6 +51,9 @@ export interface AuthResult {
     // materialized on the map at join (D73/D75).
     spawnScore: number;
     pelletScore: number;
+    // the RAW stake decoded from the tx bytes (before rake + pellet
+    // cut) — what the join feed announces. Absent in the demo.
+    stakeLamports?: string;
     // kept so a failed onJoin can release the consumed signature
     txSig?: string;
 }
@@ -1104,6 +1108,27 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         // A4.2a — tell the lobby this wallet's deposit really spawned
         // (fulfills its ready-check membership, server truth)
         if (this.roomName === ARENA_ROOM) notifyDepositorJoined(auth.wallet);
+        // Join feed (user request 2026-08-06): the lobby DRAIN drops an
+        // opponent into a survivor's arena with zero warning — announce
+        // every entrance to everyone already in. Name + spawn value
+        // only, NEVER the wallet (A3.1: the address stays between the
+        // player, the server and the chain). Paid arena only: demo
+        // sparring bots respawn every 2s and would flood the feed.
+        if (this.roomName === ARENA_ROOM) {
+            this.broadcast(
+                "joined",
+                {
+                    name: player.name,
+                    // raw stake (user call 2026-08-06): "0.1" reads
+                    // better than the post-cut spawn value. Fallback
+                    // covers nothing in practice (every paid join has
+                    // a verified deposit).
+                    lamports: auth.stakeLamports
+                        ?? lamportsFromScore(player.score).toString(),
+                } satisfies JoinedMessage,
+                { except: client },
+            );
+        }
         // AoI: this client only ever receives what its view contains.
         // Seed it with its own snake — updateViews only runs every
         // AOI_UPDATE_TICKS, and until then the client would not even

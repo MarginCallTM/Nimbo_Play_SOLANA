@@ -36,6 +36,28 @@
 //            cash out at the extract zone the moment the take is worth
 //            it — the rat run. Tests whether pure avoidance is a
 //            viable strategy (and gives contest bots someone to punish)
+//   circle   two lives in one snake: farm in peace (flee like a racoon)
+//            until CIRCLE_HUNT_AT score, then flip predator — close on
+//            the nearest snake and ORBIT it on a tightening ring, the
+//            slither constriction play. Tests the buy-in curve's core
+//            promise: does size actually convert into kills?
+//   camping  own the extract point: orbit the zone and intercept
+//            ANYTHING that comes within guard range, bots included —
+//            the toll-booth strategy the D79 kill-window invites.
+//            Tests whether extraction stays playable under permanent
+//            zone control
+//   apex     the PIRATE bot (red-team, user ask 2026-08-06): a hunt
+//            with everything a human cannot sustain — perfect trail
+//            memory of every snake in the bubble (seeded by the AoI
+//            "body" message, then extended head-sample by head-sample),
+//            collision-aware steering (a heading whose projected path
+//            clips a known body is rejected before it is ever sent),
+//            cut-off aim at the prey's FUTURE path, cold target
+//            selection (only smaller snakes, flees bigger ones).
+//            NO cheats: it reads exactly what a browser client reads.
+//            The question under test (D78): is LEGAL perfection
+//            survivable for a human, or does it need containment
+//            (tiers A4.2 / heuristics A4.3)?
 //   radar    play NOTHING, just print what room.state hands us. It
 //            PROVED the player-radar leak (read a player at 2800px for
 //            a 1200px bubble); since A4.6c closed it, this is the
@@ -43,10 +65,19 @@
 //
 // Tip: DEMO_BOTS=0 on the server gives a clean 1v1 (no tutorial bots).
 //
-// Note: hunt and cannibal attack ANYONE, squadmates included (a live
-// free-for-all); dodge, feed and contest target the HUMAN only — they
-// recognise squadmates by the "spar-" name prefix and ignore them;
-// racoon attacks nobody and runs from everybody.
+// MONEY MODE (A4.6 red-team économique, user plan 2026-08-06):
+//   npm run fleet                                  (create/fund wallets)
+//   SPAR_WALLETS=wallets SPAR_STAKE=0.1 npm run spar hunt:2 racoon:2
+// The squad plays the PAID arena with real devnet SOL: SIWS + on-chain
+// deposit + txSig each life, respawn 3-4min (a death leaves a hole —
+// the question under test: does the D73 economy put enough pellets on
+// the map to be FUN?). Extractions/refunds return to the bot wallets
+// via the settlement service — keep it running or the fleet bleeds dry.
+//
+// Note: hunt, cannibal, circle and camping attack ANYONE, squadmates
+// included (a live free-for-all); dodge, feed and contest target the
+// HUMAN only — they recognise squadmates by the "spar-" name prefix
+// and ignore them; racoon attacks nobody and runs from everybody.
 //
 // Since A4.6c the bots see only their own AoI bubble, like you. With
 // nobody in sight they rally on the extract zone (global state by
@@ -54,23 +85,47 @@
 // that they cannot read the whole roster.
 
 import { Client, Callbacks, type Room } from "@colyseus/sdk";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import nacl from "tweetnacl";
+import {
+    Connection,
+    Keypair,
+    LAMPORTS_PER_SOL,
+    PublicKey,
+    Transaction,
+    sendAndConfirmTransaction,
+} from "@solana/web3.js";
 import {
     AOI_RADIUS,
+    ARENA_ROOM,
     BOOST_ORB_VALUE,
     DEMO_ROOM,
     EXTRACT_RADIUS,
     FOOD_EAT_RANGE,
     FOOD_VALUE,
     PROTOCOL_VERSION,
+    SIWS_STATEMENT,
     SNAKE_BOOST_SPEED,
+    SNAKE_SPACING,
     SNAKE_SPEED,
     WORLD_RADIUS,
+    buildJoinInstruction,
+    buildSiwsMessage,
     describeSnakeFromScore,
+    type AuthChallenge,
+    type AuthTokenPayload,
     type InputMessage,
+    type RoundInfoResponse,
 } from "@nimbo/shared";
 
-type Behavior = "hunt" | "cannibal" | "dodge" | "feed" | "contest" | "racoon" | "radar";
-const BEHAVIORS: Behavior[] = ["hunt", "cannibal", "dodge", "feed", "contest", "racoon", "radar"];
+type Behavior =
+    | "hunt" | "cannibal" | "dodge" | "feed" | "contest"
+    | "racoon" | "circle" | "camping" | "apex" | "radar";
+const BEHAVIORS: Behavior[] = [
+    "hunt", "cannibal", "dodge", "feed", "contest",
+    "racoon", "circle", "camping", "apex", "radar",
+];
 const SERVER_URL = process.env.SERVER_URL ?? "http://localhost:2567";
 
 // Every sparring bot carries this name prefix. It is how the squad
@@ -109,9 +164,29 @@ const ROSTER = parseRoster(process.argv.slice(2));
 const DODGE_TRIGGER_PX = 220;
 const DODGE_OFFLINE_MS = 3000;
 
-// how long the bot stays dead before rejoining (short: the human is
-// waiting for a partner, not watching an empty map)
-const RESPAWN_DELAY_MS = Number(process.env.SPAR_RESPAWN_MS ?? 2000);
+// --- A4.6 MONEY MODE (red-team économique, user plan 2026-08-06) ----
+// SPAR_WALLETS=<dir> flips the squad into the PAID arena: bot #i takes
+// <dir>/bot-0i.json (fleet.ts creates and funds them), signs in with
+// SIWS, deposits SPAR_STAKE on-chain and joins with the txSig — the
+// EXACT protocol the browser speaks, no server-side favors. Deaths
+// cost real (devnet) SOL; extractions and refunds flow back to the
+// bot's wallet through the settlement service.
+const WALLETS_DIR = process.env.SPAR_WALLETS;
+const PAID = WALLETS_DIR !== undefined;
+const STAKE_SOL = Number(process.env.SPAR_STAKE ?? 0.05);
+const RPC_URL = process.env.RPC_URL ?? "https://api.devnet.solana.com";
+const AUTH_DOMAIN = process.env.AUTH_DOMAIN ?? "localhost:5173";
+const chain = PAID ? new Connection(RPC_URL, "confirmed") : undefined;
+
+// How long the bot stays dead before rejoining. FREE: short (the human
+// is waiting for a partner). PAID: 3-4 min (user protocol) — a death
+// must leave a hole; the pellet supply between respawns IS what the
+// red-team run measures. Jitter breaks respawn-wave synchronization.
+function respawnDelay(): number {
+    const forced = process.env.SPAR_RESPAWN_MS;
+    if (forced !== undefined) return Number(forced);
+    return PAID ? 180_000 + Math.random() * 60_000 : 2000;
+}
 
 // racoon tuning: anyone closer than FLEE_PX breaks the farming (run
 // away, boosting under PANIC_PX), and GREED is the eaten value that
@@ -119,6 +194,25 @@ const RESPAWN_DELAY_MS = Number(process.env.SPAR_RESPAWN_MS ?? 2000);
 const RACOON_FLEE_PX = 500;
 const RACOON_PANIC_PX = 250;
 const RACOON_GREED = FOOD_VALUE * 8;
+
+// circle tuning: the score where the farmer becomes the constrictor,
+// the range where it stops intercepting and starts orbiting, and how
+// far ahead on the ring it aims (bigger = faster lap, looser circle)
+const CIRCLE_HUNT_AT = Number(process.env.SPAR_CIRCLE_HUNT_AT ?? 150);
+const CIRCLE_ENGAGE_PX = 550;
+const CIRCLE_LEAD_RAD = 0.5;
+
+// camping tuning: everything inside GUARD of the ZONE (not of the bot)
+// is an intruder — the booth charges by proximity to the money, not to
+// the guard
+const CAMP_GUARD_PX = 800;
+
+// apex tuning: trail sampling step (px between stored head samples),
+// extra clearance beyond the two radii when rejecting a heading, and
+// the size ratio above which a neighbor is a bully to run from
+const APEX_SAMPLE_PX = 14;
+const APEX_MARGIN_PX = 18;
+const APEX_EVADE_RATIO = 1.25;
 
 interface NetPlayer {
     name: string;
@@ -132,6 +226,59 @@ interface NetPlayer {
 interface NetFood { x: number; y: number; value: number }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// --- money-mode helpers (mirror of client/src/wallet.ts, headless) --
+function loadWallet(walletIdx: number): Keypair {
+    const file = path.join(WALLETS_DIR!, `bot-${String(walletIdx + 1).padStart(2, "0")}.json`);
+    if (!fs.existsSync(file)) {
+        console.error(`missing wallet ${file} — create the fleet first:  npm run fleet ${walletIdx + 1}`);
+        process.exit(1);
+    }
+    return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(file, "utf8"))));
+}
+
+// SIWS without a wallet UI: we build the canonical message ourselves
+// (shared/siws.ts exists for exactly this) and sign with the bot's
+// keypair — a Solana secret key IS a 64-byte ed25519 secret, tweetnacl
+// signs with it directly.
+async function makeToken(keys: Keypair): Promise<string> {
+    const res = await fetch(`${SERVER_URL}/auth/challenge`);
+    if (!res.ok) throw new Error(`auth challenge failed (${res.status})`);
+    const challenge: AuthChallenge = await res.json();
+    const address = keys.publicKey.toBase58();
+    const message = buildSiwsMessage({
+        domain: AUTH_DOMAIN,
+        address,
+        statement: SIWS_STATEMENT,
+        nonce: challenge.nonce,
+    });
+    const bytes = new TextEncoder().encode(message);
+    const payload: AuthTokenPayload = {
+        pk: address,
+        msg: Buffer.from(bytes).toString("base64"),
+        sig: Buffer.from(nacl.sign.detached(bytes, keys.secretKey)).toString("base64"),
+    };
+    return Buffer.from(JSON.stringify(payload)).toString("base64");
+}
+
+// The join deposit, self-signed and self-sent. The server re-reads the
+// EXACT lamports from the confirmed tx — nothing here is trusted.
+async function sendDeposit(keys: Keypair): Promise<string> {
+    const res = await fetch(`${SERVER_URL}/round`);
+    if (!res.ok) {
+        throw new Error(`round info failed (${res.status}) — server in free-only mode? set ROUND_ID`);
+    }
+    const round: RoundInfoResponse = await res.json();
+    const tx = new Transaction().add(
+        buildJoinInstruction({
+            player: keys.publicKey,
+            roundId: BigInt(round.roundId),
+            treasury: new PublicKey(round.treasury),
+            stakeLamports: BigInt(Math.round(STAKE_SOL * LAMPORTS_PER_SOL)),
+        }),
+    );
+    return await sendAndConfirmTransaction(chain!, tx, [keys], { commitment: "confirmed" });
+}
 
 // Turning-radius geometry (A1.10 lesson): a point inside one of the
 // two current turning circles can never be reached by steering.
@@ -155,20 +302,56 @@ function interceptAngle(me: NetPlayer, target: NetPlayer, speed: number): number
     return Math.atan2(ty - me.y, tx - me.x);
 }
 
-async function run(BEHAVIOR: Behavior, slot: number) {
+async function run(BEHAVIOR: Behavior, slot: number, walletIdx: number) {
     // tag = stable identity across respawns, so a squad's logs stay
     // readable ("hunt#2 died" tells you which one)
     const tag = `${BEHAVIOR}#${slot}`;
     const client = new Client(SERVER_URL);
-    let room: Room = await client.joinOrCreate(DEMO_ROOM, {
-        protocol: PROTOCOL_VERSION,
-        name: `${SPAR_PREFIX}${BEHAVIOR}${slot}`,
-        stake: 0,
-    });
+    let room: Room;
+    if (PAID) {
+        // Money path: SIWS + on-chain deposit + txSig, every life —
+        // nonces and deposit signatures are single-use by design, so a
+        // respawn repeats the whole ritual, exactly like a human would.
+        const keys = loadWallet(walletIdx);
+        const balance = await chain!.getBalance(keys.publicKey);
+        const need = Math.round((STAKE_SOL + 0.005) * LAMPORTS_PER_SOL); // stake + fee headroom
+        if (balance < need) {
+            console.log(
+                `[spar:${tag}] wallet ${keys.publicKey.toBase58().slice(0, 4)}..` +
+                ` is dry (◎${(balance / LAMPORTS_PER_SOL).toFixed(4)} < stake+fees) — RETIRING.` +
+                ` The economy defeated this bot; refill with npm run fleet if that wasn't the point.`,
+            );
+            return;
+        }
+        client.auth.token = await makeToken(keys);
+        const txSig = await sendDeposit(keys);
+        console.log(
+            `[spar:${tag}] deposited ◎${STAKE_SOL} (${txSig.slice(0, 8)}…,` +
+            ` wallet ◎${((balance - STAKE_SOL * LAMPORTS_PER_SOL) / LAMPORTS_PER_SOL).toFixed(4)} left)` +
+            ` — joining the PAID arena`,
+        );
+        room = await client.joinOrCreate(ARENA_ROOM, {
+            protocol: PROTOCOL_VERSION,
+            name: `${SPAR_PREFIX}${BEHAVIOR}${slot}`,
+            stake: STAKE_SOL,
+            txSig,
+        });
+    } else {
+        room = await client.joinOrCreate(DEMO_ROOM, {
+            protocol: PROTOCOL_VERSION,
+            name: `${SPAR_PREFIX}${BEHAVIOR}${slot}`,
+            stake: 0,
+        });
+    }
 
     let me: NetPlayer | undefined;
     const others = new Map<string, NetPlayer>();
     const foods = new Map<string, NetFood>();
+    // apex: per-enemy body estimate — a point cloud, seeded by the AoI
+    // "body" message and extended with observed head samples. Order
+    // does not matter (it is a hazard field, not a rendering), so seed
+    // and samples can mix freely.
+    const trails = new Map<string, { x: number; y: number }[]>();
 
     // Declared up-front: restart() runs from inside a room callback and
     // has to be able to stop the loops that outlive the dead body.
@@ -181,16 +364,16 @@ async function run(BEHAVIOR: Behavior, slot: number) {
     // paint its end screen). So a bot that only watches the connection
     // never notices it died and keeps steering a corpse. Rejoin instead:
     // a sparring partner the human has to relaunch is a bad partner.
-    async function restart(reason: string) {
+    async function restart(reason: string, delayMs = respawnDelay()) {
         if (restarting) return;
         restarting = true;
         if (loop) clearInterval(loop);
         if (watch) clearInterval(watch);
         me = undefined;
-        console.log(`[spar:${tag}] ${reason} — rejoining in ${RESPAWN_DELAY_MS}ms`);
+        console.log(`[spar:${tag}] ${reason} — rejoining in ${Math.round(delayMs / 1000)}s`);
         await room.leave().catch(() => {});
-        await sleep(RESPAWN_DELAY_MS);
-        run(BEHAVIOR, slot).catch((err) =>
+        await sleep(delayMs);
+        run(BEHAVIOR, slot, walletIdx).catch((err) =>
             console.error(`[spar:${tag}] rejoin failed: ${(err as Error).message}`));
     }
 
@@ -200,13 +383,39 @@ async function run(BEHAVIOR: Behavior, slot: number) {
         me = undefined;
         others.clear();
         foods.clear();
+        trails.clear();
         r.onMessage("*", (type, message) => {
+            // AoI body seed (A4.6f): the server hands us the REAL trail
+            // of every snake entering our bubble — the browser uses it
+            // to render, apex uses it to never touch one
+            if (type === "body") {
+                const m = message as { id: string; points: number[] };
+                const tr: { x: number; y: number }[] = [];
+                for (let i = 0; i + 1 < m.points.length; i += 2) {
+                    tr.push({ x: m.points[i], y: m.points[i + 1] });
+                }
+                trails.set(m.id, tr);
+                return;
+            }
+            // launch gate gave up (paid arena, alone for 60s): the SOL
+            // is on its way back through settlement — retry SOON, not
+            // in 3-4min, or two lonely bots ping-pong refunds forever
+            if (type === "refunded") {
+                void restart("refunded (launch gate gave up)", 20_000);
+                return;
+            }
             if (type !== "died" && type !== "extracted") return;
             // A4.6d: "died" now names the killer — printing it here
-            // makes the bot log a killfeed of its own
-            const m = message as { kind?: string; killedBy?: string } | undefined;
+            // makes the bot log a killfeed of its own. Lamports shown
+            // in money mode: the red-team run reads as a ledger.
+            const m = message as
+                | { kind?: string; killedBy?: string; lamports?: string }
+                | undefined;
             const detail = m?.kind ? ` (${m.kind}${m.killedBy ? ` with ${m.killedBy}` : ""})` : "";
-            void restart(`${String(type)}${detail}`);
+            const money = PAID && m?.lamports
+                ? ` ◎${(Number(m.lamports) / LAMPORTS_PER_SOL).toFixed(4)}`
+                : "";
+            void restart(`${String(type)}${money}${detail}`);
         });
         const cb = Callbacks.get(r);
         cb.onAdd("players", (p, id) => {
@@ -217,7 +426,10 @@ async function run(BEHAVIOR: Behavior, slot: number) {
             // our own body being removed = we are dead, whatever the
             // reason; never steer a ghost while "died" is in flight
             if (String(id) === r.sessionId) me = undefined;
-            else others.delete(String(id));
+            else {
+                others.delete(String(id));
+                trails.delete(String(id));
+            }
         });
         cb.onAdd("food", (f, id) => foods.set(String(id), f as NetFood));
         cb.onRemove("food", (_f, id) => foods.delete(String(id)));
@@ -230,7 +442,9 @@ async function run(BEHAVIOR: Behavior, slot: number) {
     //   firing squad, not a simulation — nearest-enemy is realistic)
     //   dodge / feed / contest: the human only, i.e. neither a server
     //   tutorial bot (sessionId "bot-") nor a squadmate (name "spar-")
-    const HUNTS_ANYONE = BEHAVIOR === "hunt" || BEHAVIOR === "cannibal";
+    const HUNTS_ANYONE =
+        BEHAVIOR === "hunt" || BEHAVIOR === "cannibal" ||
+        BEHAVIOR === "circle" || BEHAVIOR === "camping";
     const attackable = (id: string, p: NetPlayer) =>
         HUNTS_ANYONE || !(id.startsWith("bot-") || p.name.startsWith(SPAR_PREFIX));
     function prey(): NetPlayer | undefined {
@@ -243,6 +457,21 @@ async function run(BEHAVIOR: Behavior, slot: number) {
             if (!me) return p;
             const d = (p.x - me.x) ** 2 + (p.y - me.y) ** 2;
             if (d < bestD) { bestD = d; best = p; }
+        }
+        return best;
+    }
+
+    // Nearest pellet the current turning circles can actually reach —
+    // shared by every behavior that farms (racoon, circle, camping,
+    // and the hunt fallback when the bubble is empty).
+    function nearestFood(turnRadius: number, eatReach: number): NetFood | undefined {
+        if (!me) return undefined;
+        let best: NetFood | undefined;
+        let bestD = Infinity;
+        for (const f of foods.values()) {
+            if (!isReachable(me, f, turnRadius, eatReach)) continue;
+            const d = (f.x - me.x) ** 2 + (f.y - me.y) ** 2;
+            if (d < bestD) { bestD = d; best = f; }
         }
         return best;
     }
@@ -433,13 +662,7 @@ async function run(BEHAVIOR: Behavior, slot: number) {
                 // farm: nearest reachable pellet, drift when the bubble
                 // is bare (racoons don't rally on the zone — that is
                 // where the fighting is)
-                let best: NetFood | undefined;
-                let bestD = Infinity;
-                for (const f of foods.values()) {
-                    if (!isReachable(me, f, turnRadius, eatReach)) continue;
-                    const d = (f.x - me.x) ** 2 + (f.y - me.y) ** 2;
-                    if (d < bestD) { bestD = d; best = f; }
-                }
+                const best = nearestFood(turnRadius, eatReach);
                 if (best) {
                     input.angle = Math.atan2(best.y - me.y, best.x - me.x);
                 } else if (Math.random() < 0.05) {
@@ -447,6 +670,219 @@ async function run(BEHAVIOR: Behavior, slot: number) {
                 }
             }
             room.send("input", input);
+            return;
+        }
+
+        if (BEHAVIOR === "circle") {
+            // Two lives in one snake. Below the threshold: a racoon
+            // without the cash-out — flee close threats, farm pellets.
+            if (me.score < CIRCLE_HUNT_AT) {
+                let threat: NetPlayer | undefined;
+                let threatD = Infinity;
+                for (const p of others.values()) {
+                    const d = Math.hypot(p.x - me.x, p.y - me.y);
+                    if (d < threatD) { threatD = d; threat = p; }
+                }
+                if (threat && threatD < RACOON_FLEE_PX * 0.8) {
+                    input.angle = Math.atan2(me.y - threat.y, me.x - threat.x);
+                    input.boost = threatD < RACOON_PANIC_PX && me.score > BOOST_ORB_VALUE * 2;
+                } else {
+                    input.boost = false;
+                    const best = nearestFood(turnRadius, eatReach);
+                    if (best) {
+                        input.angle = Math.atan2(best.y - me.y, best.x - me.x);
+                    } else if (Math.random() < 0.05) {
+                        input.angle = Math.random() * 2 * Math.PI;
+                    }
+                }
+                room.send("input", input);
+                return;
+            }
+            // Big enough: constrictor. Far target -> intercept like a
+            // hunt; close target -> stop aiming AT it and orbit — aim
+            // at a point AHEAD on a ring around it, and let the ring
+            // follow the shrinking distance so every lap tightens.
+            if (target) {
+                if (distToHuman > CIRCLE_ENGAGE_PX) {
+                    input.angle = interceptAngle(me, target, speed);
+                    input.boost = me.score > BOOST_ORB_VALUE * 4 && distToHuman < 900;
+                } else {
+                    const around = Math.atan2(me.y - target.y, me.x - target.x);
+                    const ring = Math.max(dims.radius * 3 + 40, distToHuman * 0.9);
+                    input.angle = Math.atan2(
+                        target.y + Math.sin(around + CIRCLE_LEAD_RAD) * ring - me.y,
+                        target.x + Math.cos(around + CIRCLE_LEAD_RAD) * ring - me.x,
+                    );
+                    // lap faster than the prey can run: the whole play
+                    input.boost = me.score > BOOST_ORB_VALUE * 4;
+                }
+                if (now - lastLog > 2000) {
+                    lastLog = now;
+                    const mode = distToHuman > CIRCLE_ENGAGE_PX ? "closing on" : "CIRCLING";
+                    console.log(`[${tag}] ${mode} ${target.name} — ${distToHuman.toFixed(0)}px, me ${me.score.toFixed(0)}`);
+                }
+            } else {
+                input.boost = false;
+                const best = nearestFood(turnRadius, eatReach);
+                if (best) input.angle = Math.atan2(best.y - me.y, best.x - me.x);
+                else if (Math.random() < 0.05) input.angle = Math.random() * 2 * Math.PI;
+            }
+            room.send("input", input);
+            return;
+        }
+
+        if (BEHAVIOR === "camping") {
+            const zone = (room.state as { extract?: { active: boolean; x: number; y: number } }).extract;
+            if (zone?.active) {
+                // an intruder is whoever is nearest THE ZONE (not us) —
+                // the booth charges by proximity to the money
+                let intruder: NetPlayer | undefined;
+                let intruderD = Infinity;
+                for (const p of others.values()) {
+                    const d = Math.hypot(p.x - zone.x, p.y - zone.y);
+                    if (d < intruderD) { intruderD = d; intruder = p; }
+                }
+                if (intruder && intruderD < CAMP_GUARD_PX) {
+                    input.angle = interceptAngle(me, intruder, speed);
+                    const dMe = Math.hypot(intruder.x - me.x, intruder.y - me.y);
+                    input.boost = me.score > BOOST_ORB_VALUE * 2 && dMe < 500;
+                    if (now - lastLog > 1500) {
+                        lastLog = now;
+                        console.log(
+                            `[${tag}] intruder ${intruder.name} at ${intruderD.toFixed(0)}px` +
+                            ` from the zone — intercepting (${dMe.toFixed(0)}px from me)`,
+                        );
+                    }
+                } else {
+                    // nobody to charge: hold the booth (same orbit as
+                    // contest — approach if far, lazy circle on station)
+                    const d = Math.hypot(zone.x - me.x, zone.y - me.y);
+                    input.angle = d > EXTRACT_RADIUS * 1.5
+                        ? Math.atan2(zone.y - me.y, zone.x - me.x)
+                        : me.angle + 0.12;
+                    input.boost = false;
+                }
+            } else {
+                // no zone up: graze where we stand, the next zone will
+                // spawn and the booth reopens
+                input.boost = false;
+                const best = nearestFood(turnRadius, eatReach);
+                if (best) input.angle = Math.atan2(best.y - me.y, best.x - me.x);
+                else input.angle = me.angle + 0.05;
+            }
+            room.send("input", input);
+            return;
+        }
+
+        if (BEHAVIOR === "apex") {
+            const self = me; // non-null capture for the closures below
+
+            // 1) perfect memory: extend every visible enemy's trail
+            // with its current head sample, capped at its real body
+            // length (score tells us how long it is — same formula the
+            // server runs)
+            for (const [id, p] of others) {
+                let tr = trails.get(id);
+                if (!tr) { tr = []; trails.set(id, tr); }
+                const last = tr[tr.length - 1];
+                if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= APEX_SAMPLE_PX) {
+                    tr.push({ x: p.x, y: p.y });
+                }
+                const bodyLen = describeSnakeFromScore(p.score).length * SNAKE_SPACING;
+                const maxPts = Math.ceil(bodyLen / APEX_SAMPLE_PX) + 4;
+                while (tr.length > maxPts) tr.shift();
+            }
+
+            // 2) collision-aware steering: project the head along a
+            // candidate heading and take the worst clearance against
+            // every known body point + the border. Any heading that
+            // clips is rejected before it is ever sent — the human
+            // mistake (touching a body you saw) is simply removed.
+            const myR = dims.radius;
+            const clearanceOf = (angle: number): number => {
+                let minClear = Infinity;
+                for (const step of [10, 22, 34]) { // frames ahead
+                    const px = self.x + Math.cos(angle) * speed * step;
+                    const py = self.y + Math.sin(angle) * speed * step;
+                    const borderClear = WORLD_RADIUS - myR - Math.hypot(px, py);
+                    if (borderClear < minClear) minClear = borderClear;
+                    for (const [id, p] of others) {
+                        const reach = describeSnakeFromScore(p.score).radius + myR + APEX_MARGIN_PX;
+                        const dh = Math.hypot(p.x - px, p.y - py) - reach;
+                        if (dh < minClear) minClear = dh;
+                        const tr = trails.get(id);
+                        if (tr) {
+                            for (const pt of tr) {
+                                const d = Math.hypot(pt.x - px, pt.y - py) - reach;
+                                if (d < minClear) minClear = d;
+                            }
+                        }
+                    }
+                    if (minClear < -40) break; // hopeless, stop probing
+                }
+                return minClear;
+            };
+            const steer = (desired: number): number => {
+                let fallback = desired;
+                let fallbackClear = -Infinity;
+                // nearest-to-desired safe heading wins; nothing safe ->
+                // the least bad one
+                for (const off of [0, 0.35, -0.35, 0.7, -0.7, 1.1, -1.1, 1.6, -1.6, 2.2, -2.2, Math.PI]) {
+                    const a = desired + off;
+                    const clear = clearanceOf(a);
+                    if (clear > 0) return a;
+                    if (clear > fallbackClear) { fallbackClear = clear; fallback = a; }
+                }
+                return fallback;
+            };
+
+            // 3) cold target selection: prey = nearest STRICTLY smaller
+            // snake; bully = a meaningfully bigger one close enough to
+            // matter. Running from bullies outranks everything.
+            let prey: NetPlayer | undefined;
+            let preyD = Infinity;
+            let bully: NetPlayer | undefined;
+            let bullyD = Infinity;
+            for (const p of others.values()) {
+                const d = Math.hypot(p.x - self.x, p.y - self.y);
+                if (p.score < self.score * 0.9 && d < preyD) { preyD = d; prey = p; }
+                if (p.score > self.score * APEX_EVADE_RATIO && d < bullyD) { bullyD = d; bully = p; }
+            }
+
+            let desired: number;
+            let wantBoost = false;
+            let mode = "farm";
+            if (bully && bullyD < 420) {
+                desired = Math.atan2(self.y - bully.y, self.x - bully.x);
+                wantBoost = bullyD < 260 && self.score > BOOST_ORB_VALUE * 3;
+                mode = `evade ${bully.name}`;
+            } else if (prey && preyD < 1100) {
+                // the cut-off: aim across the prey's FUTURE path so our
+                // body arrives where its head is going — the kill is
+                // the prey touching us, never a head-on trade
+                const ahead = Math.min(preyD * 0.9, 320);
+                const cutX = prey.x + Math.cos(prey.angle) * ahead;
+                const cutY = prey.y + Math.sin(prey.angle) * ahead;
+                desired = Math.atan2(cutY - self.y, cutX - self.x);
+                wantBoost = preyD < 650 && self.score > BOOST_ORB_VALUE * 6;
+                mode = `cut-off ${prey.name}`;
+            } else {
+                const best = nearestFood(turnRadius, eatReach);
+                desired = best
+                    ? Math.atan2(best.y - self.y, best.x - self.x)
+                    : self.angle + (Math.random() < 0.05 ? Math.random() - 0.5 : 0);
+            }
+
+            const chosen = steer(desired);
+            // boosting into a swerve is how apex would die — the boost
+            // is only spent when the safe heading IS the attack heading
+            input.angle = chosen;
+            input.boost = wantBoost && Math.abs(chosen - desired) < 0.5;
+            room.send("input", input);
+            if (now - lastLog > 2000) {
+                lastLog = now;
+                console.log(`[${tag}] ${mode} — score ${self.score.toFixed(0)}, ${others.size} in bubble`);
+            }
             return;
         }
 
@@ -469,13 +905,7 @@ async function run(BEHAVIOR: Behavior, slot: number) {
             // real player looking for a fight would. This is how the
             // sparring partner stays findable without a wallhack.
             const zone = (room.state as { extract?: { active: boolean; x: number; y: number } }).extract;
-            let best: NetFood | undefined;
-            let bestD = Infinity;
-            for (const f of foods.values()) {
-                if (!isReachable(me, f, turnRadius, eatReach)) continue;
-                const d = (f.x - me.x) ** 2 + (f.y - me.y) ** 2;
-                if (d < bestD) { bestD = d; best = f; }
-            }
+            const best = nearestFood(turnRadius, eatReach);
             const zoneDist = zone?.active ? Math.hypot(zone.x - me.x, zone.y - me.y) : Infinity;
             if (zone?.active && zoneDist > EXTRACT_RADIUS) {
                 input.angle = Math.atan2(zone.y - me.y, zone.x - me.x);
@@ -512,13 +942,19 @@ function fatal(msg: string): never {
 // joinOrCreate calls can race into separate rooms, and a squad split
 // across two rooms spars with nobody.
 (async () => {
-    console.log(`[spar] squad: ${ROSTER.join(", ")} — ${SERVER_URL}`);
+    console.log(
+        `[spar] squad: ${ROSTER.join(", ")} — ${SERVER_URL}` +
+        (PAID ? ` — MONEY MODE (◎${STAKE_SOL}/life, wallets in ${WALLETS_DIR})` : ""),
+    );
     const counters = new Map<Behavior, number>();
-    for (const behavior of ROSTER) {
+    // walletIdx = position in the roster: bot-01.json goes to the first
+    // bot, whatever its behavior — the fleet is behavior-agnostic
+    for (let walletIdx = 0; walletIdx < ROSTER.length; walletIdx += 1) {
+        const behavior = ROSTER[walletIdx];
         const slot = (counters.get(behavior) ?? 0) + 1;
         counters.set(behavior, slot);
         try {
-            await run(behavior, slot);
+            await run(behavior, slot, walletIdx);
         } catch (err) {
             const msg = (err as Error).message;
             console.error(`[spar:${behavior}#${slot}] failed: ${msg}`);

@@ -6,11 +6,13 @@
     "scripts": {
         "bots": "tsx src/bots.ts",
         "spar": "tsx src/sparring.ts",
+        "fleet": "tsx src/fleet.ts",
         "check": "tsc --noEmit"
     },
     "dependencies": {
         "@colyseus/sdk": "^0.17.0",
         "@nimbo/shared": "*",
+        "@solana/web3.js": "^1.98.0",
         "bs58": "^6.0.0",
         "tweetnacl": "^1.0.3"
     },

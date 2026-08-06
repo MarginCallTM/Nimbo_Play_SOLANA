@@ -30,3 +30,7 @@ DECISIONS.md
 
 # Runtime data: settlement outbox (claims/acks ledger, not code)
 arena/server/settlement-outbox.jsonl
+
+# A4.6 red-team fleet: devnet bot wallets (PRIVATE KEYS — devnet-only,
+# but they never belong in a repo)
+arena/loadtest/wallets/

@@ -206,6 +206,15 @@ export type DeathKind =
     | "bomb"      // still inside the extract zone when it expired
     | "unknown";
 
+// Server -> everyone already in a PAID arena, when someone spawns in:
+// the lobby drain can drop an opponent into a survivor's room with no
+// warning (user report 2026-08-06). Name + spawn value, never the
+// wallet (A3.1). The demo stays silent (bot respawn spam).
+export interface JoinedMessage {
+    name: string;
+    lamports: string; // RAW stake (gross buy-in, pre rake/pellet cut)
+}
+
 export interface DiedMessage {
     score: number;    // value lost, in game units
     lamports: string; // same, in lamports (display: what it was worth)

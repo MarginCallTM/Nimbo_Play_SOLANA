@@ -34,6 +34,7 @@ import {
     describeSnakeFromScore,
     turnTowards,
     type DiedMessage,
+    type JoinedMessage,
     type ExtractedMessage,
     type InputMessage,
     type JoinOptions,
@@ -461,6 +462,21 @@ export async function startGameSession(
     // Send intent at a fixed 30Hz, aligned with the server tick rate —
     // and never per mousemove (that can fire at 1000Hz).
     intervals.push(setInterval(() => room.send("input", input), 33));
+
+    // Join feed (user request 2026-08-06): the lobby drain drops an
+    // opponent into a survivor's arena with no warning — every entrance
+    // is announced top-right. textContent keeps hostile names inert
+    // (same rule as menu.ts); the server never sends the wallet.
+    const feedEl = document.getElementById("feed")!;
+    feedEl.replaceChildren(); // stale lines from a previous session
+    room.onMessage("joined", (msg: JoinedMessage) => {
+        const line = document.createElement("div");
+        line.textContent =
+            `${msg.name} entered the arena with ◎${(Number(msg.lamports) / 1e9).toFixed(4)}`;
+        feedEl.prepend(line);
+        setTimeout(() => line.classList.add("old"), 5000); // fade…
+        setTimeout(() => line.remove(), 6000);             // …then gone
+    });
 
     // A4.6f — one-shot body seed, sent by the server whenever a snake
     // enters our AoI bubble: its real trail replaces the local regrowth
