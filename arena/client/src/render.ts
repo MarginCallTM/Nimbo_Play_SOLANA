@@ -213,6 +213,19 @@ export class GameView {
         view.root.destroy({ children: true });
     }
 
+    // A4.2a — session teardown: wipe every per-room visual so the next
+    // session (demo -> arena handoff) starts on a clean canvas. The
+    // shared texture and the static decor survive: they are per-VIEW,
+    // not per-room.
+    clear() {
+        for (const id of [...this.snakes.keys()]) this.removeSnake(id);
+        for (const id of [...this.foodSprites.keys()]) this.removeFood(id);
+        this.debugGfx.clear();
+        this.minimap.clear();
+        this.extractGfx.clear();
+        this.extractLabel.visible = false;
+    }
+
     // --- debug overlays (world space): AoI bubble + server ghost ---
     drawDebug(selfX: number, selfY: number, ghostX: number, ghostY: number, radius: number) {
         this.debugGfx.clear();

@@ -1,4 +1,4 @@
-import { Room, type Client, type Deferred } from "colyseus";
+import { Room, type Client } from "colyseus";
 import { ArraySchema, Schema, MapSchema, StateView, type, view } from "@colyseus/schema";
 import {
     AOI_RADIUS,
@@ -12,7 +12,6 @@ import {
     RECYCLE_RATIO,
     SPAWN_GRACE_TICKS,
     SERVER_TICK_RATE,
-    DISCONNECT_TTL_TICKS,
     FIRST_INPUT_TTL_TICKS,
     EXTRACT_CHANNEL_FRAMES,
     EXTRACT_RADIUS,
@@ -30,6 +29,7 @@ import {
     turnTowards,
     lamportsFromScore,
     type ArenaPhase,
+    type DeathKind,
     type DiedMessage,
     type ExtractedMessage,
     type InputMessage,
@@ -68,16 +68,11 @@ export class Player extends Schema {
     // assumes continuous motion (interp buffers, prediction, bodies).
     @type("uint8") gen = 0;
     @type("boolean") graced = true; // synced for translucent rendering
-    // Disconnect rule (A1.9): a disconnected snake freezes, gray and
-    // HARMLESS — out of the collision world entirely — then turns
-    // into corpse orbs after DISCONNECT_TTL_TICKS. Synced so clients
-    // can render it grayed out.
+    // DEAD since 2026-08-06 (anti rage-quit: disconnect = instant
+    // death, no frozen-snake state anymore). Kept only to avoid a
+    // protocol bump mid-playtest — remove both, plus the client's
+    // gray-rendering path, at the next PROTOCOL_VERSION change.
     @type("boolean") connected = true;
-    // The ONE exception to "never sync bodies": a frozen body cannot
-    // be regrown by observing head movement (there is none), so late
-    // joiners would see a bare head over a very real hitbox. Filled
-    // once at disconnect (flattened x,y pairs), cleared on return —
-    // costs zero bytes while everyone is connected.
     @type(["float32"]) frozenBody = new ArraySchema<number>();
 
     // Extraction channel progress, in frames (0..EXTRACT_CHANNEL_
@@ -93,7 +88,6 @@ export class Player extends Schema {
     // is between you, the server and the chain.
     wallet = "";
     sessionId = ""; // back-reference: lets death cleanup find the maps
-    disconnectTicks = 0; // countdown to corpse while disconnected
     // 2026-08-03 blind-client bug: until the FIRST input arrives the
     // snake is held completely (no movement, grace frozen) — a snake
     // only ever moves under its player's control.
@@ -107,6 +101,14 @@ export class Player extends Schema {
     desiredAngle = 0;
     wantsBoost = false;
     graceTicks = SPAWN_GRACE_TICKS;
+    // ticks spent waiting for room to materialize once the timer is up
+    graceHoldTicks = 0;
+    // DIAGNOSTIC (2026-08-05, user report "one-shot by a translucent
+    // snake"): when this snake stopped being a ghost, and how much
+    // daylight it had. A kill by a freshly materialized snake is the
+    // signature of a grace exploit.
+    materializedAt = 0;
+    materializedClearance = 0;
     boostDebt = 0; // score burned by boosting, not yet dropped as an orb
     // The body lives here for collisions (A1.7bis.d) but is NEVER
     // synced: head + score is enough, every client regrows the body
@@ -137,6 +139,61 @@ interface Segment {
     owner: Player;
 }
 
+// Why a snake died — kept structured through the collision phase so
+// the log can name the killer. "Who killed me?" was unanswerable
+// before (2026-08-05): the death log printed a sessionId and a score.
+type DeathCause =
+    | { kind: "border" }
+    | { kind: "collision"; killer: Player }; // we ran into a live body
+
+// What resolveDeath needs: one line for the log, and the same truth in
+// the shape the client is told (A4.6d).
+interface DeathInfo {
+    text: string;
+    kind: DeathKind;
+    killedBy?: string;
+    killer?: Player; // server-side only: for the grace diagnostic
+}
+
+function explainDeath(
+    cause: DeathCause,
+    victim: Player,
+    deaths: Map<Player, DeathCause>,
+): DeathInfo {
+    if (cause.kind === "border") return { text: "border", kind: "border" };
+    const name = cause.killer.name;
+    const who = `${name} (${cause.killer.sessionId})`;
+    // mutual = both heads met in the same tick: a genuine head-on, not
+    // one player driving into the other's flank
+    const theirs = deaths.get(cause.killer);
+    const mutual = theirs?.kind === "collision" && theirs.killer === victim;
+    return mutual
+        ? { text: `head-on with ${who}`, kind: "head-on", killedBy: name, killer: cause.killer }
+        : { text: `ran into ${who}`, kind: "collision", killedBy: name, killer: cause.killer };
+}
+
+// Emergence (2026-08-05) — spawn grace made offensive was a real
+// exploit: a translucent snake could park inside you and materialize
+// on top of you. Grace now ends only in clear space; while blocked the
+// snake stays a harmless ghost, and past the hold it is moved away.
+// Daylight (surface to surface) needed to materialize. 90px looked
+// reasonable and was measured catastrophic on 2026-08-05: 13 of 27
+// kills were landed within 2s of materializing, every one of them
+// emerging at the bare threshold. A snake covers 120px/s, 240px
+// boosting — 90px is a third of a second, i.e. no reaction at all.
+const EMERGENCE_CLEARANCE = 300;
+// A ghost that cannot find room is RELOCATED — fast. 5s of hold let a
+// translucent snake hover on your screen (user report 2026-08-06);
+// 1.5s keeps relocation from firing on a brief squeeze while making
+// ghost-tailgating pointless.
+const EMERGENCE_HOLD_TICKS = Math.round(SERVER_TICK_RATE * 1.5);
+const SPAWN_CLEARANCE = 400; // px: a fresh spawn lands in open field
+const SPAWN_TRIES = 24;
+
+// A snake already in view is kept until 15% past the bubble: without
+// hysteresis one pacing the boundary would flicker in and out.
+const PLAYER_AOI_HYSTERESIS = 1.15;
+
 // The single extract point (proto model: one at a time). Always
 // present in the state; `active` flips its phases — cooldown (false)
 // and live (true). ttl counts down in frames so every client renders
@@ -149,11 +206,12 @@ export class ExtractZone extends Schema {
 }
 
 export class ArenaState extends Schema {
-    // Players stay globally synced: 16 heads are cheap, and the
-    // minimap will need them. Food is the volume — @view() takes it
-    // out of global broadcast: each client only receives the pellets
-    // its StateView subscribed to (its AoI bubble).
-    @type({ map: Player }) players = new MapSchema<Player>();
+    // A4.6c (2026-08-05) — players are AoI-filtered too. They used to
+    // be global ("16 heads are cheap"), which handed every client a
+    // free wallhack: the sparring bot read name/x/y/score of a player
+    // 2800px away, bubble = 1200px, with no modified client at all.
+    // Bandwidth was never the point of @view() here; secrecy is.
+    @view() @type({ map: Player }) players = new MapSchema<Player>();
     @view() @type({ map: Food }) food = new MapSchema<Food>();
     @type(ExtractZone) extract = new ExtractZone();
     // A4.2a launch gate (D77): "waiting" until MIN_LIVE_PLAYERS
@@ -214,9 +272,10 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // AoI bookkeeping: what each client's view currently contains.
     // Refreshed every AOI_UPDATE_TICKS (the bubble doesn't need 30Hz).
     protected inView = new Map<string, Set<Food>>();
-    // Pending reconnection windows (A1.9), held so the tick can
-    // cancel them when the disconnect TTL expires
-    private pendingReconnections = new Map<string, Deferred<Client>>();
+    // same, for players (A4.6c: they are AoI-filtered now too)
+    protected playersInView = new Map<string, Set<Player>>();
+    // biggest snake radius in the collision grid this tick (query range)
+    private maxSegmentRadius = 0;
 
     // --- extraction (A0.6 state machine, multiplayer flavor) --------
     private extractCooldown = EXTRACT_SPAWN_COOLDOWN;
@@ -244,10 +303,70 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     private aoiCounter = 0;
     private static readonly AOI_UPDATE_TICKS = 10; // ~333ms
 
+    // Who this client is allowed to know about. Three sources, and the
+    // second one matters more than it looks: a whale's flank crossing
+    // your screen while its head is 2000px away must NOT be an
+    // invisible wall — so any BODY segment in the bubble reveals its
+    // owner. The collision grid already indexes exactly that.
+    private visiblePlayers(me: Player, prev?: Set<Player>): Set<Player> {
+        const wanted = new Set<Player>([me]); // always yourself
+        const addR2 = AOI_RADIUS * AOI_RADIUS;
+        const keepR2 = (AOI_RADIUS * PLAYER_AOI_HYSTERESIS) ** 2;
+        for (const seg of this.segmentGrid.queryNear(me.x, me.y, AOI_RADIUS)) {
+            // the grid is built at the top of the tick: if its owner
+            // died since, the segment points at a detached Player —
+            // view.add() on one of those crashes the encoder
+            if (this.state.players.get(seg.owner.sessionId) !== seg.owner) continue;
+            const dx = seg.x - me.x;
+            const dy = seg.y - me.y;
+            if (dx * dx + dy * dy <= addR2) wanted.add(seg.owner);
+        }
+        this.state.players.forEach((p) => {
+            // heads, with hysteresis so a snake pacing the boundary
+            // does not flicker in and out. Ghosts (graced) live only
+            // here: they are absent from the collision grid, and you
+            // must still see someone materializing next to you.
+            const dx = p.x - me.x;
+            const dy = p.y - me.y;
+            if (dx * dx + dy * dy <= (prev?.has(p) ? keepR2 : addR2)) wanted.add(p);
+        });
+        return wanted;
+    }
+
     private updateViews() {
         for (const client of this.clients) {
             const player = this.state.players.get(client.sessionId);
             if (!player || !client.view) continue;
+
+            // --- players (A4.6c) ---
+            const prevPlayers = this.playersInView.get(client.sessionId);
+            const wantedPlayers = this.visiblePlayers(player, prevPlayers);
+            if (prevPlayers) {
+                for (const p of prevPlayers) {
+                    // the dead already left the state on their own
+                    if (!wantedPlayers.has(p) && this.state.players.has(p.sessionId)) {
+                        client.view.remove(p);
+                    }
+                }
+            }
+            for (const p of wantedPlayers) {
+                if (prevPlayers?.has(p)) continue;
+                client.view.add(p);
+                // A4.6f — seed the entrant's REAL trail, one shot. The
+                // client regrows bodies from observed head motion (A1.4:
+                // bodies are never synced), so a snake ENTERING the
+                // bubble mid-life would render bodyless while its very
+                // real server trail kills — the "phantom hitbox" deaths
+                // of 2026-08-06 in one sentence.
+                if (p !== player && p.tracers.length > 0) {
+                    const points: number[] = [];
+                    for (const t of p.tracers) points.push(t.x, t.y);
+                    client.send("body", { id: p.sessionId, points });
+                }
+            }
+            this.playersInView.set(client.sessionId, wantedPlayers);
+
+            // --- food ---
             // wanted bubble, via the same spatial grid as eating
             const wanted = new Set<Food>();
             for (const food of this.foodGrid.queryNear(player.x, player.y, AOI_RADIUS)) {
@@ -356,21 +475,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             return;
         }
         const dt = TICK_DT;
-        // disconnected snakes whose window expired this tick — never
-        // delete from a map while iterating it
-        const expired: Player[] = [];
         this.state.players.forEach((player) => {
-            // A1.9 disconnect rule: a disconnected snake is FROZEN
-            // and harmless — no steering, no movement, no eating, no
-            // collisions. The TICK is the single authority on its
-            // fate: when the window runs out, it becomes corpse orbs
-            // where it stood (its score returns to the arena).
-            if (!player.connected) {
-                player.disconnectTicks -= 1;
-                if (player.disconnectTicks <= 0) expired.push(player);
-                return;
-            }
-
             // Never-piloted snake (2026-08-03 bug): held completely,
             // grace INCLUDED — it stays intangible where it spawned.
             // Past the TTL, kick the socket; the A1.9 path above then
@@ -383,18 +488,21 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
                 return;
             }
 
-            // spawn grace counts down in server ticks
-            if (player.graceTicks > 0) {
-                player.graceTicks -= 1;
-                if (player.graceTicks <= 0) player.graced = false;
-            }
+            // spawn grace counts down in server ticks; dropping it is
+            // emergenceTick's call, not the timer's — see below
+            if (player.graceTicks > 0) player.graceTicks -= 1;
 
             // boost gating + drain (proto A0.3): sprinting burns score
             // in ORB QUANTA — the debt accumulates continuously, and
             // every full orb of debt leaves the snake as an eatable
             // orb at the tail. Nothing evaporates. Below one orb of
             // score, the sprint cuts off.
-            const boosting = player.wantsBoost && player.score >= BOOST_ORB_VALUE;
+            // A ghost cannot boost (2026-08-06): grace is a shield,
+            // never an engine. Boosting translucent at 240px/s was THE
+            // "charging ghost" experience — and the symmetry is clean:
+            // graced snakes already neither eat, kill nor die.
+            const boosting =
+                !player.graced && player.wantsBoost && player.score >= BOOST_ORB_VALUE;
             if (boosting) {
                 player.boostDebt += SNAKE_BOOST_COST * dt;
                 while (player.boostDebt >= BOOST_ORB_VALUE && player.score >= BOOST_ORB_VALUE) {
@@ -468,17 +576,14 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             }
         });
 
-        expired.forEach((player) => this.expireDisconnected(player));
-
         // --- collision phase (ported from the proto, A0.4) ----------
         // Rebuild the segment grid from scratch: bodies moved, every
         // cell key is stale. Heads are inserted too — that makes
         // head-to-head = double death fall out for free.
         this.segmentGrid.clear();
-        let maxRadius = 0;
+        let maxRadius = 0; // mirrored into maxSegmentRadius for emergenceGap
         this.state.players.forEach((player) => {
             if (player.graced) return; // intangible: kills nothing
-            if (!player.connected) return; // frozen: harmless (A1.9)
             const radius = describeSnakeFromScore(player.score).radius;
             if (radius > maxRadius) maxRadius = radius;
             this.segmentGrid.insert({ x: player.x, y: player.y, radius, owner: player });
@@ -487,15 +592,19 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             }
         });
 
-        const deaths = new Set<Player>();
+        // Emergence gate: grace only ends where there is room to
+        // materialize (see emergenceGap) — a ghost must never pop into
+        // existence inside somebody.
+        this.maxSegmentRadius = maxRadius;
+        this.emergenceTick();
+
+        const deaths = new Map<Player, DeathCause>();
         this.state.players.forEach((player) => {
             if (player.graced) return; // intangible: cannot die
-            if (!player.connected) return; // frozen: immobile, only
-                                           // the TTL can end it (A1.9)
             const radius = describeSnakeFromScore(player.score).radius;
             // lethal border
             if (Math.hypot(player.x, player.y) > WORLD_RADIUS - radius) {
-                deaths.add(player);
+                deaths.set(player, { kind: "border" });
                 return;
             }
             // head vs enemy segments; crossing yourself is legal
@@ -504,13 +613,14 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
                 const dx = seg.x - player.x;
                 const dy = seg.y - player.y;
                 const reach = radius + seg.radius;
-                if (dx * dx + dy * dy < reach * reach) {
-                    deaths.add(player);
-                    break;
-                }
+                if (dx * dx + dy * dy >= reach * reach) continue;
+                deaths.set(player, { kind: "collision", killer: seg.owner });
+                break;
             }
         });
-        deaths.forEach((player) => this.resolveDeath(player));
+        deaths.forEach((cause, player) => {
+            this.resolveDeath(player, explainDeath(cause, player, deaths));
+        });
 
         this.extractTick(dt);
 
@@ -540,33 +650,21 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         }
     }
 
-    // A4.2a — the pre-launch tick. Three jobs only: honor the A1.9
-    // disconnect window (whose exit here is a refund, not a corpse),
-    // open the gate the moment enough deposits are present, and
-    // refund anyone whose partner never showed up. Every connected
-    // player in this room IS a verified deposit (onAuth is the door),
-    // so the invariant reduces to a head count.
+    // A4.2a — the pre-launch tick. Two jobs only: open the gate the
+    // moment enough deposits are present, and refund anyone whose
+    // partner never showed up. Every player in this room IS a verified
+    // deposit (onAuth is the door), so the invariant reduces to a
+    // head count.
     private waitingTick() {
-        const expired: Player[] = [];
-        let ready = 0;
-        this.state.players.forEach((player) => {
-            if (!player.connected) {
-                player.disconnectTicks -= 1;
-                if (player.disconnectTicks <= 0) expired.push(player);
-                return;
-            }
-            ready += 1;
-        });
-        expired.forEach((player) => this.expireDisconnected(player));
-
-        if (ready >= MIN_LIVE_PLAYERS) {
+        // leavers are refunded and removed the instant onLeave fires
+        // (anti rage-quit rule), so everyone still here is present
+        if (this.state.players.size >= MIN_LIVE_PLAYERS) {
             this.goLive();
             return;
         }
 
         const timedOut: Player[] = [];
         this.state.players.forEach((player) => {
-            if (!player.connected) return;
             player.waitingTicks += 1;
             if (player.waitingTicks > WAITING_TTL_TICKS) timedOut.push(player);
         });
@@ -586,6 +684,109 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             this.materializePellets(player);
         });
         console.log(`[phase] live — ${this.state.players.size} players`);
+    }
+
+    // Distance from (x, y) to the nearest OTHER snake's surface —
+    // ghosts included. Ghosts count because two of them materializing
+    // on the same spot would kill each other the tick grace ends.
+    private clearanceAt(x: number, y: number, self?: Player): number {
+        let min = Infinity;
+        this.state.players.forEach((p) => {
+            if (p === self) return;
+            const radius = describeSnakeFromScore(p.score).radius;
+            const check = (px: number, py: number) => {
+                const d = Math.hypot(px - x, py - y) - radius;
+                if (d < min) min = d;
+            };
+            check(p.x, p.y);
+            for (const t of p.tracers) check(t.x, t.y);
+        });
+        return min;
+    }
+
+    // A spawn point with room around it. Best-effort: in a crowded room
+    // we take the roomiest candidate rather than loop forever — the
+    // emergence gate below is what actually guarantees safety.
+    private findClearSpawn(): { x: number; y: number } {
+        let best = { x: 0, y: 0 };
+        let bestClearance = -Infinity;
+        for (let i = 0; i < SPAWN_TRIES; i += 1) {
+            const angle = Math.random() * 2 * Math.PI;
+            const dist = Math.random() * WORLD_RADIUS * 0.5;
+            const point = { x: Math.cos(angle) * dist, y: Math.sin(angle) * dist };
+            const clearance = this.clearanceAt(point.x, point.y);
+            if (clearance >= SPAWN_CLEARANCE) return point;
+            if (clearance > bestClearance) {
+                bestClearance = clearance;
+                best = point;
+            }
+        }
+        return best;
+    }
+
+    // The end of grace, gated on space. A snake whose timer has run out
+    // stays intangible until it has daylight around it: that is what
+    // makes spawn grace purely defensive. Sitting inside someone for
+    // EMERGENCE_HOLD_TICKS costs the ghost its position — it is moved
+    // to open field, so camping is a waste of time rather than a free
+    // kill. A ghost eats nothing and kills nothing meanwhile.
+    // The smallest gap between MY WHOLE BODY and anyone else's, surface
+    // to surface. Symmetric on purpose: the first version measured the
+    // ghost's HEAD against other bodies only, which let a ghost lay its
+    // body across your path and materialize under your head — you died
+    // to something you never touched.
+    private emergenceGap(me: Player): number {
+        const myRadius = describeSnakeFromScore(me.score).radius;
+        let min = Infinity;
+        const probe = (x: number, y: number) => {
+            const range = EMERGENCE_CLEARANCE + myRadius + this.maxSegmentRadius;
+            for (const seg of this.segmentGrid.queryNear(x, y, range)) {
+                if (seg.owner === me) continue;
+                const gap = Math.hypot(seg.x - x, seg.y - y) - myRadius - seg.radius;
+                if (gap < min) min = gap;
+            }
+        };
+        probe(me.x, me.y);
+        for (const t of me.tracers) probe(t.x, t.y);
+        // other ghosts are absent from the collision grid — heads only
+        // (they just spawned, their bodies are stubs)
+        this.state.players.forEach((p) => {
+            if (p === me || !p.graced) return;
+            const gap = Math.hypot(p.x - me.x, p.y - me.y)
+                - myRadius - describeSnakeFromScore(p.score).radius;
+            if (gap < min) min = gap;
+        });
+        return min;
+    }
+
+    private emergenceTick() {
+        this.state.players.forEach((player) => {
+            if (!player.graced || player.graceTicks > 0) return;
+            const gap = this.emergenceGap(player);
+            if (gap >= EMERGENCE_CLEARANCE) {
+                player.graced = false;
+                player.graceHoldTicks = 0;
+                player.materializedAt = Date.now();
+                player.materializedClearance = gap;
+                return;
+            }
+            player.graceHoldTicks += 1;
+            if (player.graceHoldTicks > EMERGENCE_HOLD_TICKS) {
+                const spot = this.findClearSpawn();
+                player.x = spot.x;
+                player.y = spot.y;
+                player.tracers.length = 0; // body re-unfolds from the new point
+                player.graceHoldTicks = 0;
+                // A relocation is a TELEPORT, and gen is how a client is
+                // told to throw away everything that assumes continuous
+                // motion. Without this bump it interpolates the snake
+                // ACROSS the map: rendered where it is not, lethal where
+                // it really is. (First in-place teleport in the code —
+                // death has always been "leave the room" until now.)
+                player.gen = (player.gen + 1) % 256;
+                console.log(`[emerge] ${player.sessionId} was stuck inside someone — relocated`);
+            }
+        });
     }
 
     // D73/D75 — materialize a deposit's pellet cut, map-wide: whole
@@ -633,6 +834,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
 
         this.state.players.delete(player.sessionId);
         this.inView.delete(player.sessionId);
+        this.playersInView.delete(player.sessionId);
         console.log(
             `[refund] ${player.sessionId} wallet=${player.wallet.slice(0, 4)}..` +
             ` ${lamports} lamports, nonce=${nonce} (${reason})` +
@@ -673,7 +875,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
                 if (p.graced || !p.connected) return;
                 if (Math.hypot(p.x - zone.x, p.y - zone.y) <= EXTRACT_RADIUS) victims.push(p);
             });
-            victims.forEach((p) => this.resolveDeath(p));
+            victims.forEach((p) => this.resolveDeath(p, { text: "caught by the extract bomb", kind: "bomb" }));
             this.closeZone();
             console.log(`[extract] zone detonated — ${victims.length} caught inside`);
             return;
@@ -731,6 +933,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
 
         this.state.players.delete(player.sessionId);
         this.inView.delete(player.sessionId);
+        this.playersInView.delete(player.sessionId);
         this.closeZone();
         console.log(
             `[extract] ${player.sessionId} wallet=${player.wallet.slice(0, 4)}..` +
@@ -782,42 +985,40 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         }
     }
 
-    // A1.9: the disconnect window ran out — the frozen snake becomes
-    // corpse orbs where it stood (strict conservation: its score
-    // returns to the arena) and the player is removed for good. Only
-    // the TICK calls this: the simulation is the single authority on
-    // death, the reconnection window just follows (manual reject).
-    private expireDisconnected(player: Player) {
-        // A4.2a: behind the launch gate nothing was ever at risk —
-        // leaving costs the rake, not the stake (refund, no corpse)
-        if (this.state.phase === "waiting") {
-            this.refundPlayer(player, "gone while waiting");
-        } else {
-            this.dropCorpse(player);
-            this.state.players.delete(player.sessionId);
-            this.inView.delete(player.sessionId);
-            console.log(`[expired] ${player.sessionId} — corpse dropped`);
-        }
-        this.pendingReconnections.get(player.sessionId)?.reject(new Error("disconnect window expired"));
-    }
-
     // D72 — in the paid arena, death is GAME OVER: the corpse drops
     // (value stays on the field, strict conservation) and the player
     // LEAVES the room. No auto-respawn — playing again = depositing
     // again. The client shows the loss and returns to the menu.
-    protected resolveDeath(player: Player) {
+    protected resolveDeath(
+        player: Player,
+        death: DeathInfo = { text: "unknown", kind: "unknown" },
+    ) {
         this.dropCorpse(player);
 
         const msg: DiedMessage = {
             score: player.score,
             lamports: lamportsFromScore(player.score).toString(),
+            kind: death.kind,
+            killedBy: death.killedBy,
         };
         this.clients.find((c) => c.sessionId === player.sessionId)?.send("died", msg);
 
         this.state.players.delete(player.sessionId);
         this.inView.delete(player.sessionId);
+        this.playersInView.delete(player.sessionId);
+        // DIAGNOSTIC: a kill landed by a snake that stopped being a
+        // ghost less than 2s ago is the fingerprint of a grace exploit.
+        // Print the age and the daylight it emerged with.
+        let suspicion = "";
+        const age = death.killer ? Date.now() - death.killer.materializedAt : Infinity;
+        if (death.killer && death.killer.materializedAt > 0 && age < 2000) {
+            suspicion =
+                ` [!! killer materialized ${age}ms ago with` +
+                ` ${death.killer.materializedClearance.toFixed(0)}px of clearance]`;
+        }
         console.log(
-            `[death] ${player.sessionId} — ${player.score.toFixed(1)} score left on the field`,
+            `[death] ${player.name} (${player.sessionId}) — ${death.text}` +
+            ` — ${player.score.toFixed(1)} score left on the field${suspicion}`,
         );
     }
 
@@ -874,7 +1075,10 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         const player = new Player();
         player.sessionId = client.sessionId;
         player.wallet = auth.wallet; // session <-> wallet binding (A3.1)
-        player.name = options.name || "anonymous";
+        // Clamped: the name is client-chosen and now travels into other
+        // players' end screens. Length is the part the server owes
+        // everyone (the client renders with textContent, never HTML).
+        player.name = String(options.name ?? "").trim().slice(0, 24) || "anonymous";
         // A3.2 — variable buy-in is real: the verified deposit bought
         // this starting score
         player.score = auth.spawnScore;
@@ -885,11 +1089,12 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         // the ledger now; materializePellets() injects the rest.
         player.pendingPellets = auth.pelletScore;
         this.injectedScore += auth.spawnScore;
-        // random spawn inside half the world radius
-        const spawnAngle = Math.random() * 2 * Math.PI;
-        const spawnDist = Math.random() * WORLD_RADIUS * 0.5;
-        player.x = Math.cos(spawnAngle) * spawnDist;
-        player.y = Math.sin(spawnAngle) * spawnDist;
+        // spawn inside half the world radius, in the clearest spot we
+        // can find: landing on top of someone is how grace turned into
+        // a weapon (2026-08-05)
+        const spot = this.findClearSpawn();
+        player.x = spot.x;
+        player.y = spot.y;
         // tracers start empty: the grow loop in tick() unfolds the
         // body from the spawn point over the first seconds
         this.state.players.set(client.sessionId, player);
@@ -899,53 +1104,38 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         // A4.2a — tell the lobby this wallet's deposit really spawned
         // (fulfills its ready-check membership, server truth)
         if (this.roomName === ARENA_ROOM) notifyDepositorJoined(auth.wallet);
-        // AoI: this client only ever receives what its view contains
+        // AoI: this client only ever receives what its view contains.
+        // Seed it with its own snake — updateViews only runs every
+        // AOI_UPDATE_TICKS, and until then the client would not even
+        // see itself (players are @view()-filtered since A4.6c).
         client.view = new StateView();
+        client.view.add(player);
         console.log(
             `[join] ${client.sessionId} name=${player.name}` +
             ` wallet=${auth.wallet.slice(0, 4)}..${auth.wallet.slice(-4)} stake=${options.stake}`,
         );
     }
 
-    // A1.9: disconnection freezes the snake — gray, harmless, out of
-    // the collision world — and arms a countdown IN THE SIMULATION
-    // (disconnectTicks). Come back before it runs out (network blip)
-    // and you resume; otherwise the tick turns the snake into corpse
-    // orbs and rejects this window ("manual" mode: no second timer
-    // that could disagree with the simulation).
     async onLeave(client: Client) {
         const player = this.state.players.get(client.sessionId);
         if (!player) return;
 
-        player.connected = false;
-        player.wantsBoost = false; // stale intent must not survive
-        player.disconnectTicks = DISCONNECT_TTL_TICKS;
-        // one-shot body snapshot for late joiners (see Player field)
-        for (const t of player.tracers) {
-            player.frozenBody.push(t.x, t.y);
-        }
-        console.log(`[leave] ${client.sessionId} — ${DISCONNECT_TTL_TICKS} ticks to reconnect`);
-
-        try {
-            // resolves with the NEW client if the player comes back
-            // in time; rejected by expireDisconnected() otherwise
-            const reconnection = this.allowReconnection(client, "manual");
-            this.pendingReconnections.set(client.sessionId, reconnection);
-            const newClient = await reconnection;
-            player.connected = true;
-            player.frozenBody.clear(); // moving again: back to local regrow
-            // the returning socket is brand new: fresh AoI view, and
-            // clearing inView makes the next diff resubscribe the
-            // whole bubble
-            newClient.view = new StateView();
-            this.inView.delete(client.sessionId);
-            console.log(`[rejoin] ${client.sessionId}`);
-        } catch {
-            // the simulation already resolved this snake's fate
-            // (corpse + removal in expireDisconnected) — nothing to do
-            console.log(`[gone] ${client.sessionId}`);
-        } finally {
-            this.pendingReconnections.delete(client.sessionId);
+        // Anti rage-quit (user call, 2026-08-06 — amends A1.9): leaving
+        // IS dying, on the spot. The frozen-carrion window looked fair
+        // on paper but played as an invulnerability flash: killing the
+        // socket froze you out of danger, and claiming the body needed
+        // a physical touch within 5s. Now the corpse drops immediately
+        // (strict conservation: the value returns to the field) and a
+        // genuine network blip costs the run — the assumed price.
+        if (this.state.phase === "waiting") {
+            // behind the launch gate nothing was ever at risk — leaving
+            // costs the rake, not the stake
+            this.refundPlayer(player, "left while waiting");
+        } else {
+            this.resolveDeath(player, {
+                text: "disconnected — instant death (anti rage-quit)",
+                kind: "disconnect",
+            });
         }
     }
 

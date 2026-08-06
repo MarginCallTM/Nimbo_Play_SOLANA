@@ -30,6 +30,11 @@ import {
 
 const BOT_NAMES = ["nibbler", "coily", "wormy", "noodle", "slinky", "zigzag", "loopy", "twisty"];
 
+// Sparring override (2026-08-05): DEMO_BOTS=0 empties the tutorial
+// population so a human and ONE scripted sparring bot can rehearse a
+// clean 1v1 (A4.6 adversarial testing). Unset = the tutorial default.
+const BOT_COUNT = Number(process.env.DEMO_BOTS ?? DEMO_BOT_COUNT);
+
 export class DemoRoom extends ArenaRoom {
     // Bots by sessionId, with their target commitment (the loadtest
     // lesson: re-picking "nearest pellet" every tick orbits midpoints).
@@ -48,7 +53,40 @@ export class DemoRoom extends ArenaRoom {
 
     override onCreate(options: JoinOptions) {
         super.onCreate(options);
-        console.log(`[demo] room up — ${DEMO_BOT_COUNT} bots, ${DEMO_FOOD_COUNT} fake pellets`);
+        // populate BEFORE the first join: a fresh room's first player
+        // arrives ahead of the first tick — without this they would
+        // spawn into an empty world (and anchored spawn needs a bot)
+        this.maintainBots();
+        console.log(`[demo] room up — ${BOT_COUNT} bots, ${DEMO_FOOD_COUNT} fake pellets`);
+    }
+
+    // Tutorial rule (2026-08-05, after the "bots disparus" report):
+    // spawn NEAR the action, never in a desert. 6 bots on a radius-
+    // 3000 disc = ~5% of the map on screen — a random spawn lands out
+    // of sight of everyone almost every time (measured: nearest bot
+    // 1000-2500px away). The demo exists to SHOW the game; anchor
+    // every human spawn within sight of a bot. Demo-only: in the paid
+    // arena a chosen spawn point would be an information/positioning
+    // edge (D72 keeps the two rooms apart).
+    override onJoin(client: Parameters<ArenaRoom["onJoin"]>[0], options: JoinOptions, auth: AuthResult) {
+        super.onJoin(client, options, auth);
+        const player = this.state.players.get(client.sessionId);
+        const anchors = [...this.bots.keys()]
+            .map((id) => this.state.players.get(id))
+            .filter((b): b is Player => b !== undefined);
+        if (!player || anchors.length === 0) return;
+        const anchor = anchors[Math.floor(Math.random() * anchors.length)];
+        const a = Math.random() * 2 * Math.PI;
+        const d = 400 + Math.random() * 300; // in sight, not on top
+        player.x = anchor.x + Math.cos(a) * d;
+        player.y = anchor.y + Math.sin(a) * d;
+        // stay well inside the lethal border
+        const r = Math.hypot(player.x, player.y);
+        const max = WORLD_RADIUS * 0.9;
+        if (r > max) {
+            player.x *= max / r;
+            player.y *= max / r;
+        }
     }
 
     override tick() {
@@ -77,7 +115,7 @@ export class DemoRoom extends ArenaRoom {
         for (const id of this.bots.keys()) {
             if (!this.state.players.has(id)) this.bots.delete(id);
         }
-        while (this.bots.size < DEMO_BOT_COUNT) {
+        while (this.bots.size < BOT_COUNT) {
             const bot = new Player();
             bot.sessionId = `bot-${this.botCounter++}`;
             bot.name = BOT_NAMES[this.botCounter % BOT_NAMES.length];
@@ -114,7 +152,7 @@ export class DemoRoom extends ArenaRoom {
             let threat: Player | undefined;
             let threatD = Infinity;
             this.state.players.forEach((p) => {
-                if (p === me || p.graced || !p.connected) return;
+                if (p === me || p.graced) return;
                 const d = (p.x - me.x) ** 2 + (p.y - me.y) ** 2;
                 if (d < threatD) {
                     threatD = d;

@@ -86,8 +86,12 @@ const server = defineServer({
 // listen() is async: the WebSocket transport only exists once it
 // resolves — anything touching the transport (simulateLatency!) must
 // come AFTER the await, or it crashes on a half-built server.
-await server.listen(2567);
-console.log("arena server listening on ws://localhost:2567");
+// PORT lets a second instance run alongside yours (a sparring sandbox
+// next to the session you are playing) — clients follow with
+// SERVER_URL / VITE_SERVER_URL.
+const PORT = Number(process.env.PORT ?? 2567);
+await server.listen(PORT);
+console.log(`arena server listening on ws://localhost:${PORT}`);
 
 // Artificial latency for netcode testing (A1.5+): localhost has ~0ms
 // RTT, so prediction/interpolation can only be SEEN with fake lag.

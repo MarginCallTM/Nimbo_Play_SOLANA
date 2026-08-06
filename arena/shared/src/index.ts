@@ -6,7 +6,14 @@
 // Bumped on every breaking protocol change; the server rejects clients
 // that present a different version (stale browser tabs after a deploy).
 // v2: SIWS authentication required to join (A3.1).
-export const PROTOCOL_VERSION = 6; // 6 = launch gate: waiting->live phase + refunded message (A4.2a)
+// 7 = players are AoI-filtered (A4.6c): a client no longer receives
+// the whole roster, only what its bubble can see. Not an additive
+// change — an older client would silently believe the world is empty.
+// 8 = the "died" message names the killer (A4.6d).
+// 9 = AoI body seeding + no-boost-while-graced (A4.6f): the server now
+// sends a one-shot "body" message on bubble entry, and boost prediction
+// must gate on graced — an old client renders phantom-hitbox worlds.
+export const PROTOCOL_VERSION = 9;
 
 export * from "./siws";
 export * from "./arena-chain";
@@ -90,18 +97,22 @@ export const RECYCLE_RATIO = 0.3;
 export const SERVER_TICK_RATE = 30;              // simulation steps per second
 export const BROADCAST_RATE = 20;                // state patches per second
 export const TICK_DT = 60 / SERVER_TICK_RATE;    // "60fps frames" per tick — CONSTANT
-export const SPAWN_GRACE_TICKS = SERVER_TICK_RATE * 3; // 3s intangible after spawn
-// Disconnect rule (user, 2026-07-24): a disconnected snake freezes,
-// gray and HARMLESS (out of the collision world entirely), and turns
-// into corpse orbs where it stood after this window. Long enough to
-// survive a network blip, short enough that rage-quitting is never a
-// strategy — the money always returns to the arena.
-export const DISCONNECT_TTL_TICKS = SERVER_TICK_RATE * 5; // 5s then corpse
+// 1.5s intangible after spawn (2026-08-06, was 3s): spawn protection
+// is mostly the guaranteed clearance around a fresh spawn, not the
+// timer — and every extra graced second is flight time for a
+// translucent snake charging someone (the "charging ghost" report).
+export const SPAWN_GRACE_TICKS = Math.round(SERVER_TICK_RATE * 1.5);
+// Disconnect rule (user, 2026-08-06 — replaces the 2026-07-24 frozen-
+// carrion window): disconnecting IS dying, instantly. The corpse drops
+// where the snake stood, so rage-quitting hands your value to the
+// field instead of freezing you out of danger. A genuine network blip
+// costs the run — the assumed price of making the exploit impossible.
 
 // A snake that has NEVER received an input from its client does not
 // move at all (2026-08-03 bug: a crashed client's snake auto-marched
 // its 0.5 SOL stake into the lethal border). Past this window the
-// client is kicked — the A1.9 disconnect path then takes over.
+// client is kicked — the anti rage-quit rule then settles the snake
+// on the spot (corpse in a live room, refund behind the launch gate).
 export const FIRST_INPUT_TTL_TICKS = SERVER_TICK_RATE * 30; // 30s to wake up
 
 // --- Launch gate (A4.2a / D77) --------------------------------------
@@ -182,9 +193,25 @@ export interface ExtractedMessage {
 // zone detonation). In the paid arena death is GAME OVER: no auto-
 // respawn (D72 — playing again = depositing again). The lamports are
 // what your corpse left on the field — the "moins-value".
+// How a run ended. The server knows it at the exact moment it sends
+// "died"; before A4.6d the answer only existed in a server log line,
+// so the player had to read a terminal to learn what just happened.
+export type DeathKind =
+    | "border"    // ran into the world edge
+    | "collision" // ran into someone's body
+    | "head-on"   // both heads met in the same tick: both died
+    | "disconnect" // the socket closed: instant death (anti rage-quit).
+                   // Sent into the void — that client is gone — but the
+                   // kind keeps logs and future killfeeds honest.
+    | "bomb"      // still inside the extract zone when it expired
+    | "unknown";
+
 export interface DiedMessage {
     score: number;    // value lost, in game units
     lamports: string; // same, in lamports (display: what it was worth)
+    kind: DeathKind;
+    killedBy?: string; // killer's display NAME (never the wallet), when
+                       // there is one — absent for border and bomb
 }
 
 // Server -> client, once, if the launch gate gives up (no partner

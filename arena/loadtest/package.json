@@ -5,6 +5,7 @@
     "type": "module",
     "scripts": {
         "bots": "tsx src/bots.ts",
+        "spar": "tsx src/sparring.ts",
         "check": "tsc --noEmit"
     },
     "dependencies": {
