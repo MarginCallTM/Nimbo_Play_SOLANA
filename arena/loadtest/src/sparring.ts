@@ -173,19 +173,36 @@ const DODGE_OFFLINE_MS = 3000;
 // bot's wallet through the settlement service.
 const WALLETS_DIR = process.env.SPAR_WALLETS;
 const PAID = WALLETS_DIR !== undefined;
-const STAKE_SOL = Number(process.env.SPAR_STAKE ?? 0.05);
+// SPAR_STAKE accepts "0.1" (fixed) or "0.1-0.5" (uniform random per
+// LIFE): the variable buy-in is part of what the red-team simulates —
+// a mixed-size population, big spawns paying for big power.
+const STAKE_SPEC = process.env.SPAR_STAKE ?? "0.05";
+const [STAKE_MIN, STAKE_MAX] = (() => {
+    const parts = STAKE_SPEC.split("-").map(Number);
+    const min = parts[0];
+    const max = parts.length > 1 ? parts[1] : parts[0];
+    if (!(min > 0) || !(max >= min)) {
+        console.error(`bad SPAR_STAKE "${STAKE_SPEC}" — expected "0.1" or "0.1-0.5"`);
+        process.exit(1);
+    }
+    return [min, max];
+})();
+// rounded to whole SOL cents: readable in logs and explorers
+const rollStake = () =>
+    Math.round((STAKE_MIN + Math.random() * (STAKE_MAX - STAKE_MIN)) * 100) / 100;
 const RPC_URL = process.env.RPC_URL ?? "https://api.devnet.solana.com";
 const AUTH_DOMAIN = process.env.AUTH_DOMAIN ?? "localhost:5173";
 const chain = PAID ? new Connection(RPC_URL, "confirmed") : undefined;
 
 // How long the bot stays dead before rejoining. FREE: short (the human
-// is waiting for a partner). PAID: 3-4 min (user protocol) — a death
-// must leave a hole; the pellet supply between respawns IS what the
-// red-team run measures. Jitter breaks respawn-wave synchronization.
+// is waiting for a partner). PAID: ~2 min (user setting 2026-08-06,
+// was 3-4) — a death must leave a hole; the pellet supply between
+// respawns IS what the red-team run measures. The small jitter breaks
+// respawn-wave synchronization.
 function respawnDelay(): number {
     const forced = process.env.SPAR_RESPAWN_MS;
     if (forced !== undefined) return Number(forced);
-    return PAID ? 180_000 + Math.random() * 60_000 : 2000;
+    return PAID ? 120_000 + Math.random() * 20_000 : 2000;
 }
 
 // racoon tuning: anyone closer than FLEE_PX breaks the farming (run
@@ -227,6 +244,27 @@ interface NetFood { x: number; y: number; value: number }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// A public devnet RPC rate-limits (429) and times out under a squad of
+// depositing bots — that is normal weather, not a reason to lose a
+// run. Retry with exponential backoff + jitter; give up loudly after
+// the last attempt and let the caller decide (a bot skips this life,
+// the squad plays on).
+async function rpcRetry<T>(what: string, fn: () => Promise<T>, tries = 5): Promise<T> {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= tries; attempt += 1) {
+        try {
+            return await fn();
+        } catch (err) {
+            lastErr = err;
+            if (attempt === tries) break;
+            const wait = Math.round(800 * 2 ** (attempt - 1) * (1 + Math.random()));
+            console.log(`[rpc] ${what} failed (${(err as Error).message}) — retry ${attempt}/${tries - 1} in ${wait}ms`);
+            await sleep(wait);
+        }
+    }
+    throw lastErr;
+}
+
 // --- money-mode helpers (mirror of client/src/wallet.ts, headless) --
 function loadWallet(walletIdx: number): Keypair {
     const file = path.join(WALLETS_DIR!, `bot-${String(walletIdx + 1).padStart(2, "0")}.json`);
@@ -263,7 +301,7 @@ async function makeToken(keys: Keypair): Promise<string> {
 
 // The join deposit, self-signed and self-sent. The server re-reads the
 // EXACT lamports from the confirmed tx — nothing here is trusted.
-async function sendDeposit(keys: Keypair): Promise<string> {
+async function sendDeposit(keys: Keypair, stakeSol: number): Promise<string> {
     const res = await fetch(`${SERVER_URL}/round`);
     if (!res.ok) {
         throw new Error(`round info failed (${res.status}) — server in free-only mode? set ROUND_ID`);
@@ -274,10 +312,15 @@ async function sendDeposit(keys: Keypair): Promise<string> {
             player: keys.publicKey,
             roundId: BigInt(round.roundId),
             treasury: new PublicKey(round.treasury),
-            stakeLamports: BigInt(Math.round(STAKE_SOL * LAMPORTS_PER_SOL)),
+            stakeLamports: BigInt(Math.round(stakeSol * LAMPORTS_PER_SOL)),
         }),
     );
-    return await sendAndConfirmTransaction(chain!, tx, [keys], { commitment: "confirmed" });
+    // NB: a retry re-signs with a fresh blockhash (sendAndConfirm does
+    // it internally), so a timed-out attempt cannot double-spend — the
+    // first tx either landed (and the second fails as duplicate) or
+    // never existed.
+    return await rpcRetry("join deposit", () =>
+        sendAndConfirmTransaction(chain!, tx, [keys], { commitment: "confirmed" }));
 }
 
 // Turning-radius geometry (A1.10 lesson): a point inside one of the
@@ -313,27 +356,28 @@ async function run(BEHAVIOR: Behavior, slot: number, walletIdx: number) {
         // nonces and deposit signatures are single-use by design, so a
         // respawn repeats the whole ritual, exactly like a human would.
         const keys = loadWallet(walletIdx);
-        const balance = await chain!.getBalance(keys.publicKey);
-        const need = Math.round((STAKE_SOL + 0.005) * LAMPORTS_PER_SOL); // stake + fee headroom
+        const stakeSol = rollStake(); // fresh roll every life
+        const balance = await rpcRetry("getBalance", () => chain!.getBalance(keys.publicKey));
+        const need = Math.round((stakeSol + 0.005) * LAMPORTS_PER_SOL); // stake + fee headroom
         if (balance < need) {
             console.log(
                 `[spar:${tag}] wallet ${keys.publicKey.toBase58().slice(0, 4)}..` +
-                ` is dry (◎${(balance / LAMPORTS_PER_SOL).toFixed(4)} < stake+fees) — RETIRING.` +
+                ` is dry (◎${(balance / LAMPORTS_PER_SOL).toFixed(4)} < ◎${stakeSol}+fees) — RETIRING.` +
                 ` The economy defeated this bot; refill with npm run fleet if that wasn't the point.`,
             );
             return;
         }
         client.auth.token = await makeToken(keys);
-        const txSig = await sendDeposit(keys);
+        const txSig = await sendDeposit(keys, stakeSol);
         console.log(
-            `[spar:${tag}] deposited ◎${STAKE_SOL} (${txSig.slice(0, 8)}…,` +
-            ` wallet ◎${((balance - STAKE_SOL * LAMPORTS_PER_SOL) / LAMPORTS_PER_SOL).toFixed(4)} left)` +
+            `[spar:${tag}] deposited ◎${stakeSol} (${txSig.slice(0, 8)}…,` +
+            ` wallet ◎${((balance - stakeSol * LAMPORTS_PER_SOL) / LAMPORTS_PER_SOL).toFixed(4)} left)` +
             ` — joining the PAID arena`,
         );
         room = await client.joinOrCreate(ARENA_ROOM, {
             protocol: PROTOCOL_VERSION,
             name: `${SPAR_PREFIX}${BEHAVIOR}${slot}`,
-            stake: STAKE_SOL,
+            stake: stakeSol,
             txSig,
         });
     } else {
@@ -929,9 +973,13 @@ async function run(BEHAVIOR: Behavior, slot: number, walletIdx: number) {
 }
 
 function fatal(msg: string): never {
-    // "fetch failed" is node-speak for "nobody is listening" — spell it
-    // out, it is by far the most common way to run this script wrong.
-    if (/fetch failed|ECONNREFUSED/.test(msg)) {
+    // "fetch failed" is node-speak for "the connection never happened"
+    // — say WHICH connection, the two failure modes have nothing in
+    // common (2026-08-06: an RPC outage wore the "start a server"
+    // hint and sent the user debugging the wrong machine).
+    if (/balance|blockhash|transaction|airdrop/i.test(msg)) {
+        console.error(`  the Solana RPC (${RPC_URL}) is unreachable — check network/VPN, then retry`);
+    } else if (/fetch failed|ECONNREFUSED/.test(msg)) {
         console.error(`  no arena server answering at ${SERVER_URL}`);
         console.error(`  start one first:  cd arena && DEMO_BOTS=0 npm run dev:server`);
     }
@@ -941,11 +989,28 @@ function fatal(msg: string): never {
 // Launch the roster. Joins are staggered: a burst of simultaneous
 // joinOrCreate calls can race into separate rooms, and a squad split
 // across two rooms spars with nobody.
+// A red-team run lasts hours; ONE bad RPC promise must never take the
+// squad down with it (2026-08-06: a devnet connect-timeout killed 8
+// live bots mid-run, and their stakes with them). Node's default is to
+// exit on an unhandled rejection — override it: log, keep playing.
+process.on("unhandledRejection", (reason) => {
+    console.error(`[spar] unhandled rejection (ignored): ${String(reason)}`);
+});
+process.on("uncaughtException", (err) => {
+    console.error(`[spar] uncaught exception (ignored): ${err.message}`);
+});
+
 (async () => {
     console.log(
         `[spar] squad: ${ROSTER.join(", ")} — ${SERVER_URL}` +
-        (PAID ? ` — MONEY MODE (◎${STAKE_SOL}/life, wallets in ${WALLETS_DIR})` : ""),
+        (PAID ? ` — MONEY MODE (◎${STAKE_SPEC}/life, wallets in ${WALLETS_DIR})` : ""),
     );
+    if (PAID && ROSTER.length > 0) {
+        console.log(
+            `[spar] ${ROSTER.length} bots -> the fleet needs ${ROSTER.length} wallets` +
+            ` (npm run fleet ${ROSTER.length})`,
+        );
+    }
     const counters = new Map<Behavior, number>();
     // walletIdx = position in the roster: bot-01.json goes to the first
     // bot, whatever its behavior — the fleet is behavior-agnostic
@@ -958,8 +1023,14 @@ function fatal(msg: string): never {
         } catch (err) {
             const msg = (err as Error).message;
             console.error(`[spar:${behavior}#${slot}] failed: ${msg}`);
-            fatal(msg); // the first join failing means none will work
+            // Money mode: a squadmate failing (RPC hiccup, dry wallet,
+            // missing keypair) must not abort a run whose other bots
+            // already paid to be here. Free mode keeps the old rule —
+            // the first join failing means the setup is wrong.
+            if (!PAID) fatal(msg);
         }
-        await sleep(250);
+        // paid joins hit the RPC hard (balance + tx + confirm): give
+        // the public devnet endpoint room to breathe, it 429s otherwise
+        await sleep(PAID ? 1500 : 250);
     }
 })();

@@ -27,6 +27,7 @@ node_modules
 CLAUDE.md
 TODO.txt
 DECISIONS.md
+RedTeam.txt
 
 # Runtime data: settlement outbox (claims/acks ledger, not code)
 arena/server/settlement-outbox.jsonl
