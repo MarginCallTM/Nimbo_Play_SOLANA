@@ -11,6 +11,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
 import {
     ARENA_PROGRAM_ID,
+    MIN_STAKE_LAMPORTS,
     decodeJoinStake,
     decodeRoundAccount,
     isJoinData,
@@ -19,14 +20,17 @@ import {
     splitStake,
     type RoundInfoResponse,
 } from "@nimbo/shared";
+import { consume, isConsumed, release } from "./deposit-log";
 
 const RPC_URL = process.env.RPC_URL ?? "https://api.devnet.solana.com";
 const connection = new Connection(RPC_URL, "confirmed");
 
-// A deposit older than this is refused even if unseen: the consumed-
-// signature set below lives in memory, so a server restart forgets it —
-// this window bounds how far back a replay could reach. (The real fix,
-// persistence/indexer, is A3.4.)
+// A deposit older than this is refused even if unseen. It used to be
+// the ONLY backstop behind an in-memory Set (a restart forgot every
+// consumed signature, so anything from the last 10 minutes replayed for
+// a free second spawn). deposit-log.ts now persists the set, and this
+// window is what lets that file stay bounded rather than what stops the
+// replay. Keep the two RETENTION values in step.
 const MAX_DEPOSIT_AGE_S = 10 * 60;
 
 interface CurrentRound {
@@ -39,9 +43,31 @@ interface CurrentRound {
 }
 let current: CurrentRound | undefined;
 
-// Deposit signatures already exchanged for a spawn. In-memory like the
-// SIWS nonces: single process assumption, bounded by MAX_DEPOSIT_AGE_S.
-const consumedSigs = new Set<string>();
+// A rejected deposit is one of two very different things, and treating
+// them alike was itself a flaw.
+//   TRANSIENT — the tx is real and the player paid, we just could not
+//     see it yet (RPC down, not propagated). The signature MUST be
+//     released so the same, already-paid tx buys the retry.
+//   PERMANENT — the tx will never be acceptable (wrong round, wrong
+//     wallet, below the entry floor, too old, not a join at all).
+//     Releasing it lets an attacker hammer the door with the same
+//     material forever, and — once under-minimum deposits are refunded
+//     — lets the same dust tx mint a refund claim on every retry.
+// The default is PERMANENT: a new rejection reason must opt IN to being
+// retryable, never inherit it by accident.
+export class DepositRejected extends Error {
+    constructor(
+        message: string,
+        readonly transient = false,
+        // Set when the deposit was valid in every respect EXCEPT that it
+        // sat below the entry floor — the caller owes this player their
+        // money back (D80 rails), and owes it exactly once.
+        readonly refundableLamports?: bigint,
+    ) {
+        super(message);
+        this.name = "DepositRejected";
+    }
+}
 
 // Called once at boot. No ROUND_ID env = free-only mode: the server
 // runs, but paid joins are refused (dev convenience, never silent —
@@ -112,22 +138,34 @@ export interface DepositResult {
 // Verify a claimed deposit and convert it into spawn + pellet scores.
 // Throws with a reason on ANY failure — the caller rejects the join.
 export async function verifyDeposit(txSig: string, wallet: string): Promise<DepositResult> {
-    if (!current) throw new Error("no active round (server is in free-only mode)");
+    if (!current) {
+        throw new DepositRejected("no active round (server is in free-only mode)");
+    }
+    // Signature shape is checked before anything touches the RPC or the
+    // durable log: an oversized or non-base58 string is a probe, and it
+    // must not get to write a line to disk.
+    if (typeof txSig !== "string" || txSig.length < 64 || txSig.length > 96) {
+        throw new DepositRejected("malformed signature");
+    }
 
     // Reserve the signature BEFORE the async RPC work: two concurrent
     // joins racing on the same sig must not both pass the membership
-    // check while the first is still fetching. Released on failure.
-    if (consumedSigs.has(txSig)) throw new Error("deposit already used");
-    consumedSigs.add(txSig);
+    // check while the first is still fetching. Durable since 2026-08-07
+    // (deposit-log.ts) — a restart used to forget this and re-open every
+    // recent deposit for a free second spawn.
+    if (isConsumed(txSig)) throw new DepositRejected("deposit already used");
+    consume(txSig);
     try {
         const tx = await connection.getTransaction(txSig, {
             commitment: "confirmed",
             maxSupportedTransactionVersion: 0,
         });
-        if (!tx) throw new Error("deposit tx not found on chain");
-        if (tx.meta?.err) throw new Error("deposit tx failed on-chain");
+        // Not found is the one genuinely ambiguous answer: the tx may
+        // simply not have propagated to this RPC node yet.
+        if (!tx) throw new DepositRejected("deposit tx not found on chain", true);
+        if (tx.meta?.err) throw new DepositRejected("deposit tx failed on-chain");
         if (!tx.blockTime || Date.now() / 1000 - tx.blockTime > MAX_DEPOSIT_AGE_S) {
-            throw new Error("deposit tx too old");
+            throw new DepositRejected("deposit tx too old");
         }
 
         // Walk the instructions looking for OUR program's join. The
@@ -147,19 +185,33 @@ export async function verifyDeposit(txSig: string, wallet: string): Promise<Depo
             // initialize_round is PERMISSIONLESS: a deposit into some
             // attacker-created round must buy nothing here.
             if (!round?.equals(current.pda)) {
-                throw new Error("deposit went to a different round");
+                throw new DepositRejected("deposit went to a different round");
             }
             // THE binding check (why SIWS exists): the depositor must
             // be the wallet this session proved it owns. Signatures
             // are public — anyone can present anyone's txSig.
             if (player?.toBase58() !== wallet) {
-                throw new Error("deposit was made by a different wallet");
+                throw new DepositRejected("deposit was made by a different wallet");
             }
 
             // The truth about the amount comes from the TX BYTES, not
             // from anything the client claimed. The program succeeded,
             // so the split math below matches what actually moved.
             const stake = decodeJoinStake(data);
+            // A4.6 (2026-08-07) — the entry floor. The program accepts
+            // any stake > 0, and score 0 is the smallest, fastest-turning
+            // snake there is: a 1-lamport join is a free kamikaze against
+            // a whale. The deposit is real, so this rejection OWES the
+            // player a refund; the caller pays it on the D80 rails, once,
+            // guaranteed by the signature staying permanently consumed.
+            if (stake < MIN_STAKE_LAMPORTS) {
+                const { spawnLamports, pelletLamports } = splitStake(stake, current.rakeBps);
+                throw new DepositRejected(
+                    `stake ${stake} below the ${MIN_STAKE_LAMPORTS} lamport floor`,
+                    false,
+                    spawnLamports + pelletLamports, // everything but the on-chain rake
+                );
+            }
             const { pelletLamports, spawnLamports } = splitStake(stake, current.rakeBps);
             const result: DepositResult = {
                 spawnScore: scoreFromLamports(spawnLamports),
@@ -172,10 +224,19 @@ export async function verifyDeposit(txSig: string, wallet: string): Promise<Depo
             );
             return result;
         }
-        throw new Error("tx contains no arena join instruction");
+        throw new DepositRejected("tx contains no arena join instruction");
     } catch (err) {
-        consumedSigs.delete(txSig); // failed claims don't burn the sig
-        throw err;
+        // Only a TRANSIENT failure gives the signature back. Anything
+        // else — wrong round, wrong wallet, under the floor, not a join
+        // — is final, and releasing it would hand an attacker unlimited
+        // retries with the same material (and, for under-floor dust, a
+        // fresh refund claim on every attempt).
+        const rejection = err instanceof DepositRejected ? err : undefined;
+        if (!rejection || rejection.transient) release(txSig);
+        // An unexpected error (RPC threw something we don't model) is
+        // treated as transient by the line above — the player paid, and
+        // our plumbing failing is not their fault.
+        throw rejection ?? new DepositRejected((err as Error).message, true);
     }
 }
 
@@ -183,5 +244,5 @@ export async function verifyDeposit(txSig: string, wallet: string): Promise<Depo
 // deposit (2026-08-03 flaw): releasing the signature lets the player
 // retry with the same, already-paid tx.
 export function releaseDeposit(txSig: string): void {
-    consumedSigs.delete(txSig);
+    release(txSig);
 }

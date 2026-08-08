@@ -41,11 +41,15 @@
 //            the nearest snake and ORBIT it on a tightening ring, the
 //            slither constriction play. Tests the buy-in curve's core
 //            promise: does size actually convert into kills?
-//   camping  own the extract point: orbit the zone and intercept
-//            ANYTHING that comes within guard range, bots included —
-//            the toll-booth strategy the D79 kill-window invites.
-//            Tests whether extraction stays playable under permanent
-//            zone control
+//   camping  the SCAVENGER: never leaves the extract point (orbits
+//            just outside it, on a leash), and flips to apex-grade
+//            hunting the moment someone approaches — DENYING the
+//            cash-out (interposing between the mark and the zone)
+//            until the mark channels or closes, then cutting it off.
+//            v1 charged head-on and died 4/4 lives without regulating
+//            anyone (user observation 2026-08-06); v2 shares the apex
+//            toolkit. Tests whether extraction stays playable under
+//            permanent zone control
 //   apex     the PIRATE bot (red-team, user ask 2026-08-06): a hunt
 //            with everything a human cannot sustain — perfect trail
 //            memory of every snake in the bubble (seeded by the AoI
@@ -220,9 +224,11 @@ const CIRCLE_ENGAGE_PX = 550;
 const CIRCLE_LEAD_RAD = 0.5;
 
 // camping tuning: everything inside GUARD of the ZONE (not of the bot)
-// is an intruder — the booth charges by proximity to the money, not to
-// the guard
+// is a mark — the booth charges by proximity to the money, not to the
+// guard. LEASH caps how far a chase may drag it from its post: a
+// scavenger that wanders off has stopped being one.
 const CAMP_GUARD_PX = 800;
+const CAMP_LEASH_PX = 1100;
 
 // apex tuning: trail sampling step (px between stored head samples),
 // extra clearance beyond the two radii when rejecting a heading, and
@@ -520,6 +526,76 @@ async function run(BEHAVIOR: Behavior, slot: number, walletIdx: number) {
         return best;
     }
 
+    // --- predator toolkit (apex + camping's hunt mode) --------------
+    // Perfect trail memory: every visible enemy's body, rebuilt from
+    // the AoI "body" seed plus observed head samples. This is what
+    // separates a bot that never clips a body from one that dies to
+    // the flank it could not see.
+    function rememberTrails() {
+        for (const [id, p] of others) {
+            let tr = trails.get(id);
+            if (!tr) { tr = []; trails.set(id, tr); }
+            const last = tr[tr.length - 1];
+            if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= APEX_SAMPLE_PX) {
+                tr.push({ x: p.x, y: p.y });
+            }
+            const bodyLen = describeSnakeFromScore(p.score).length * SNAKE_SPACING;
+            const maxPts = Math.ceil(bodyLen / APEX_SAMPLE_PX) + 4;
+            while (tr.length > maxPts) tr.shift();
+        }
+    }
+
+    // Worst surface-to-surface clearance along a candidate heading,
+    // sampled at three horizons. Negative = that heading kills us.
+    function clearanceOf(self: NetPlayer, angle: number, speed: number, myR: number): number {
+        let minClear = Infinity;
+        for (const step of [10, 22, 34]) { // frames ahead
+            const px = self.x + Math.cos(angle) * speed * step;
+            const py = self.y + Math.sin(angle) * speed * step;
+            const borderClear = WORLD_RADIUS - myR - Math.hypot(px, py);
+            if (borderClear < minClear) minClear = borderClear;
+            for (const [id, p] of others) {
+                const reach = describeSnakeFromScore(p.score).radius + myR + APEX_MARGIN_PX;
+                const dh = Math.hypot(p.x - px, p.y - py) - reach;
+                if (dh < minClear) minClear = dh;
+                const tr = trails.get(id);
+                if (tr) {
+                    for (const pt of tr) {
+                        const d = Math.hypot(pt.x - px, pt.y - py) - reach;
+                        if (d < minClear) minClear = d;
+                    }
+                }
+            }
+            if (minClear < -40) break; // hopeless, stop probing
+        }
+        return minClear;
+    }
+
+    // The heading closest to what we WANT that does not clip anything.
+    // Nothing safe -> the least bad one (dying facing the exit beats
+    // dying frozen).
+    function safeSteer(self: NetPlayer, desired: number, speed: number, myR: number): number {
+        let fallback = desired;
+        let fallbackClear = -Infinity;
+        for (const off of [0, 0.35, -0.35, 0.7, -0.7, 1.1, -1.1, 1.6, -1.6, 2.2, -2.2, Math.PI]) {
+            const a = desired + off;
+            const clear = clearanceOf(self, a, speed, myR);
+            if (clear > 0) return a;
+            if (clear > fallbackClear) { fallbackClear = clear; fallback = a; }
+        }
+        return fallback;
+    }
+
+    // Aim ACROSS the prey's future path: our body arrives where its
+    // head is going, so the kill is the prey touching us — never a
+    // head-on trade (the mistake that made hunt an extinction event).
+    function cutOffAngle(self: NetPlayer, prey: NetPlayer, dist: number): number {
+        const ahead = Math.min(dist * 0.9, 320);
+        const cx = prey.x + Math.cos(prey.angle) * ahead;
+        const cy = prey.y + Math.sin(prey.angle) * ahead;
+        return Math.atan2(cy - self.y, cx - self.x);
+    }
+
     const input: InputMessage = { angle: Math.random() * 2 * Math.PI, boost: false };
     let dodging = false;
     let dodgeCount = 0;
@@ -776,111 +852,96 @@ async function run(BEHAVIOR: Behavior, slot: number, walletIdx: number) {
         }
 
         if (BEHAVIOR === "camping") {
+            // The scavenger (rewritten 2026-08-06 after the user watched
+            // v1 in game: it charged head-on and died 4 times in 4 lives
+            // without regulating anyone). Now: NEVER leaves the extract
+            // point, and switches to apex-grade hunting the moment
+            // someone approaches — killing AND denying the cash-out.
+            const self = me;
+            const myR = dims.radius;
+            rememberTrails();
             const zone = (room.state as { extract?: { active: boolean; x: number; y: number } }).extract;
-            if (zone?.active) {
-                // an intruder is whoever is nearest THE ZONE (not us) —
-                // the booth charges by proximity to the money
-                let intruder: NetPlayer | undefined;
-                let intruderD = Infinity;
+
+            let desired: number;
+            let wantBoost = false;
+            let mode = "grazing";
+
+            if (!zone?.active) {
+                // between zones: graze where we stand, stay alive
+                const best = nearestFood(turnRadius, eatReach);
+                desired = best
+                    ? Math.atan2(best.y - self.y, best.x - self.x)
+                    : self.angle + 0.05;
+            } else {
+                const myZoneD = Math.hypot(zone.x - self.x, zone.y - self.y);
+                // the mark is whoever is nearest THE MONEY, not nearest
+                // us: the booth charges by proximity to the zone
+                let mark: NetPlayer | undefined;
+                let markD = Infinity;
                 for (const p of others.values()) {
                     const d = Math.hypot(p.x - zone.x, p.y - zone.y);
-                    if (d < intruderD) { intruderD = d; intruder = p; }
+                    if (d < markD) { markD = d; mark = p; }
                 }
-                if (intruder && intruderD < CAMP_GUARD_PX) {
-                    input.angle = interceptAngle(me, intruder, speed);
-                    const dMe = Math.hypot(intruder.x - me.x, intruder.y - me.y);
-                    input.boost = me.score > BOOST_ORB_VALUE * 2 && dMe < 500;
-                    if (now - lastLog > 1500) {
-                        lastLog = now;
-                        console.log(
-                            `[${tag}] intruder ${intruder.name} at ${intruderD.toFixed(0)}px` +
-                            ` from the zone — intercepting (${dMe.toFixed(0)}px from me)`,
-                        );
+                const dMe = mark ? Math.hypot(mark.x - self.x, mark.y - self.y) : Infinity;
+
+                if (myZoneD > CAMP_LEASH_PX) {
+                    // the leash: a scavenger that wanders off is not a
+                    // scavenger. Chases end at the leash, always.
+                    desired = Math.atan2(zone.y - self.y, zone.x - self.x);
+                    mode = "back to station";
+                } else if (mark && markD < CAMP_GUARD_PX) {
+                    // CHANNELING or already on top of us = kill window
+                    // (D79 by design): full apex cut-off, no hesitation
+                    if (mark.channel > 0 || dMe < 300) {
+                        desired = cutOffAngle(self, mark, dMe);
+                        wantBoost = self.score > BOOST_ORB_VALUE * 3 && dMe < 600;
+                        mode = mark.channel > 0
+                            ? `KILLING ${mark.name} mid-channel (${(mark.channel / 60).toFixed(1)}s)`
+                            : `killing ${mark.name}`;
+                    } else {
+                        // DENIAL: interpose between the mark and the
+                        // money — it has to come through us to channel.
+                        // Aiming at the zone side of the segment keeps
+                        // us on the inside track (shorter arc, we win
+                        // the race to the point it wants to reach).
+                        const t = 0.35; // 0 = zone centre, 1 = the mark
+                        const bx = zone.x + (mark.x - zone.x) * t;
+                        const by = zone.y + (mark.y - zone.y) * t;
+                        desired = Math.atan2(by - self.y, bx - self.x);
+                        mode = `denying ${mark.name} (${markD.toFixed(0)}px from the zone)`;
                     }
                 } else {
-                    // nobody to charge: hold the booth (same orbit as
-                    // contest — approach if far, lazy circle on station)
-                    const d = Math.hypot(zone.x - me.x, zone.y - me.y);
-                    input.angle = d > EXTRACT_RADIUS * 1.5
-                        ? Math.atan2(zone.y - me.y, zone.x - me.x)
-                        : me.angle + 0.12;
-                    input.boost = false;
+                    // ON STATION: orbit JUST OUTSIDE the zone. Outside
+                    // matters twice — sitting inside would channel our
+                    // own extraction (we would cash out and leave), and
+                    // the expiry bomb kills whoever is in there.
+                    const around = Math.atan2(self.y - zone.y, self.x - zone.x);
+                    const ring = EXTRACT_RADIUS * 1.35;
+                    desired = Math.atan2(
+                        zone.y + Math.sin(around + 0.45) * ring - self.y,
+                        zone.x + Math.cos(around + 0.45) * ring - self.x,
+                    );
+                    mode = "on station";
                 }
-            } else {
-                // no zone up: graze where we stand, the next zone will
-                // spawn and the booth reopens
-                input.boost = false;
-                const best = nearestFood(turnRadius, eatReach);
-                if (best) input.angle = Math.atan2(best.y - me.y, best.x - me.x);
-                else input.angle = me.angle + 0.05;
             }
+
+            const chosen = safeSteer(self, desired, speed, myR);
+            input.angle = chosen;
+            input.boost = wantBoost && Math.abs(chosen - desired) < 0.5;
             room.send("input", input);
+            if (now - lastLog > 2000) {
+                lastLog = now;
+                console.log(`[${tag}] ${mode} — score ${self.score.toFixed(0)}`);
+            }
             return;
         }
 
         if (BEHAVIOR === "apex") {
-            const self = me; // non-null capture for the closures below
-
-            // 1) perfect memory: extend every visible enemy's trail
-            // with its current head sample, capped at its real body
-            // length (score tells us how long it is — same formula the
-            // server runs)
-            for (const [id, p] of others) {
-                let tr = trails.get(id);
-                if (!tr) { tr = []; trails.set(id, tr); }
-                const last = tr[tr.length - 1];
-                if (!last || Math.hypot(p.x - last.x, p.y - last.y) >= APEX_SAMPLE_PX) {
-                    tr.push({ x: p.x, y: p.y });
-                }
-                const bodyLen = describeSnakeFromScore(p.score).length * SNAKE_SPACING;
-                const maxPts = Math.ceil(bodyLen / APEX_SAMPLE_PX) + 4;
-                while (tr.length > maxPts) tr.shift();
-            }
-
-            // 2) collision-aware steering: project the head along a
-            // candidate heading and take the worst clearance against
-            // every known body point + the border. Any heading that
-            // clips is rejected before it is ever sent — the human
-            // mistake (touching a body you saw) is simply removed.
+            const self = me; // non-null capture
             const myR = dims.radius;
-            const clearanceOf = (angle: number): number => {
-                let minClear = Infinity;
-                for (const step of [10, 22, 34]) { // frames ahead
-                    const px = self.x + Math.cos(angle) * speed * step;
-                    const py = self.y + Math.sin(angle) * speed * step;
-                    const borderClear = WORLD_RADIUS - myR - Math.hypot(px, py);
-                    if (borderClear < minClear) minClear = borderClear;
-                    for (const [id, p] of others) {
-                        const reach = describeSnakeFromScore(p.score).radius + myR + APEX_MARGIN_PX;
-                        const dh = Math.hypot(p.x - px, p.y - py) - reach;
-                        if (dh < minClear) minClear = dh;
-                        const tr = trails.get(id);
-                        if (tr) {
-                            for (const pt of tr) {
-                                const d = Math.hypot(pt.x - px, pt.y - py) - reach;
-                                if (d < minClear) minClear = d;
-                            }
-                        }
-                    }
-                    if (minClear < -40) break; // hopeless, stop probing
-                }
-                return minClear;
-            };
-            const steer = (desired: number): number => {
-                let fallback = desired;
-                let fallbackClear = -Infinity;
-                // nearest-to-desired safe heading wins; nothing safe ->
-                // the least bad one
-                for (const off of [0, 0.35, -0.35, 0.7, -0.7, 1.1, -1.1, 1.6, -1.6, 2.2, -2.2, Math.PI]) {
-                    const a = desired + off;
-                    const clear = clearanceOf(a);
-                    if (clear > 0) return a;
-                    if (clear > fallbackClear) { fallbackClear = clear; fallback = a; }
-                }
-                return fallback;
-            };
+            rememberTrails();
 
-            // 3) cold target selection: prey = nearest STRICTLY smaller
+            // cold target selection: prey = nearest STRICTLY smaller
             // snake; bully = a meaningfully bigger one close enough to
             // matter. Running from bullies outranks everything.
             let prey: NetPlayer | undefined;
@@ -901,13 +962,7 @@ async function run(BEHAVIOR: Behavior, slot: number, walletIdx: number) {
                 wantBoost = bullyD < 260 && self.score > BOOST_ORB_VALUE * 3;
                 mode = `evade ${bully.name}`;
             } else if (prey && preyD < 1100) {
-                // the cut-off: aim across the prey's FUTURE path so our
-                // body arrives where its head is going — the kill is
-                // the prey touching us, never a head-on trade
-                const ahead = Math.min(preyD * 0.9, 320);
-                const cutX = prey.x + Math.cos(prey.angle) * ahead;
-                const cutY = prey.y + Math.sin(prey.angle) * ahead;
-                desired = Math.atan2(cutY - self.y, cutX - self.x);
+                desired = cutOffAngle(self, prey, preyD);
                 wantBoost = preyD < 650 && self.score > BOOST_ORB_VALUE * 6;
                 mode = `cut-off ${prey.name}`;
             } else {
@@ -917,7 +972,7 @@ async function run(BEHAVIOR: Behavior, slot: number, walletIdx: number) {
                     : self.angle + (Math.random() < 0.05 ? Math.random() - 0.5 : 0);
             }
 
-            const chosen = steer(desired);
+            const chosen = safeSteer(self, desired, speed, myR);
             // boosting into a swerve is how apex would die — the boost
             // is only spent when the safe heading IS the attack heading
             input.angle = chosen;

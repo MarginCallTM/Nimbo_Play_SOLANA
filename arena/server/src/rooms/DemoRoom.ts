@@ -21,6 +21,7 @@ import {
     describeSnakeFromScore,
     type ExtractedMessage,
     type JoinOptions,
+    type RefundedMessage,
 } from "@nimbo/shared";
 import {
     ArenaRoom,
@@ -215,6 +216,27 @@ export class DemoRoom extends ArenaRoom {
         const margin = turnRadius - eatReach;
         return Math.hypot(fx - lx, fy - ly) > margin
             && Math.hypot(fx - rx, fy - ry) > margin;
+    }
+
+    // The refund twin of extractPlayer, and it was MISSING (found by the
+    // 2026-08-07 money red-team, confirmed in the outbox file). A demo
+    // player who left during the launch-gate `waiting` phase — routine
+    // with DEMO_BOTS=0, i.e. the whole sparring setup — fell through to
+    // ArenaRoom.refundPlayer and wrote a REAL claim: wallet "demo",
+    // 0.03 SOL, against the live round. The settlement service parses
+    // that wallet with Pubkey::from_str, fails, and retries the same
+    // unpayable row every five seconds forever. Five such rows had been
+    // poisoning the loop since 2026-08-05. Demo value is theater and
+    // must never reach the debt ledger — by either exit.
+    protected override refundPlayer(player: Player, reason: string) {
+        this.extractedScore += player.score;
+        const msg: RefundedMessage = { lamports: "0", nonce: "demo" };
+        this.clients.find((c) => c.sessionId === player.sessionId)?.send("refunded", msg);
+        this.state.players.delete(player.sessionId);
+        this.inView.delete(player.sessionId);
+        this.playersInView.delete(player.sessionId);
+        this.bots.delete(player.sessionId);
+        console.log(`[demo] ${player.sessionId} refunded (fake) — ${reason}`);
     }
 
     // Demo extraction: same theater, zero claim. Nothing reaches the

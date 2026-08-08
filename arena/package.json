@@ -7,6 +7,7 @@
         "dev:client": "npm run dev --workspace client",
         "bots": "npm run bots --workspace loadtest --",
         "spar": "npm run spar --workspace loadtest --",
-        "fleet": "npm run fleet --workspace loadtest --"
+        "fleet": "npm run fleet --workspace loadtest --",
+        "money-attack": "npm run money-attack --workspace loadtest --"
     }
 }

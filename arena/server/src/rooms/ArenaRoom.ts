@@ -28,6 +28,7 @@ import {
     describeSnakeFromScore,
     turnTowards,
     lamportsFromScore,
+    MIN_REFUNDABLE_LAMPORTS,
     type ArenaPhase,
     type DeathKind,
     type DiedMessage,
@@ -39,8 +40,8 @@ import {
 } from "@nimbo/shared";
 import { SpatialGrid } from "../grid";
 import { verifyAuthToken } from "../auth";
-import { releaseDeposit, roundInfo, verifyDeposit } from "../chain";
-import { pendingClaims, recordClaim } from "../outbox";
+import { DepositRejected, releaseDeposit, roundInfo, verifyDeposit } from "../chain";
+import { nextNonce, pendingClaims, recordClaim } from "../outbox";
 import { notifyDepositorJoined, registerArenaRoom, unregisterArenaRoom } from "../arena-registry";
 
 // What onAuth hands to onJoin once the SIWS proof checks out.
@@ -283,10 +284,11 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
 
     // --- extraction (A0.6 state machine, multiplayer flavor) --------
     private extractCooldown = EXTRACT_SPAWN_COOLDOWN;
-    // Nonce = boot-time ms * 1000 + counter: unique per round even
-    // across restarts (two boots in the same millisecond don't happen;
-    // 1000 extractions in one ms don't either).
-    private nextNonce = BigInt(Date.now()) * 1000n;
+    // Settlement nonces come from the OUTBOX, process-wide (2026-08-07).
+    // This used to be a per-room counter seeded from Date.now(): two
+    // rooms created in the same millisecond minted the same sequence,
+    // and a duplicate (round_id, nonce) is a permanently unpayable
+    // claim that the settlement service acks as "already settled".
 
     // --- conservation ledger (D73 invariant, logged as [eco]) --------
     // Everything that ever ENTERED this arena (spawn + pellet scores
@@ -820,15 +822,27 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // never entered at all.
     protected refundPlayer(player: Player, reason: string) {
         const lamports = lamportsFromScore(player.score + player.pendingPellets);
-        const nonce = this.nextNonce++;
+        const nonce = nextNonce();
         this.extractedScore += player.score;
-        recordClaim({
-            wallet: player.wallet,
-            lamports: lamports.toString(),
-            nonce: nonce.toString(),
-            roundId: roundInfo()?.roundId ?? "0", // paid arena always has one
-            at: Date.now(),
-        });
+        // No `?? "0"` fallback (2026-08-07): it FIRED in practice — the
+        // outbox holds five rows written with roundId "0" by the demo
+        // room while the server ran free-only. roundId picks the paying
+        // vault, so a wrong one spends another round's pot. A paid arena
+        // always has a round; without one we owe nothing on this chain.
+        const round = roundInfo();
+        if (round) {
+            recordClaim({
+                wallet: player.wallet,
+                lamports: lamports.toString(),
+                nonce: nonce.toString(),
+                roundId: round.roundId,
+                at: Date.now(),
+            });
+        } else {
+            console.error(
+                `[refund] NO ACTIVE ROUND — ${player.sessionId} removed without a claim`,
+            );
+        }
 
         const msg: RefundedMessage = {
             lamports: lamports.toString(),
@@ -836,6 +850,9 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         };
         this.clients.find((c) => c.sessionId === player.sessionId)?.send("refunded", msg);
 
+        // The removal happens whatever the claim did: leaving a refunded
+        // snake in the state would hold the launch gate open on a player
+        // who is no longer paying for a seat.
         this.state.players.delete(player.sessionId);
         this.inView.delete(player.sessionId);
         this.playersInView.delete(player.sessionId);
@@ -915,18 +932,25 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // snake despawns; playing again = depositing again.
     protected extractPlayer(player: Player) {
         const lamports = lamportsFromScore(player.score);
-        const nonce = this.nextNonce++;
+        const nonce = nextNonce();
         this.extractedScore += player.score; // ledger: left the arena
         // A3.3 — the debt is written to DISK before the player hears
         // about it: a crash after this line owes correctly, a crash
         // before it never told the player they extracted.
-        recordClaim({
-            wallet: player.wallet,
-            lamports: lamports.toString(),
-            nonce: nonce.toString(),
-            roundId: roundInfo()?.roundId ?? "0", // paid arena always has one
-            at: Date.now(),
-        });
+        const round = roundInfo();
+        if (round) {
+            recordClaim({
+                wallet: player.wallet,
+                lamports: lamports.toString(),
+                nonce: nonce.toString(),
+                roundId: round.roundId, // never "0": see refundPlayer
+                at: Date.now(),
+            });
+        } else {
+            console.error(
+                `[extract] NO ACTIVE ROUND — ${player.sessionId} left without a claim`,
+            );
+        }
 
         const msg: ExtractedMessage = {
             score: player.score,
@@ -1055,8 +1079,47 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             // reason stays server-side (never help a probe); the
             // client gets a generic rejection
             console.log(`[chain] deposit rejected: ${(err as Error).message}`);
+            // A4.6 (2026-08-07) — a deposit below the entry floor is a
+            // real payment we refuse to seat. Refusing it AND keeping it
+            // would be theft, so it goes straight back out on the D80
+            // refund rails. Paid exactly once: the rejection is permanent
+            // in chain.ts, so the signature stays consumed and a retry
+            // never reaches this line again.
+            if (err instanceof DepositRejected && err.refundableLamports !== undefined) {
+                ArenaRoom.refundRejectedDeposit(wallet, err.refundableLamports);
+            }
             throw new Error("deposit verification failed");
         }
+    }
+
+    // Static because onAuth is: there is no room instance yet — the
+    // player never got a seat. The claim rides the same outbox rails as
+    // an extraction, so the settlement service needs no new code path.
+    private static refundRejectedDeposit(wallet: string, lamports: bigint) {
+        const round = roundInfo();
+        if (!round) return; // free-only mode never verifies a deposit
+        if (lamports < MIN_REFUNDABLE_LAMPORTS) {
+            // Below this, the ExtractReceipt rent + fee cost the house
+            // MORE than the refund returns — which would turn dust-
+            // deposit spam into a treasury drain. Kept and logged.
+            console.log(
+                `[chain] under-floor deposit by ${wallet.slice(0, 4)}..` +
+                ` — ${lamports} lamports is below the refund threshold, kept`,
+            );
+            return;
+        }
+        const nonce = nextNonce();
+        recordClaim({
+            wallet,
+            lamports: lamports.toString(),
+            nonce: nonce.toString(),
+            roundId: round.roundId,
+            at: Date.now(),
+        });
+        console.log(
+            `[chain] under-floor deposit by ${wallet.slice(0, 4)}..` +
+            ` refunded ${lamports} lamports, nonce=${nonce}`,
+        );
     }
 
     onJoin(client: Client, options: JoinOptions, auth: AuthResult) {

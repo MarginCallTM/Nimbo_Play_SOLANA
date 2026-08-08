@@ -68,8 +68,11 @@ export function encodeJoinData(stakeLamports: bigint): Uint8Array {
     return data;
 }
 
+// 16 bytes, not 8: the discriminator ALONE is not a join — decodeJoinStake
+// reads 8 more, and a DataView past the end throws RangeError instead of
+// returning a rejection. Any caller that trusts this predicate then decodes.
 export function isJoinData(data: Uint8Array): boolean {
-    if (data.length < 8) return false;
+    if (data.length < 16) return false;
     return JOIN_IX_DISCRIMINATOR.every((b, i) => data[i] === b);
 }
 
@@ -185,6 +188,24 @@ export function lamportsFromScore(score: number): bigint {
 // runs with reserve_bps = 0 so every non-rake lamport sits in the
 // Vault (extractions can always be paid, D55). The tuning knob:
 export const PELLET_CUT_BPS = 1000; // 10% of the stake becomes pellets (D75)
+
+// A4.6 money red-team (2026-08-07) — THE ENTRY FLOOR, server-enforced.
+// The program only requires stake > 0, and score 0 maps to the SMALLEST
+// and FASTEST-TURNING snake in the game (describeSnakeFromScore: radius
+// and turn speed are both best at score 0). A 1-lamport join therefore
+// buys a perfect kamikaze for a transaction fee: it trades head-on with
+// a 1 SOL whale — the dominant meta, measured at 16/20 deaths in the
+// 2026-08-06 run — and pays a rake of zero doing it. The menu's tier
+// buttons are NOT a gate: options.stake is display-only and the bots
+// prove a headless client can name any amount it likes.
+export const MIN_STAKE_LAMPORTS = 100_000_000n; // 0.1 SOL = lowest menu tier
+
+// Refunding costs the house an ExtractReceipt rent (~0.0014 SOL) plus a
+// transaction fee. Below this, a refund returns less than it costs to
+// send — and an attacker spamming dust deposits purely to force refunds
+// would drain the authority wallet one receipt rent at a time. Dust
+// under the floor is kept and documented rather than paid back.
+export const MIN_REFUNDABLE_LAMPORTS = 2_000_000n; // ~0.002 SOL
 
 // The full entry split. rakeBps comes from the Round account; the
 // pellet cut is ours. Floor divisions, spawn takes the dust — the

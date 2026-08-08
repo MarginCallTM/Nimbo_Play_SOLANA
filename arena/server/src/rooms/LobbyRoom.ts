@@ -31,6 +31,7 @@ import {
 } from "@nimbo/shared";
 import { verifyAuthToken } from "../auth";
 import { hasJoinableArena, onDepositorJoined } from "../arena-registry";
+import { clearDesertions, cooldownRemainingS, recordDesertion } from "../lobby-conduct";
 
 export class LobbyPlayer extends Schema {
     @type("string") name = "";
@@ -95,6 +96,15 @@ export class LobbyRoom extends Room<{ state: LobbyState }> {
         }
         const wallet = verifyAuthToken(token);
         if (!wallet) throw new Error("sign-in required: connect your wallet");
+        // A4.6 (2026-08-07) — repeat deserters wait. Enforced HERE, at
+        // the door, so a griefer's reconnect costs a round trip and not
+        // a queue slot. Says how long, on purpose: a real player who
+        // dropped once deserves to understand what happened, and a
+        // griefer learns nothing from it he could not time himself.
+        const cooldown = cooldownRemainingS(wallet);
+        if (cooldown > 0) {
+            throw new Error(`you left a pending match — the queue reopens in ${cooldown}s`);
+        }
         return { wallet };
     }
 
@@ -230,6 +240,11 @@ export class LobbyRoom extends Room<{ state: LobbyState }> {
             const member = match.members.find((m) => m.wallet === wallet && !m.fulfilled);
             if (!member) continue;
             member.fulfilled = true;
+            // completing the ritual clears any desertion record: a
+            // player who genuinely dropped once and then deposited into
+            // a real match carries no strike forward (lobby-conduct's
+            // contract — the cooldown punishes the loop, not the run).
+            clearDesertions(wallet);
             // their lobby chapter is over: free the seat (and the
             // one-wallet-one-seat guard) right away
             this.removeFromLobby(member.sessionId);
@@ -267,7 +282,14 @@ export class LobbyRoom extends Room<{ state: LobbyState }> {
         }
 
         for (const m of match.members) {
-            if (m.fulfilled || !isDeserter(m) || !present(m)) continue;
+            if (m.fulfilled || !isDeserter(m)) continue;
+            // The strike lands whether or not they are still connected:
+            // "close the socket" IS one of the desertion moves, and it
+            // is the one that leaves present() false (onLeave clears the
+            // player before calling us). Punishing only the deserters
+            // polite enough to stay would be a strange rule.
+            recordDesertion(m.wallet);
+            if (!present(m)) continue;
             const msg: MatchCancelledMessage = { requeued: false, reason };
             this.sendTo(m.sessionId, "matchCancelled", msg);
             this.removeFromLobby(m.sessionId);

@@ -6,6 +6,7 @@ import { DemoRoom } from "./rooms/DemoRoom";
 import { LobbyRoom } from "./rooms/LobbyRoom";
 import { issueChallenge } from "./auth";
 import { loadRound, roundInfo } from "./chain";
+import { loadDepositLog } from "./deposit-log";
 import { ackClaim, loadOutbox, pendingClaims } from "./outbox";
 
 // A3.2 — know which round we escrow against BEFORE accepting anyone:
@@ -13,13 +14,34 @@ import { ackClaim, loadOutbox, pendingClaims } from "./outbox";
 await loadRound();
 // A3.3 — reload unsettled claims: debts survive restarts.
 loadOutbox();
+// A4.6 — reload consumed deposit signatures: so must the anti-replay
+// set, or every restart re-opens the last 10 minutes of deposits for a
+// free second spawn.
+loadDepositLog();
 
 // Shared secret for the settlement endpoints (MVP: same box, same
-// operator). Unset = dev mode, endpoints open on localhost — the
-// service and the game server are both ours; real deployments set it.
+// operator). These two routes are the softest part of the money path:
+// /pending lists every wallet we owe and how much, and /ack marks a
+// debt settled — an unauthenticated ack makes a player's payout vanish
+// with no on-chain trace to appeal to.
+//
+// Unset used to mean "open to anyone who can reach the port". It now
+// means "open to LOOPBACK only" (2026-08-07): the dev convenience of
+// running the settlement service on the same box is preserved, and the
+// day this server gets a public interface it does not silently expose
+// the debt ledger. A real deployment sets the secret.
 const SETTLEMENT_SECRET = process.env.SETTLEMENT_SECRET;
+if (!SETTLEMENT_SECRET) {
+    console.log("[settlement] no SETTLEMENT_SECRET — /settlement/* restricted to loopback");
+}
+
+function isLoopback(req: express.Request): boolean {
+    const ip = req.socket.remoteAddress ?? "";
+    return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
 function settlementAuthorized(req: express.Request): boolean {
-    if (!SETTLEMENT_SECRET) return true;
+    if (!SETTLEMENT_SECRET) return isLoopback(req);
     return req.get("x-settlement-secret") === SETTLEMENT_SECRET;
 }
 
