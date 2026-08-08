@@ -1,22 +1,94 @@
-# docker-compose.yml — local dev services for the Solana lottery project.
-# Usage:
-#   docker compose up -d     start in the background
-#   docker compose ps        check status / health
-#   docker compose down      stop & remove containers (data survives in the volume)
+# docker-compose.yml — one command to run the ARENA test environment.
+#
+#   docker compose up --build        build + start server, client, settlement
+#   docker compose up -d             (after the first build) start detached
+#   docker compose logs -f server    follow one service
+#   docker compose down              stop everything (debts survive in volume)
+#   docker compose --profile full up build+start ALSO postgres (lottery/indexer)
+#
+# All config comes from .env (copy .env.example -> .env and fill it in).
+# The SAME command works on your Mac (PUBLIC_HOST=localhost) and on a VPS
+# (PUBLIC_HOST=<vps-ip>) — only .env changes.
+#
+# WHY a shared SETTLEMENT_SECRET is REQUIRED here: server and settlement
+# are separate containers, so their traffic is NOT loopback. The server
+# closes /settlement/* to non-loopback callers unless a secret is set —
+# so both sides must carry the same one, or payouts never settle.
 
 services:
+  # --- the authoritative game server (Colyseus + chain truth) ---------
+  server:
+    build:
+      context: ./arena
+      dockerfile: server/Dockerfile
+    container_name: arena_server
+    restart: unless-stopped
+    environment:
+      ROUND_ID: ${ROUND_ID}                       # required for the PAID arena
+      RPC_URL: ${RPC_URL}
+      # SIWS binds to the domain the browser is served from. The client
+      # signs with window.location.host, i.e. PUBLIC_HOST:CLIENT_PORT.
+      AUTH_DOMAIN: ${PUBLIC_HOST}:${CLIENT_PORT}
+      SETTLEMENT_SECRET: ${SETTLEMENT_SECRET}
+      DEMO_BOTS: ${DEMO_BOTS:-}
+    ports:
+      - "${SERVER_PORT}:2567"
+    volumes:
+      - arena_data:/data                          # durable debts + anti-replay log
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:2567/round"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # --- the web client (static build, baked to PUBLIC_HOST) ------------
+  client:
+    build:
+      context: ./arena
+      dockerfile: client/Dockerfile
+      args:
+        # Baked in at build time — the browser reaches the server here.
+        VITE_SERVER_URL: http://${PUBLIC_HOST}:${SERVER_PORT}
+    container_name: arena_client
+    restart: unless-stopped
+    ports:
+      - "${CLIENT_PORT}:80"
+
+  # --- settlement: pays extractions & refunds to wallets -------------
+  settlement:
+    build:
+      context: .
+      dockerfile: settlement/Dockerfile
+    container_name: arena_settlement
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      GAME_SERVER_URL: http://server:2567         # internal docker network
+      RPC_URL: ${RPC_URL}
+      SETTLEMENT_SECRET: ${SETTLEMENT_SECRET}
+      POLL_INTERVAL_S: ${POLL_INTERVAL_S:-5}
+    volumes:
+      # The authority keypair signs real payouts. Mounted read-only from
+      # the host; the container reads it at AUTHORITY_KEYPAIR=/keys/...
+      - ${AUTHORITY_KEYPAIR_HOST}:/keys/authority.json:ro
+
+  # --- OPTIONAL: postgres for the indexer/history (profile "full") ----
   postgres:
-    image: postgres:16                      # official Postgres 16 image (Docker Hub)
+    image: postgres:16
     container_name: lottery_postgres
+    profiles: ["full"]
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "${POSTGRES_PORT}:5432"             # host:container — host 5433 (native PG owns 5432)
+      - "${POSTGRES_PORT}:5432"
     volumes:
-      - lottery_pgdata:/var/lib/postgresql/data   # named volume = data persists
+      - lottery_pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -24,4 +96,5 @@ services:
       retries: 5
 
 volumes:
+  arena_data:
   lottery_pgdata:

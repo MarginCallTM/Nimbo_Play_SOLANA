@@ -32,10 +32,25 @@ import { enterQueue } from "./lobby";
 import { startGameSession, type SessionEnd } from "./session";
 
 const statusEl = document.getElementById("status")!;
-const SERVER_URL = "http://localhost:2567";
+// Baked in at BUILD time by Vite (import.meta.env.VITE_*). Localhost is
+// the dev default; a Docker/VPS build passes VITE_SERVER_URL so the
+// browser reaches the real game server instead of the visitor's own
+// machine. The SIWS domain is separate — the client always signs with
+// window.location.host (wallet.ts), so the SERVER's AUTH_DOMAIN must
+// match wherever this bundle is served from.
+const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? "http://localhost:2567";
 const NAME = "tester";
 
 const solOf = (lamports: string) => (Number(lamports) / 1e9).toFixed(4);
+
+// Phantom's transaction simulation is unreliable on devnet against a
+// custom program (our escrow): it often shows a scary "simulation
+// failed" warning even when the transaction is valid and lands fine
+// (proven via a clean RPC simulation — the deposit really goes through).
+// Say so at the wallet popup so a first-time tester does not bail.
+const depositStatus = (sol: number) =>
+    `depositing ${sol} SOL — approve in Phantom.` +
+    ` A devnet “simulation failed” warning is normal — the transaction is valid.`;
 
 // A4.6d — the server knows who ended your run; say it. Before this the
 // answer only existed in a server log line. The name is rendered with
@@ -126,7 +141,7 @@ async function main() {
     // and the solo fast-path drain (the lobby's one-seat-per-wallet
     // guard makes those untestable alone otherwise).
     if (new URLSearchParams(location.search).has("direct")) {
-        statusEl.textContent = `depositing ${stakeSol} SOL — approve in Phantom…`;
+        statusEl.textContent = depositStatus(stakeSol);
         const directSig = await sendJoinDeposit(SERVER_URL, stakeSol);
         statusEl.textContent = "deposit confirmed — joining the arena…";
         const direct = await startGameSession(
@@ -183,7 +198,7 @@ async function main() {
     try {
         statusEl.textContent = "match ready — sign in for the arena…";
         client.auth.token = await signInWithSolana(SERVER_URL);
-        statusEl.textContent = `depositing ${stakeSol} SOL — approve in Phantom…`;
+        statusEl.textContent = depositStatus(stakeSol);
         txSig = await sendJoinDeposit(SERVER_URL, stakeSol);
     } catch (err) {
         // Phantom rejected / tx failed / window expired server-side:

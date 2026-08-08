@@ -1,0 +1,7 @@
+# Build-context trim for the ARENA-context images (server, client).
+node_modules
+**/node_modules
+client/dist
+loadtest/wallets
+**/*.jsonl
+*.log

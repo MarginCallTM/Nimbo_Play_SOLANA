@@ -1,0 +1,16 @@
+# Build-context trim for the ROOT-context image (settlement, Rust).
+# Keeps the Docker context small and fast: only Cargo.toml/lock +
+# settlement/ + backend/ (a workspace member cargo must see) are needed.
+.git
+node_modules
+**/node_modules
+target
+**/target
+arena
+app
+app-reference
+programs
+tests
+dist
+**/dist
+*.log

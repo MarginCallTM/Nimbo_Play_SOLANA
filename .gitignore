@@ -38,3 +38,6 @@ arena/server/consumed-deposits.jsonl
 # A4.6 red-team fleet: devnet bot wallets (PRIVATE KEYS — devnet-only,
 # but they never belong in a repo)
 arena/loadtest/wallets/
+
+# Deploy secrets: the mounted authority keypair (signs real payouts)
+secrets/
