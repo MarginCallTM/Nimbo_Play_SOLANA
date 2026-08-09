@@ -43,6 +43,7 @@ import { verifyAuthToken } from "../auth";
 import { DepositRejected, releaseDeposit, roundInfo, verifyDeposit } from "../chain";
 import { nextNonce, pendingClaims, recordClaim } from "../outbox";
 import { notifyDepositorJoined, registerArenaRoom, unregisterArenaRoom } from "../arena-registry";
+import { RttTracker } from "../rtt";
 
 // What onAuth hands to onJoin once the SIWS proof checks out.
 export interface AuthResult {
@@ -120,6 +121,12 @@ export class Player extends Schema {
     // locally (the A1.4 bandwidth decision). A 400-segment snake
     // costs the same wire bytes as a dot.
     tracers: { x: number; y: number }[] = [];
+    // A4.0 lag-compensation rewind: a short ring of recent body snapshots
+    // (head + tracers + radius), one per tick, so a lethal collision can
+    // be re-checked against where the VICTIM actually saw this snake
+    // (its RTT/2 ago). Server-only, never synced. Bounded by the max
+    // rewind window, not by body length — cheap.
+    history: { pts: { x: number; y: number }[]; radius: number }[] = [];
 }
 
 // A pellet never changes: it is born and it dies. Wire cost = one
@@ -233,7 +240,16 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
 
     // Whitelist of accepted client messages: anything not listed here
     // is dropped.
+    // A4.0 — server-authoritative RTT per client (protected: DemoRoom
+    // inherits it, and lag-compensation rewind will read it too).
+    protected rtt = new RttTracker();
+    private rttCounter = 0;
+    private rttLogCounter = 0;
+
     messages = {
+        // A4.0 — trustworthy RTT: the client echoes our server-stamped
+        // ping. The client-side ping/pong below stays for the HUD only.
+        srvpong: (client: Client, t: number) => this.rtt.record(client.sessionId, t),
         input: (client: Client, input: InputMessage) => {
             const player = this.state.players.get(client.sessionId);
             if (!player) return;
@@ -259,6 +275,13 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // outputs, whatever the server load.
     private accumulator = 0;
     private static readonly STEP_MS = 1000 / SERVER_TICK_RATE;
+
+    // A4.0 lag-compensation rewind: how many ticks of body history to
+    // keep, and the hard cap on how far a collision may be rewound (a
+    // fast attacker must not be "hit in the past" without bound; the
+    // ping gate keeps real RTT well under this anyway).
+    private static readonly HISTORY_TICKS = 12;   // ~400ms of history
+    private static readonly MAX_REWIND_TICKS = 8; // cap ~265ms one-way
 
     // "Spiral of death" guard: after a long stall (GC pause, debugger)
     // we DROP time instead of trying to catch up with hundreds of
@@ -580,6 +603,14 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
                 prevX = keepX;
                 prevY = keepY;
             }
+
+            // A4.0 — snapshot this tick's body (head + tracers + radius)
+            // for the lag-compensation rewind. Ring bounded by the max
+            // rewind window, so memory is a few hundred KB even at scale.
+            const snapPts: { x: number; y: number }[] = [{ x: player.x, y: player.y }];
+            for (const t of player.tracers) snapPts.push({ x: t.x, y: t.y });
+            player.history.push({ pts: snapPts, radius: dims.radius });
+            if (player.history.length > ArenaRoom.HISTORY_TICKS) player.history.shift();
         });
 
         // --- collision phase (ported from the proto, A0.4) ----------
@@ -624,11 +655,81 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
                 break;
             }
         });
+        // A4.0 LAG-COMPENSATION REWIND — FAVOR THE VICTIM. A collision
+        // death only stands if the victim ALSO saw the contact: rewind
+        // the killer's body to where the victim saw it (its RTT/2 ago)
+        // and re-test the victim's CURRENT head against it. No contact
+        // there = a phantom hit (the killer's real body was ahead of what
+        // the victim's screen showed) -> save the victim. Border deaths
+        // and zero-latency / unmeasured players (bots) are never vetoed.
+        // Head-on is symmetric: each rewinds the other, both may survive.
+        // HEAD-ON is never vetoed. A mutual crash (A kills B and B kills
+        // A in the same tick) would otherwise save whoever is laggier —
+        // each "saw" the other further back — so LATENCY would win every
+        // head-on (an exploit: add lag, win face-to-face). Both die.
+        // Captured from the ORIGINAL deaths, before the veto mutates it.
+        const headOn = new Set<Player>();
+        for (const [victim, cause] of deaths) {
+            if (cause.kind !== "collision" || !cause.killer) continue;
+            const other = deaths.get(cause.killer);
+            if (other?.kind === "collision" && other.killer === victim) headOn.add(victim);
+        }
+        for (const [victim, cause] of [...deaths]) {
+            if (cause.kind !== "collision" || !cause.killer) continue;
+            if (headOn.has(victim)) continue; // mutual crash: both die
+            const rttMs = this.rtt.get(victim.sessionId);
+            if (rttMs === undefined) continue; // unmeasured -> no compensation
+            const rewindTicks = Math.min(
+                Math.round((rttMs / 2) / ArenaRoom.STEP_MS),
+                ArenaRoom.MAX_REWIND_TICKS,
+            );
+            if (rewindTicks <= 0) continue; // sub-tick latency: nothing to rewind
+            const hist = cause.killer.history;
+            const past = hist[hist.length - 1 - rewindTicks];
+            if (!past) continue; // not enough history yet — leave the death
+            const reach = describeSnakeFromScore(victim.score).radius + past.radius;
+            const reach2 = reach * reach;
+            let sawContact = false;
+            for (const p of past.pts) {
+                const dx = p.x - victim.x;
+                const dy = p.y - victim.y;
+                if (dx * dx + dy * dy < reach2) { sawContact = true; break; }
+            }
+            if (!sawContact) {
+                deaths.delete(victim); // phantom — the victim never saw it
+                console.log(
+                    `[rewind] saved ${victim.sessionId.slice(0, 4)} from ` +
+                    `${cause.killer.sessionId.slice(0, 4)} — rtt ${Math.round(rttMs)}ms, ` +
+                    `rewound ${rewindTicks} ticks`,
+                );
+            }
+        }
+
         deaths.forEach((cause, player) => {
             this.resolveDeath(player, explainDeath(cause, player, deaths));
         });
 
         this.extractTick(dt);
+
+        // A4.0 — server-authoritative RTT: stamp a ping for everyone once
+        // a second (echoed as srvpong). The [rtt] line every ~10s is the
+        // proof the server sees each player's true latency — with the
+        // client's ?lat=200 injection it should read ~200ms.
+        this.rttCounter += 1;
+        if (this.rttCounter >= SERVER_TICK_RATE) {
+            this.rttCounter = 0;
+            this.broadcast("srvping", RttTracker.stamp());
+            this.rttLogCounter += 1;
+            if (this.rttLogCounter >= 10) {
+                this.rttLogCounter = 0;
+                const rtts: string[] = [];
+                this.state.players.forEach((_p, id) => {
+                    const ms = this.rtt.get(id);
+                    if (ms !== undefined) rtts.push(`${id.slice(0, 4)}=${Math.round(ms)}`);
+                });
+                if (rtts.length) console.log(`[rtt] ${rtts.join(" ")}`);
+            }
+        }
 
         // AoI refresh, decimated: every N ticks, not every tick
         this.aoiCounter += 1;
@@ -1205,6 +1306,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     }
 
     async onLeave(client: Client) {
+        this.rtt.forget(client.sessionId); // before the early return below
         const player = this.state.players.get(client.sessionId);
         if (!player) return;
 

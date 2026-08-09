@@ -530,6 +530,12 @@ export async function startGameSession(
     });
     intervals.push(setInterval(() => room.send("ping", performance.now()), 1000));
 
+    // A4.0 — server-authoritative RTT: bounce the server's stamp back
+    // verbatim. The server times the round trip on its own clock (this
+    // is the unspoofable copy that gates real-money entry). Passes
+    // THROUGH the ?lat injection above, so injected latency is measured.
+    room.onMessage("srvping", (t: number) => room.send("srvpong", t));
+
     // connection lost / server kicked us: the session is over either
     // way (guarded: a voluntary stop() already finished it)
     room.onLeave(() => end({ kind: "stopped" }));

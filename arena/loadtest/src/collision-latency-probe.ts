@@ -51,6 +51,10 @@ const STATE_PATCH_MS = 1000 / BROADCAST_RATE; // session.ts:283 (+RTT/2)
 
 const RTTS = [0, 50, 100, 150, 200, 300]; // ms round-trip to sweep
 const SAMPLE_MS = 50;                      // trajectory resolution (~broadcast)
+// Delay the srvpong echo to fake this bot's RTT to the server — lets the
+// A4.0 server-authoritative RTT be validated headless (server should log
+// [rtt] ~= this value). 0 = echo immediately (true localhost latency).
+const SRVPONG_DELAY_MS = Number(process.env.SRVPONG_DELAY_MS ?? 0);
 const STEER_MS = 60;                       // how often a bot sends input
 const BOOST_RANGE = 450;                   // boost when the prey is this close
 const BODY_TRAIL_MS = 1500;                // how far back to keep body samples
@@ -115,6 +119,12 @@ class Bot {
             }
             this.alive = false;
             void this.respawn();
+        });
+        // A4.0 — echo the server's RTT probe (optionally delayed to fake
+        // a real ping, so the server-side [rtt] log can be validated).
+        this.room.onMessage("srvping", (t: number) => {
+            const echo = () => { try { this.room.send("srvpong", t); } catch { /* between rooms */ } };
+            if (SRVPONG_DELAY_MS > 0) setTimeout(echo, SRVPONG_DELAY_MS); else echo();
         });
         const cb = Callbacks.get(this.room);
         cb.onAdd("players", (p, id) => {

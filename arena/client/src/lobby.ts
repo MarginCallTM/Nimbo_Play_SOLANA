@@ -17,6 +17,7 @@ import {
     type DepositNowMessage,
     type MatchCancelledMessage,
     type MatchFoundMessage,
+    type PingTooHighMessage,
 } from "@nimbo/shared";
 
 export interface LobbyHandle {
@@ -61,6 +62,10 @@ export async function enterQueue(client: Client, name: string): Promise<LobbyHan
         stake: 0,
     });
     room.onMessage("*", () => {}); // silence unhandled-type warnings
+    // A4.0 — bounce the server's RTT probe back so the ping gate (which
+    // runs HERE, before the deposit) measures this player's latency on
+    // the server's own clock. Specific handlers win over the "*" above.
+    room.onMessage("srvping", (t: number) => room.send("srvpong", t));
 
     const chip = makeChip();
     let acceptOverlay: HTMLElement | undefined;
@@ -141,6 +146,20 @@ export async function enterQueue(client: Client, name: string): Promise<LobbyHan
             clearAccept();
             chip.remove();
             resolve();
+        });
+
+        // A4.0 — refused entry to real-money play for a too-high ping.
+        // NOT a desertion: no penalty. A distinct error name lets main.ts
+        // show a dedicated, non-punitive screen (play FREE instead).
+        room.onMessage("pingTooHigh", (msg: PingTooHighMessage) => {
+            done = true;
+            clearAccept();
+            chip.remove();
+            const err = new Error(
+                `your ping is ${msg.rttMs} ms — the limit for real-money play is ${msg.limitMs} ms`,
+            );
+            err.name = "PingGate";
+            reject(err);
         });
 
         room.onMessage("matchCancelled", (msg: MatchCancelledMessage) => {

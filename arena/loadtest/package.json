@@ -9,6 +9,7 @@
         "fleet": "tsx src/fleet.ts",
         "money-attack": "tsx src/money-attack.ts",
         "collision-probe": "tsx src/collision-latency-probe.ts",
+        "ping-gate-probe": "tsx src/ping-gate-probe.ts",
         "check": "tsc --noEmit"
     },
     "dependencies": {

@@ -183,10 +183,15 @@ async function main() {
         await warmup.stop(); // no-op if the demo run already ended
     }
     if (dropped) {
+        // A4.0 — the ping gate is its OWN outcome, not a missed match:
+        // a distinct, non-punitive screen that points to free play.
+        const pingGated = dropped.name === "PingGate";
         await showGameOver({
-            title: "MATCH MISSED",
+            title: pingGated ? "PING TOO HIGH" : "MATCH MISSED",
             amount: dropped.message,
-            detail: "rejoin the queue from the menu",
+            detail: pingGated
+                ? "you can still play FREE — or use a wired / closer connection for real-money games"
+                : "rejoin the queue from the menu",
             color: "#ffcc66",
         });
         location.reload();

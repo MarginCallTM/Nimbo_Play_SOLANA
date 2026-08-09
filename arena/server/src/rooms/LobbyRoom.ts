@@ -22,16 +22,23 @@ import {
     LOBBY_ACCEPT_SECONDS,
     LOBBY_DEPOSIT_SECONDS,
     MIN_LIVE_PLAYERS,
+    PING_GATE_MS,
     PROTOCOL_VERSION,
     type DepositNowMessage,
     type JoinOptions,
     type LobbyStatus,
     type MatchCancelledMessage,
     type MatchFoundMessage,
+    type PingTooHighMessage,
 } from "@nimbo/shared";
 import { verifyAuthToken } from "../auth";
 import { hasJoinableArena, onDepositorJoined } from "../arena-registry";
 import { clearDesertions, cooldownRemainingS, recordDesertion } from "../lobby-conduct";
+import { RttTracker } from "../rtt";
+
+// A4.0 — the ping gate ceiling, server-side (env-tunable between rounds;
+// the shared PING_GATE_MS is the default and the client's display value).
+const GATE_MS = Number(process.env.PING_GATE_MS ?? PING_GATE_MS);
 
 export class LobbyPlayer extends Schema {
     @type("string") name = "";
@@ -69,7 +76,16 @@ export class LobbyRoom extends Room<{ state: LobbyState }> {
     private matches: PendingMatch[] = [];
     private unsubscribeJoins?: () => void;
 
+    // A4.0 — server-authoritative RTT of each queued player. Measured
+    // HERE (not only in the arena) because the ping gate refuses entry
+    // BEFORE the deposit, and by deposit time a queued client has been
+    // connected long enough for this to converge.
+    private rtt = new RttTracker();
+
     messages = {
+        // A4.0 — the client bounces our server-stamped ping back; this is
+        // the trustworthy RTT (the HUD's client-side ping/pong is not).
+        srvpong: (client: Client, t: number) => this.rtt.record(client.sessionId, t),
         // D81 — the free click. Only meaningful during an accept phase.
         accept: (client: Client) => {
             const match = this.matchOf(client.sessionId);
@@ -142,6 +158,7 @@ export class LobbyRoom extends Room<{ state: LobbyState }> {
         // (no message to send, nothing to re-queue)
         this.state.players.delete(client.sessionId);
         this.queue = this.queue.filter((id) => id !== client.sessionId);
+        this.rtt.forget(client.sessionId);
         if (match) {
             const member = match.members.find((m) => m.sessionId === client.sessionId);
             // a fulfilled member's socket closing is the normal end of
@@ -162,6 +179,10 @@ export class LobbyRoom extends Room<{ state: LobbyState }> {
     // ---- the 1Hz heart ------------------------------------------------
 
     private lobbyTick() {
+        // 0. server-authoritative RTT probe (A4.0): stamp a ping for
+        // everyone each second — the ping gate reads the smoothed result.
+        this.broadcast("srvping", RttTracker.stamp());
+
         // 1. age pending matches (iterate a copy: resolve() mutates)
         for (const match of [...this.matches]) {
             match.secondsLeft -= 1;
@@ -181,7 +202,21 @@ export class LobbyRoom extends Room<{ state: LobbyState }> {
         // moves when someone actually spawns, so a burst-drain could
         // overshoot the room's capacity.
         if (this.queue.length >= 1 && hasJoinableArena()) {
-            this.startMatch([this.queue.shift()!], "deposit");
+            // A4.0 — the solo fast-path pays with NO accept step, so gate
+            // it here too. Require a MEASURED RTT before sending anyone to
+            // pay: unknown -> wait one tick (a sample is ~1s away), high
+            // -> gated out, ok -> drain. Fail-closed on unknown, because
+            // this path can fire the very tick a fresh joiner appears.
+            const head = this.queue[0];
+            const rtt = this.rtt.get(head);
+            if (rtt === undefined) {
+                // no sample yet — leave them at the head, do not pay blind
+            } else if (rtt > GATE_MS) {
+                this.queue.shift();
+                this.notifyGated(head);
+            } else {
+                this.startMatch([this.queue.shift()!], "deposit");
+            }
         }
 
         // 3. PAIR — no joinable arena: form fresh cohorts of
@@ -222,6 +257,12 @@ export class LobbyRoom extends Room<{ state: LobbyState }> {
 
     // D81 — everyone clicked: NOW the money is asked for.
     private openDeposits(match: PendingMatch) {
+        // A4.0 — the last free step before money: gate anyone whose
+        // server-measured RTT is too high (they never reach the deposit).
+        if (match.members.some((m) => this.overGate(m.sessionId))) {
+            this.gateOut(match, (m) => this.overGate(m.sessionId));
+            return;
+        }
         match.phase = "deposit";
         match.secondsLeft = LOBBY_DEPOSIT_SECONDS;
         for (const m of match.members) {
@@ -297,6 +338,49 @@ export class LobbyRoom extends Room<{ state: LobbyState }> {
 
         this.syncPositions();
         console.log(`[lobby] match dissolved (${reason})`);
+    }
+
+    // ---- A4.0 ping gate ----------------------------------------------
+
+    // RTT KNOWN and above the ceiling. Unknown RTT is NOT gated here
+    // (fail-open): by deposit time a queued client has been pinged for
+    // seconds, so undefined is effectively impossible on the paired path.
+    // The solo fast-path handles unknown RTT separately (it waits for a
+    // sample rather than sending an unmeasured player to pay).
+    private overGate(sessionId: string): boolean {
+        const rtt = this.rtt.get(sessionId);
+        return rtt !== undefined && rtt > GATE_MS;
+    }
+
+    // Drop a player out of the paid flow for a too-high ping. NOT a
+    // desertion (no strike): they hear why, then leave the lobby. They
+    // can still play FREE, or requeue if their connection improves.
+    private notifyGated(sessionId: string): void {
+        const rtt = Math.round(this.rtt.get(sessionId) ?? 0);
+        const msg: PingTooHighMessage = { rttMs: rtt, limitMs: GATE_MS };
+        this.sendTo(sessionId, "pingTooHigh", msg);
+        this.removeFromLobby(sessionId);
+        console.log(`[lobby] ping gate: ${sessionId.slice(0, 4)}.. ${rtt}ms > ${GATE_MS}ms — out of paid flow`);
+    }
+
+    // A match is about to ask for money and someone's RTT is too high.
+    // Same shape as resolve()'s innocent-requeue, but the gated player is
+    // NOT a deserter (no strike, a pingTooHigh message instead of a kick).
+    private gateOut(match: PendingMatch, isGated: (m: PendingMember) => boolean): void {
+        this.matches = this.matches.filter((m) => m !== match);
+        const present = (m: PendingMember) => this.state.players.has(m.sessionId);
+        const innocents = match.members.filter((m) => !m.fulfilled && !isGated(m) && present(m));
+        for (let i = innocents.length - 1; i >= 0; i--) {
+            const m = innocents[i];
+            this.queue.unshift(m.sessionId);
+            this.state.players.get(m.sessionId)!.status = "queued";
+            const msg: MatchCancelledMessage = { requeued: true, reason: "opponent's connection was too slow" };
+            this.sendTo(m.sessionId, "matchCancelled", msg);
+        }
+        for (const m of match.members) {
+            if (isGated(m) && present(m)) this.notifyGated(m.sessionId);
+        }
+        this.syncPositions();
     }
 
     // ---- plumbing -----------------------------------------------------

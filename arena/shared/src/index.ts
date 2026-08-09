@@ -135,6 +135,18 @@ export type ArenaPhase = "waiting" | "live";
 // 1Hz, not physics at sim rate.
 export const LOBBY_ACCEPT_SECONDS = 15;  // free click window
 export const LOBBY_DEPOSIT_SECONDS = 30; // D77 ready-check: sign + confirm
+
+// A4.0 PING GATE — the RTT ceiling for REAL-MONEY entry. Above it, the
+// phantom-hitbox gap (others rendered ~RTT/2 behind) grows past a snake
+// radius and deaths start to feel unfair. Measured: at 200ms the gap is
+// ~30-50px (multiple radii); at this 130ms it falls to ~15px (~1 radius),
+// keeping the vast majority of players in while making unfair deaths
+// rare. Enforced server-side on the SERVER-measured RTT (rtt.ts), never
+// on the client's HUD number. The server may override via env
+// (PING_GATE_MS); this shared value is the default AND the client's
+// display fallback. NB: plain constant on purpose — `process.env` here
+// would crash the browser bundle (no `process` in Vite).
+export const PING_GATE_MS = 130;
 // What a lobby member is doing right now (synced on LobbyPlayer).
 export type LobbyStatus = "queued" | "accepting" | "depositing";
 
@@ -256,6 +268,14 @@ export interface DepositNowMessage {
 export interface MatchCancelledMessage {
     requeued: boolean;
     reason: string;
+}
+// Server -> client (A4.0): refused entry to real-money play because the
+// SERVER-measured RTT is above the ceiling. Not a desertion — no strike,
+// no penalty. The player can still play FREE; the numbers let the UI
+// explain exactly why and by how much.
+export interface PingTooHighMessage {
+    rttMs: number;  // this player's measured round-trip
+    limitMs: number; // the ceiling they exceeded (PING_GATE_MS or env)
 }
 
 // --- Shared math ----------------------------------------------------
