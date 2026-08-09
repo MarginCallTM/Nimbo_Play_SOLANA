@@ -1,0 +1,160 @@
+==============================================================
+  REQUIREMENTS & RUNBOOK — NIMBO ARENA (devnet)
+  Comment lancer TOUT l'environnement en une commande (Docker),
+  en local comme sur un VPS. Mis à jour 2026-08-08.
+  Guide de déploiement détaillé : DEPLOY.md
+==============================================================
+
+--------------------------------------------------------------
+0. CE QU'IL TE FAUT (une seule fois)
+--------------------------------------------------------------
+- Docker + Docker Compose v2      -> docker compose version
+- Node + Yarn                     -> pour ouvrir un round on-chain
+- Une clé Solana "authority"      -> signe les paiements
+                                     (par défaut ~/.config/solana/id.json)
+- Phantom en réseau DEVNET, déverrouillé
+
+--------------------------------------------------------------
+1. LE ROUND ON-CHAIN  ***  À REFAIRE ~TOUTES LES 24H  ***
+--------------------------------------------------------------
+Un round devnet vit ~24h. Quand il expire (le serveur logue "Ended" /
+"deadline passed" au boot, ou les dépôts commencent à échouer), il faut
+en ouvrir un nouveau et pointer le serveur dessus. TROIS gestes :
+
+# a) Ouvrir un round (imprime le ROUND_ID à la fin) :
+cd ~/dev/Nimbo_play
+yarn ts-mocha -p ./tsconfig.json -t 1000000 scripts/init-arena-devnet.ts
+
+# b) Copier le ROUND_ID imprimé dans le fichier .env :
+#      ROUND_ID=<le numéro>
+
+# c) Recréer le conteneur serveur avec le nouveau round (PAS de --build) :
+docker compose up -d
+#    -> Compose voit que l'environnement a changé et recrée UNIQUEMENT le
+#       serveur, en quelques secondes. Les dettes et le journal anti-rejeu
+#       survivent (volume Docker). Le client et le settlement ne bougent pas.
+
+# NB : c'est le seul geste récurrent. Automatiser cette rotation (parties
+#      de 30 min en prod) est une tâche future -> TODO.txt APROD.8.
+
+--------------------------------------------------------------
+2. LA CONFIG (.env)  — une seule fois, puis on n'y touche que le ROUND_ID
+--------------------------------------------------------------
+cd ~/dev/Nimbo_play
+cp .env.example .env
+# Puis remplir (voir .env.example pour le détail de CHAQUE variable) :
+#   PUBLIC_HOST=localhost                         (ou l'IP du VPS)
+#   ROUND_ID=<section 1>
+#   SETTLEMENT_SECRET=<openssl rand -hex 32>      (OBLIGATOIRE)
+#   AUTHORITY_KEYPAIR_HOST=~/.config/solana/id.json
+#
+# ⚠ SETTLEMENT_SECRET est OBLIGATOIRE : serveur et settlement sont deux
+#   conteneurs séparés (donc pas "en local" l'un pour l'autre), et le
+#   serveur refuse /settlement/* aux appelants non-loopback sans secret.
+#   Les deux services le partagent via ce même .env.
+#
+# Le .env contient des secrets : il est gitignoré (jamais poussé). Il faut
+# donc le créer sur CHAQUE machine (ton Mac, puis le VPS).
+
+--------------------------------------------------------------
+3. LANCER TOUT  ***  UNE SEULE COMMANDE  ***
+--------------------------------------------------------------
+cd ~/dev/Nimbo_play
+docker compose up --build        # 1er lancement (construit les 3 images)
+docker compose up -d             # ensuite : arrière-plan, sans reconstruire
+
+# QUAND faut-il --build ?
+#   - le tout premier lancement
+#   - tu changes PUBLIC_HOST ou les ports (l'URL du serveur est GRAVÉE dans
+#     le client AU BUILD -> il faut la re-graver)
+#   - tu changes du code
+# Sinon `docker compose up -d` suffit. Pour un simple changement de
+# ROUND_ID : voir section 1c (pas de --build).
+
+# Jouer :
+#   http://<PUBLIC_HOST>:<CLIENT_PORT>   (par défaut http://localhost:8080)
+
+--------------------------------------------------------------
+4. COMMANDES DOCKER UTILES
+--------------------------------------------------------------
+docker compose ps                     # état / santé des 3 services
+docker compose logs -f server         # suivre le serveur ("round N loaded")
+docker compose logs -f settlement     # suivre les paiements
+docker compose logs -f client         # suivre nginx (accès au jeu)
+docker compose down                   # tout arrêter (les dettes survivent)
+docker compose --profile full up -d   # + Postgres (indexer/historique)
+
+# Les 3 services lancés :
+#   arena_server      le jeu (remplace l'ancien `npm run dev:server`)
+#   arena_client      nginx qui sert le jeu construit (remplace `npm run dev:client`)
+#   arena_settlement  paie extractions & refunds (remplace `cargo run`)
+# Docker REMPLACE l'ancien montage "4 terminaux" : plus rien à lancer à la main.
+
+--------------------------------------------------------------
+5. AVERTISSEMENT PHANTOM AU DÉPÔT (normal, pas un bug)
+--------------------------------------------------------------
+Sur devnet, Phantom affiche parfois "Échec de la simulation de la
+transaction". C'est un problème CÔTÉ PHANTOM (sa simulation gère mal un
+programme custom sur devnet), PAS un vrai échec : la transaction est
+valide et fonctionne (fonds réellement transférés, prouvé par simulation
+RPC propre). C'est SÛR de cliquer "Confirmer". Le client l'annonce déjà
+sous le popup. Sur mainnet, ça disparaît.
+
+--------------------------------------------------------------
+6. RED-TEAM ÉCONOMIQUE — LES BOTS (optionnel, tourne EN NATIF)
+--------------------------------------------------------------
+Les bots à wallets financés ne sont PAS dockerisés (outil de test) : ils
+tournent en natif contre le serveur Docker déjà lancé.
+
+cd ~/dev/Nimbo_play/arena
+npm run fleet                 # crée/complète 6 wallets à 0.5 SOL
+npm run fleet 8 1.0           # variante : 8 wallets à 1.0 SOL (run long)
+SPAR_WALLETS=wallets SPAR_STAKE=0.1 npm run spar hunt:2 racoon:2 circle:1 camping:1
+
+# ⚠ AUTANT DE WALLETS QUE DE BOTS (hunt:4 racoon:2 circle:2 = 8 -> npm run fleet 8).
+
+# Conduites : hunt (interception du plus proche), racoon (farm discret,
+#   fuit <500px, extract dès +8 pellets), circle (fermier puis constricteur),
+#   camping (péage sur la zone d'extract), apex (bot pirate : mémoire des
+#   traînes, cut-off, ne chasse que plus petit), dodge (test rage-quit).
+# Rosters suggérés :
+#   baseline écosystème :  hunt:2 racoon:2 circle:1 camping:1
+#   stress prédation    :  apex:1 hunt:2 racoon:3
+#   test rentier (D79)  :  racoon:4 camping:2
+# Réglages (préfixes) : SPAR_STAKE=0.1-0.5 (mise aléatoire/vie),
+#                       SPAR_RESPAWN_MS=30000 (force le délai).
+
+# Sonde adverse du CHEMIN ARGENT (rejeu, binding wallet, plancher, etc.) :
+MONEY_WALLETS=wallets npm run money-attack
+# (5/5 côté dépôt + 4/4 côté lobby ; a besoin d'un round vivant + flotte financée)
+
+--------------------------------------------------------------
+7. PRÉ-VOL & DÉPANNAGE (leçons durement acquises)
+--------------------------------------------------------------
+# Réseau IPv4 vivant (IPv4 mort = RPC devnet injoignable) :
+curl -4 -s -m 6 -o /dev/null -w "%{http_code}\n" https://www.google.com   # -> 200
+# RPC devnet répond :
+curl -s -m 10 https://api.devnet.solana.com -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'                       # -> "ok"
+
+- Serveur en "FREE-ONLY mode" au boot -> ROUND_ID absent/faux dans .env
+  (section 1) ; les dépôts renverront 503.
+- "sign-in required" / SIWS "wrong domain" -> AUTH_DOMAIN doit valoir
+  PUBLIC_HOST:CLIENT_PORT (géré par le .env) ; Phantom déverrouillé + devnet.
+- Payout/refund n'arrive pas -> settlement pas lancé, ou SETTLEMENT_SECRET
+  différent entre serveur et settlement. Les créances sont durables : une
+  fois réglé, le settlement paie tout le retard.
+- "the RPC is unreachable" -> pré-vol ci-dessus (souvent IPv4 mort).
+- Un round refusé au boot ("already Ended") -> rouvrir un round (section 1).
+
+--------------------------------------------------------------
+8. SUR UN VPS (héberger pour des amis)
+--------------------------------------------------------------
+Exactement le même flux, avec dans .env :
+  PUBLIC_HOST=<IP publique du VPS>
+puis `docker compose up --build` (--build obligatoire car PUBLIC_HOST a
+changé -> l'URL du serveur se re-grave dans le client).
+En http sur IP, Phantom affichera l'avertissement de la section 5 : normal.
+Détail complet + passage HTTPS/domaine plus tard : DEPLOY.md.
+==============================================================

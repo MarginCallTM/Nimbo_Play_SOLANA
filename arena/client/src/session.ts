@@ -129,6 +129,16 @@ export async function startGameSession(
     const predictedHistory: { t: number; x: number; y: number }[] = [];
     const input: InputMessage = { angle: 0, boost: false };
     let rttMs = 0;
+
+    // DEV/TEST latency injection (A4.0): ?lat=200 in the URL adds ~200ms
+    // of round-trip so a real player can FEEL the phantom hitbox we are
+    // trying to fix. Half is added on the way OUT (inputs/ping arrive
+    // late -> input lag + the HUD rtt reads ~lat) and half on the way IN
+    // (every server message is held back -> others render ~rtt/2 behind
+    // their true position, exactly the real-latency path). 0 = off, and
+    // it is off unless the URL asks for it, so normal play is untouched.
+    const injectLagMs = Math.max(0, Number(new URLSearchParams(location.search).get("lat") ?? 0));
+    const injectHalf = injectLagMs / 2;
     let mouseX = 0;
     let mouseY = 0;
     let myId = "";
@@ -145,6 +155,16 @@ export async function startGameSession(
     statusEl.textContent = `connected — sessionId=${myId}`;
     // cheat-test hook: try room.send from the browser console
     (window as unknown as { room: typeof room }).room = room;
+
+    // Outgoing half of the latency injection: delay every send (inputs
+    // AND ping) by injectHalf. The delayed ping is also what makes the
+    // measured rttMs climb to ~injectLagMs, so the HUD shows the truth.
+    if (injectHalf > 0) {
+        type Sendable = (type: string | number, message?: unknown) => void;
+        const rawSend = room.send.bind(room) as Sendable;
+        (room as unknown as { send: Sendable }).send = (type, message) =>
+            window.setTimeout(() => { try { rawSend(type, message); } catch { /* room closed */ } }, injectHalf);
+    }
 
     // --- session ending ---------------------------------------------
     let finish!: (end: SessionEnd) => void;
@@ -449,7 +469,11 @@ export async function startGameSession(
     events.onmessage = (ev: MessageEvent<ArrayBuffer>) => {
         netBytes += ev.data.byteLength ?? 0;
         netPackets += 1;
-        forward?.(ev);
+        // Incoming half of the latency injection: hold every server
+        // message back by injectHalf so state (and thus every other
+        // snake) is seen late — the phantom hitbox, on demand.
+        if (injectHalf > 0) window.setTimeout(() => forward?.(ev), injectHalf);
+        else forward?.(ev);
     };
     intervals.push(setInterval(() => {
         const avg = netPackets ? Math.round(netBytes / netPackets) : 0;

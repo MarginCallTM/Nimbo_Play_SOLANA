@@ -8,6 +8,7 @@
         "spar": "tsx src/sparring.ts",
         "fleet": "tsx src/fleet.ts",
         "money-attack": "tsx src/money-attack.ts",
+        "collision-probe": "tsx src/collision-latency-probe.ts",
         "check": "tsc --noEmit"
     },
     "dependencies": {
