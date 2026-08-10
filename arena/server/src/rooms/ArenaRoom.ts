@@ -149,6 +149,7 @@ interface Segment {
     y: number;
     radius: number;
     owner: Player;
+    isHead: boolean; // A4.9 [death-geo]: head vs body-tracer of the killer
 }
 
 // Why a snake died — kept structured through the collision phase so
@@ -156,7 +157,8 @@ interface Segment {
 // before (2026-08-05): the death log printed a sessionId and a score.
 type DeathCause =
     | { kind: "border" }
-    | { kind: "collision"; killer: Player }; // we ran into a live body
+    // we ran into a live body; hit* records WHICH segment (for [death-geo])
+    | { kind: "collision"; killer: Player; hitX: number; hitY: number; hitIsHead: boolean };
 
 // What resolveDeath needs: one line for the log, and the same truth in
 // the shape the client is told (A4.6d).
@@ -165,6 +167,16 @@ interface DeathInfo {
     kind: DeathKind;
     killedBy?: string;
     killer?: Player; // server-side only: for the grace diagnostic
+}
+
+// Shortest absolute angular difference — a snake TURNING hard has a big
+// gap between where it points and where it wants to (its desiredAngle).
+// The [death-geo] tell: client body reconstruction diverges most here.
+function angleGap(a: number, b: number): number {
+    let d = (a - b) % (2 * Math.PI);
+    if (d > Math.PI) d -= 2 * Math.PI;
+    if (d < -Math.PI) d += 2 * Math.PI;
+    return Math.abs(d);
 }
 
 function explainDeath(
@@ -245,6 +257,13 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     protected rtt = new RttTracker();
     private rttCounter = 0;
     private rttLogCounter = 0;
+    // A4.9 — how often the authoritative body of each in-view enemy is
+    // pushed to clients. The client used to reconstruct it from head
+    // motion between AoI-entry seeds (every ~333ms), and that recon
+    // DIVERGES in tight turns (post-alpha "far death"). Re-syncing the
+    // real tracers ~15Hz stops the divergence from ever accumulating.
+    private bodyCounter = 0;
+    private static readonly BODY_SYNC_TICKS = 2; // ~15Hz
 
     messages = {
         // A4.0 — trustworthy RTT: the client echoes our server-stamped
@@ -623,9 +642,9 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             if (player.graced) return; // intangible: kills nothing
             const radius = describeSnakeFromScore(player.score).radius;
             if (radius > maxRadius) maxRadius = radius;
-            this.segmentGrid.insert({ x: player.x, y: player.y, radius, owner: player });
+            this.segmentGrid.insert({ x: player.x, y: player.y, radius, owner: player, isHead: true });
             for (const t of player.tracers) {
-                this.segmentGrid.insert({ x: t.x, y: t.y, radius, owner: player });
+                this.segmentGrid.insert({ x: t.x, y: t.y, radius, owner: player, isHead: false });
             }
         });
 
@@ -651,7 +670,13 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
                 const dy = seg.y - player.y;
                 const reach = radius + seg.radius;
                 if (dx * dx + dy * dy >= reach * reach) continue;
-                deaths.set(player, { kind: "collision", killer: seg.owner });
+                deaths.set(player, {
+                    kind: "collision",
+                    killer: seg.owner,
+                    hitX: seg.x,
+                    hitY: seg.y,
+                    hitIsHead: seg.isHead,
+                });
                 break;
             }
         });
@@ -705,6 +730,26 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             }
         }
 
+        // A4.9 [death-geo] — geometry of every REAL collision death (after
+        // the veto), so the post-alpha "far death" reports get measured.
+        // dist is always < reach (the detector guarantees it) — the tell is
+        // rtt (low = NOT latency) and the TURN gaps (client body recon
+        // diverges most in sharp turns/loops = the pretzel in the report).
+        for (const [victim, cause] of deaths) {
+            if (cause.kind !== "collision") continue;
+            const vR = describeSnakeFromScore(victim.score).radius;
+            const kR = describeSnakeFromScore(cause.killer.score).radius;
+            const dist = Math.hypot(cause.hitX - victim.x, cause.hitY - victim.y);
+            const rtt = this.rtt.get(victim.sessionId);
+            console.log(
+                `[death-geo] victim=${victim.sessionId.slice(0, 4)} killer=${cause.killer.sessionId.slice(0, 4)}` +
+                ` hit=${cause.hitIsHead ? "HEAD" : "body"} dist=${dist.toFixed(1)} reach=${(vR + kR).toFixed(1)}` +
+                ` rtt=${rtt !== undefined ? Math.round(rtt) : "?"}ms` +
+                ` vTurn=${angleGap(victim.angle, victim.desiredAngle).toFixed(2)}` +
+                ` kTurn=${angleGap(cause.killer.angle, cause.killer.desiredAngle).toFixed(2)}`,
+            );
+        }
+
         deaths.forEach((cause, player) => {
             this.resolveDeath(player, explainDeath(cause, player, deaths));
         });
@@ -736,6 +781,29 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         if (this.aoiCounter >= ArenaRoom.AOI_UPDATE_TICKS) {
             this.aoiCounter = 0;
             this.updateViews();
+        }
+
+        // A4.9 — CONTINUOUS body sync (~15Hz). The client renders the
+        // authoritative server tracers instead of a reconstruction that
+        // drifts in tight turns/loops. Uses the same "body" message as
+        // the AoI-entry seed; the client already resets to it on receipt,
+        // so the drift is bounded to BODY_SYNC_TICKS instead of the whole
+        // snake's time in view. (Scale later: only NEAR snakes + decimate
+        // — the collision-relevant ones — cf D85 / A4.9.)
+        this.bodyCounter += 1;
+        if (this.bodyCounter >= ArenaRoom.BODY_SYNC_TICKS) {
+            this.bodyCounter = 0;
+            for (const client of this.clients) {
+                const self = this.state.players.get(client.sessionId);
+                const inView = this.playersInView.get(client.sessionId);
+                if (!self || !inView) continue;
+                for (const p of inView) {
+                    if (p === self || p.tracers.length === 0) continue;
+                    const points: number[] = [];
+                    for (const t of p.tracers) points.push(t.x, t.y);
+                    client.send("body", { id: p.sessionId, points });
+                }
+            }
         }
 
         // [eco] conservation audit, every 10s. drift != 0 = a bug
