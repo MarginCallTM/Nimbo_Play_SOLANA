@@ -1,0 +1,40 @@
+# A4.8 — HTTPS for the beta (docker compose --profile https).
+#
+# Phantom (and the browser's secure-context rules) refuse to sign on a
+# bare public IP over http: `http://1.2.3.4:8080` is a NON-secure context.
+# Caddy fronts the whole stack on ONE hostname and gets a free Let's
+# Encrypt certificate automatically — no domain purchase needed if you
+# use an sslip.io host (`<your-ip>.sslip.io` resolves to your IP).
+#
+# Single origin, path-routed: the Colyseus game server (matchmaking, our
+# small HTTP API, and the play WebSocket) on its own paths; everything
+# else is the static web client. Caddy proxies WebSockets transparently.
+# NOTE: /settlement/* is deliberately NOT exposed — that traffic is
+# server<->settlement over the internal docker network, never public.
+
+{$SITE_HOST} {
+	# the play connection (Colyseus WebSocket) -> game server
+	@ws {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @ws {
+		reverse_proxy server:2567
+	}
+
+	# game server HTTP: Colyseus matchmaking + our API (round, SIWS)
+	handle /matchmake/* {
+		reverse_proxy server:2567
+	}
+	handle /round {
+		reverse_proxy server:2567
+	}
+	handle /auth/* {
+		reverse_proxy server:2567
+	}
+
+	# everything else: the static web client (nginx)
+	handle {
+		reverse_proxy client:80
+	}
+}

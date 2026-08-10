@@ -26,9 +26,10 @@ services:
     environment:
       ROUND_ID: ${ROUND_ID}                       # required for the PAID arena
       RPC_URL: ${RPC_URL}
-      # SIWS binds to the domain the browser is served from. The client
-      # signs with window.location.host, i.e. PUBLIC_HOST:CLIENT_PORT.
-      AUTH_DOMAIN: ${PUBLIC_HOST}:${CLIENT_PORT}
+      # SIWS binds to the domain the browser is served from (the client
+      # signs with window.location.host). Set AUTH_DOMAIN to exactly that:
+      # http local -> localhost:8080 ; VPS https -> <host>.sslip.io
+      AUTH_DOMAIN: ${AUTH_DOMAIN}
       SETTLEMENT_SECRET: ${SETTLEMENT_SECRET}
       DEMO_BOTS: ${DEMO_BOTS:-}
     ports:
@@ -48,8 +49,10 @@ services:
       context: ./arena
       dockerfile: client/Dockerfile
       args:
-        # Baked in at build time — the browser reaches the server here.
-        VITE_SERVER_URL: http://${PUBLIC_HOST}:${SERVER_PORT}
+        # Baked in at build time — the browser reaches the game server
+        # here. http local -> http://localhost:2567 ; VPS https (Caddy
+        # path-routes on ONE origin) -> https://<host>.sslip.io
+        VITE_SERVER_URL: ${VITE_SERVER_URL}
     container_name: arena_client
     restart: unless-stopped
     ports:
@@ -75,6 +78,29 @@ services:
       # the host; the container reads it at AUTHORITY_KEYPAIR=/keys/...
       - ${AUTHORITY_KEYPAIR_HOST}:/keys/authority.json:ro
 
+  # --- OPTIONAL: HTTPS reverse-proxy (profile "https") ----------------
+  # Fronts client + server on ONE hostname with an automatic Let's
+  # Encrypt cert. REQUIRED for a public deployment: Phantom refuses to
+  # sign on a non-secure context (http on a bare IP). Use an sslip.io
+  # SITE_HOST so no domain purchase is needed. Needs ports 80 + 443 open.
+  caddy:
+    image: caddy:2-alpine
+    container_name: arena_caddy
+    profiles: ["https"]
+    restart: unless-stopped
+    depends_on:
+      - client
+      - server
+    environment:
+      SITE_HOST: ${SITE_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # certificates persist across restarts
+      - caddy_config:/config
+
   # --- OPTIONAL: postgres for the indexer/history (profile "full") ----
   postgres:
     image: postgres:16
@@ -98,3 +124,5 @@ services:
 volumes:
   arena_data:
   lottery_pgdata:
+  caddy_data:
+  caddy_config:
