@@ -26,10 +26,10 @@ import {
     type JoinOptions,
 } from "@nimbo/shared";
 import { GameView } from "./render";
-import { sendJoinDeposit, signInWithSolana } from "./wallet";
+import { currentWallet, sendJoinDeposit, signInWithSolana } from "./wallet";
 import { showGameOver, showMenu } from "./menu";
 import { enterQueue } from "./lobby";
-import { startGameSession, type SessionEnd } from "./session";
+import { startGameSession, type DeathSnapshot, type SessionEnd } from "./session";
 
 const statusEl = document.getElementById("status")!;
 // Baked in at BUILD time by Vite (import.meta.env.VITE_*). Localhost is
@@ -46,7 +46,6 @@ const statusEl = document.getElementById("status")!;
 // `||` treats "" as "use the local default". A real VPS still overrides
 // it by setting VITE_SERVER_URL to its own https origin.
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:2567";
-const NAME = "tester";
 
 const solOf = (lamports: string) => (Number(lamports) / 1e9).toFixed(4);
 
@@ -73,10 +72,37 @@ function deathDetail(msg: DiedMessage): string {
     }
 }
 
+// A4.11 — ship the client's death reconstruction to the server for
+// review. Best-effort: throws on a non-2xx so the button can show
+// "failed"; the wallet is tagged so a wronged tester can be refunded.
+async function sendDeathReport(
+    end: { msg: DiedMessage; snapshot?: DeathSnapshot },
+    meta: { name: string; stakeSol: number },
+): Promise<void> {
+    const res = await fetch(`${SERVER_URL}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            name: meta.name,
+            wallet: currentWallet() ?? "unknown",
+            stakeSol: meta.stakeSol,
+            at: new Date().toISOString(),
+            death: end.msg,         // killedBy, kind, lamports, score
+            snapshot: end.snapshot, // client-vs-server positions at death
+        }),
+    });
+    if (!res.ok) throw new Error(`report failed (${res.status})`);
+}
+
 // One end screen per ending, then a clean slate: the reload kills
 // every buffer, handler and room handle with the page — exactly what
-// we want after leaving a run.
-async function endScreens(end: SessionEnd, isDemo: boolean): Promise<never> {
+// we want after leaving a run. reportMeta (paid runs only) arms the
+// "report this death" button.
+async function endScreens(
+    end: SessionEnd,
+    isDemo: boolean,
+    reportMeta?: { name: string; stakeSol: number },
+): Promise<never> {
     if (end.kind === "extracted") {
         await showGameOver({
             title: "EXTRACTED",
@@ -89,13 +115,17 @@ async function endScreens(end: SessionEnd, isDemo: boolean): Promise<never> {
             color: "#50fa7b",
         });
     } else if (end.kind === "died") {
+        const died = end; // keep the narrowing inside the report closure
         await showGameOver({
             title: "GAME OVER",
             amount: isDemo
-                ? `score ${end.msg.score.toFixed(1)} lost — demo, nothing real`
-                : `◎${solOf(end.msg.lamports)} left on the field`,
-            detail: deathDetail(end.msg),
+                ? `score ${died.msg.score.toFixed(1)} lost — demo, nothing real`
+                : `◎${solOf(died.msg.lamports)} left on the field`,
+            detail: deathDetail(died.msg),
             color: "#f63963",
+            onReport: !isDemo && reportMeta
+                ? () => sendDeathReport(died, reportMeta)
+                : undefined,
         });
     } else if (end.kind === "refunded") {
         // A4.2a — the launch gate timed out: nothing was at risk, the
@@ -120,7 +150,7 @@ async function endScreens(end: SessionEnd, isDemo: boolean): Promise<never> {
 async function main() {
     // Pixi first: if the GPU init fails there is nothing to play on
     const view = await GameView.create();
-    const { stakeSol } = await showMenu();
+    const { stakeSol, name } = await showMenu();
     const client = new Client(SERVER_URL);
 
     // D72/D76 — FREE routes to the demo: off-chain, bots, fake value,
@@ -130,7 +160,7 @@ async function main() {
         const demo = await startGameSession(
             client,
             DEMO_ROOM,
-            { protocol: PROTOCOL_VERSION, name: NAME, stake: 0 },
+            { protocol: PROTOCOL_VERSION, name, stake: 0 },
             view,
         );
         await endScreens(await demo.ended, true);
@@ -138,8 +168,28 @@ async function main() {
     }
 
     // --- paid path: queue first, money only when a match is certain --
-    statusEl.textContent = "sign in with your wallet…";
-    client.auth.token = await signInWithSolana(SERVER_URL);
+    // A4.11 — Phantom occasionally throws a transient error on signIn
+    // (stale connection state; a Kuala Lumpur tester at ~180ms hit it).
+    // Left raw it dead-ended the top-level catch as "ERROR: Unexpected
+    // Error" and only a manual refresh recovered. Catch it into an
+    // explicit, actionable screen + reload — a clean retry (fresh nonce,
+    // fresh wallet state). A user cancelling the dialog lands here too,
+    // and the neutral wording fits both.
+    let authToken: string;
+    try {
+        statusEl.textContent = "sign in with your wallet…";
+        authToken = await signInWithSolana(SERVER_URL);
+    } catch (err) {
+        await showGameOver({
+            title: "SIGN-IN DIDN'T GO THROUGH",
+            amount: (err as Error).message,
+            detail: "refresh the page or reopen Phantom",
+            color: "#ffcc66",
+        });
+        location.reload();
+        return;
+    }
+    client.auth.token = authToken;
 
     // Dev escape hatch (?direct): skip the queue and walk straight to
     // the arena door, old-flow style. LEGITIMATE by design — the lobby
@@ -154,15 +204,15 @@ async function main() {
         const direct = await startGameSession(
             client,
             ARENA_ROOM,
-            { protocol: PROTOCOL_VERSION, name: NAME, stake: stakeSol, txSig: directSig },
+            { protocol: PROTOCOL_VERSION, name, stake: stakeSol, txSig: directSig },
             view,
         );
-        await endScreens(await direct.ended, false);
+        await endScreens(await direct.ended, false, { name, stakeSol });
         return;
     }
 
     statusEl.textContent = "joining the queue…";
-    const lobby = await enterQueue(client, NAME);
+    const lobby = await enterQueue(client, name);
 
     // Track the queue outcome WITHOUT awaiting it: the warm-up loop
     // below races it against demo sessions. (Two separate flags — TS
@@ -183,7 +233,7 @@ async function main() {
         const warmup = await startGameSession(
             client,
             DEMO_ROOM,
-            { protocol: PROTOCOL_VERSION, name: NAME, stake: 0 },
+            { protocol: PROTOCOL_VERSION, name, stake: 0 },
             view,
         );
         await Promise.race([warmup.ended, queueSettled]);
@@ -229,12 +279,12 @@ async function main() {
     const arena = await startGameSession(
         client,
         ARENA_ROOM,
-        { protocol: PROTOCOL_VERSION, name: NAME, stake: stakeSol, txSig },
+        { protocol: PROTOCOL_VERSION, name, stake: stakeSol, txSig },
         view,
     );
     // the lobby removes us by itself once the deposit spawns
     // (fulfillment, server truth) — nothing to do with the handle here
-    await endScreens(await arena.ended, false);
+    await endScreens(await arena.ended, false, { name, stakeSol });
 }
 
 main().catch((err) => (statusEl.textContent = `ERROR: ${(err as Error).message}`));

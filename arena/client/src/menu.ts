@@ -8,6 +8,7 @@ import { STAKE_TIERS_SOL } from "@nimbo/shared";
 
 export interface MenuResult {
     stakeSol: number;
+    name: string; // A4.11 — chosen pseudo, so deaths are correlatable
 }
 
 // End-of-run screen (proto's openMenu("EXTRACTED +X" / "YOU DIED —")
@@ -20,6 +21,10 @@ export function showGameOver(opts: {
     amount: string;   // "◎0.0925 secured" | "◎0.0845 left on the field"
     detail?: string;  // optional smaller line (nonce, payout note)
     color: string;    // verdict color: green for cash-out, red for death
+    // A4.11 — when present, a "report this death" button appears (paid
+    // deaths only). It fires this callback, which POSTs the client-side
+    // reconstruction to the server so a suspect death can be reviewed.
+    onReport?: () => void | Promise<void>;
 }): Promise<void> {
     return new Promise((resolve) => {
         const overlay = document.createElement("div");
@@ -46,6 +51,31 @@ export function showGameOver(opts: {
             detail.textContent = opts.detail;
             detail.style.cssText = "font-size:13px;opacity:0.6";
             overlay.appendChild(detail);
+        }
+
+        // A4.11 — "report this death": for a suspect death, one click
+        // ships the client's view to the server. It stays on-screen (no
+        // reload) so the tester sees the confirmation before leaving.
+        if (opts.onReport) {
+            const report = document.createElement("button");
+            report.textContent = "⚠ REPORT THIS DEATH";
+            report.style.cssText = [
+                "margin-top:6px", "padding:10px 18px", "font:13px monospace",
+                "cursor:pointer", "color:#ffcc66", "background:transparent",
+                "border:1px solid #ffcc66", "border-radius:8px",
+            ].join(";");
+            report.onclick = async () => {
+                report.disabled = true;
+                report.style.cursor = "default";
+                report.textContent = "reporting…";
+                try {
+                    await opts.onReport!();
+                    report.textContent = "✓ reported — thanks";
+                } catch {
+                    report.textContent = "report failed — refresh & retry";
+                }
+            };
+            overlay.appendChild(report);
         }
 
         const btn = document.createElement("button");
@@ -86,9 +116,31 @@ export function showMenu(): Promise<MenuResult> {
         hint.style.cssText = "font-size:14px;opacity:0.7";
         overlay.appendChild(hint);
 
+        // A4.11 — name input. Persisted so friends don't retype it; it
+        // rides into the death log + the "killed by X" screen, which is
+        // what makes an "unfair death" report correlatable to a server
+        // log line. Falls back to "player" if left blank.
+        const nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.maxLength = 16;
+        nameInput.placeholder = "your name";
+        nameInput.value = localStorage.getItem("nimbo_name") ?? "";
+        nameInput.style.cssText = [
+            "padding:12px 16px", "font:16px monospace", "text-align:center",
+            "color:#e2e8f0", "background:#1a2340",
+            "border:1px solid #6a9bf5", "border-radius:8px", "outline:none",
+        ].join(";");
+        overlay.appendChild(nameInput);
+
         const row = document.createElement("div");
         row.style.cssText = "display:flex;gap:12px";
         overlay.appendChild(row);
+
+        const chosenName = () => {
+            const n = (nameInput.value.trim() || "player").slice(0, 16);
+            localStorage.setItem("nimbo_name", n);
+            return n;
+        };
 
         for (const tier of STAKE_TIERS_SOL) {
             const btn = document.createElement("button");
@@ -101,8 +153,9 @@ export function showMenu(): Promise<MenuResult> {
             btn.onmouseenter = () => (btn.style.background = "#27335c");
             btn.onmouseleave = () => (btn.style.background = "#1a2340");
             btn.onclick = () => {
+                const name = chosenName();
                 overlay.remove();
-                resolve({ stakeSol: tier });
+                resolve({ stakeSol: tier, name });
             };
             row.appendChild(btn);
         }

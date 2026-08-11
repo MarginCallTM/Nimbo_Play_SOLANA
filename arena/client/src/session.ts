@@ -63,9 +63,28 @@ interface NetPlayer {
     frozenBody: ArrayLike<number>;
 }
 
+// A4.11 — the client's own view at the instant of death, for the REPORT
+// button. Each in-view snake is captured BOTH as the client rendered it
+// (clientX/Y) AND as the server's synced state had it (serverX/Y). The
+// gap between the two IS the story of an "unfair" death: compare the
+// client-perceived distance to the killer against the server's death-geo
+// (dist/reach). Purely diagnostic — no gameplay effect.
+export interface DeathSnapshot {
+    myId: string;
+    snakes: {
+        id: string;
+        name: string;
+        isSelf: boolean;
+        clientX: number;
+        clientY: number;
+        serverX: number;
+        serverY: number;
+    }[];
+}
+
 // How a session ends — the session never decides what happens next.
 export type SessionEnd =
-    | { kind: "died"; msg: DiedMessage }
+    | { kind: "died"; msg: DiedMessage; snapshot?: DeathSnapshot }
     | { kind: "extracted"; msg: ExtractedMessage }
     | { kind: "refunded"; msg: RefundedMessage }
     | { kind: "stopped" }; // external stop() or connection lost
@@ -515,9 +534,31 @@ export async function startGameSession(
         bodies.set(msg.id, body);
     });
 
+    // A4.11 — freeze the client's view at the instant of death for the
+    // REPORT button: every in-view snake as the CLIENT rendered it
+    // (predicted for us, interpolated remoteRender for others) AND as the
+    // server's synced state had it. The divergence is what a report needs.
+    function buildDeathSnapshot(): DeathSnapshot {
+        const snakes: DeathSnapshot["snakes"] = [];
+        for (const [id, p] of players) {
+            const isSelf = id === myId;
+            const render = isSelf ? predicted : remoteRender.get(id);
+            snakes.push({
+                id,
+                name: p.name,
+                isSelf,
+                clientX: render?.x ?? p.x, // fall back to server pos if unrendered
+                clientY: render?.y ?? p.y,
+                serverX: p.x,
+                serverY: p.y,
+            });
+        }
+        return { myId, snakes };
+    }
+
     // --- endings ----------------------------------------------------
     room.onMessage("extracted", (msg: ExtractedMessage) => end({ kind: "extracted", msg }));
-    room.onMessage("died", (msg: DiedMessage) => end({ kind: "died", msg }));
+    room.onMessage("died", (msg: DiedMessage) => end({ kind: "died", msg, snapshot: buildDeathSnapshot() }));
     // A4.2a — the launch gate gave up (no partner): the deposit is on
     // its way back through the settlement outbox.
     room.onMessage("refunded", (msg: RefundedMessage) => end({ kind: "refunded", msg }));

@@ -742,7 +742,8 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             const dist = Math.hypot(cause.hitX - victim.x, cause.hitY - victim.y);
             const rtt = this.rtt.get(victim.sessionId);
             console.log(
-                `[death-geo] victim=${victim.sessionId.slice(0, 4)} killer=${cause.killer.sessionId.slice(0, 4)}` +
+                `[death-geo] victim=${victim.name}[${victim.sessionId.slice(0, 4)}]` +
+                ` killer=${cause.killer.name}[${cause.killer.sessionId.slice(0, 4)}]` +
                 ` hit=${cause.hitIsHead ? "HEAD" : "body"} dist=${dist.toFixed(1)} reach=${(vR + kR).toFixed(1)}` +
                 ` rtt=${rtt !== undefined ? Math.round(rtt) : "?"}ms` +
                 ` vTurn=${angleGap(victim.angle, victim.desiredAngle).toFixed(2)}` +

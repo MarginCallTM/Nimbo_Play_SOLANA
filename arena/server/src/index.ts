@@ -8,6 +8,7 @@ import { issueChallenge } from "./auth";
 import { loadRound, roundInfo } from "./chain";
 import { loadDepositLog } from "./deposit-log";
 import { ackClaim, loadOutbox, pendingClaims } from "./outbox";
+import { recordReport } from "./reports";
 
 // A3.2 — know which round we escrow against BEFORE accepting anyone:
 // a misconfigured round must kill the boot, not the first paid join.
@@ -74,6 +75,29 @@ const server = defineServer({
                 return;
             }
             res.json(info);
+        });
+        // A4.11 — player death reports (the client's reconstruction of a
+        // suspect death). CORS-open like /auth and /round: the browser
+        // POSTs cross-origin when running local (client :8080 -> server
+        // :2567); on the VPS it is same-origin behind Caddy. Body is
+        // capped and written VERBATIM for manual review — never trusted
+        // for anything automatic, no money moves here.
+        app.options("/report", (_req, res) => {
+            res.set("Access-Control-Allow-Origin", "*");
+            res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+            res.set("Access-Control-Allow-Headers", "Content-Type");
+            res.sendStatus(204);
+        });
+        app.post("/report", express.json({ limit: "64kb" }), (req, res) => {
+            res.set("Access-Control-Allow-Origin", "*");
+            if (!req.body || typeof req.body !== "object") {
+                res.status(400).json({ error: "expected a JSON body" });
+                return;
+            }
+            recordReport(req.body);
+            const { name, wallet } = req.body as { name?: string; wallet?: string };
+            console.log(`[report] death report from ${name ?? "?"} (${wallet ?? "?"})`);
+            res.json({ ok: true });
         });
         // A3.3 — the settlement service's two endpoints. NO CORS on
         // purpose: these are server-to-server, a browser has no

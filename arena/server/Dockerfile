@@ -26,6 +26,7 @@ WORKDIR /app/server
 # not forget who was paid or which deposit signatures were spent.
 ENV OUTBOX_FILE=/data/settlement-outbox.jsonl
 ENV DEPOSIT_LOG_FILE=/data/consumed-deposits.jsonl
+ENV REPORTS_FILE=/data/death-reports.jsonl
 
 EXPOSE 2567
 CMD ["npx", "tsx", "src/index.ts"]

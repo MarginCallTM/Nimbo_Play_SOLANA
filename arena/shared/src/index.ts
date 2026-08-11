@@ -155,7 +155,12 @@ export const LOBBY_DEPOSIT_SECONDS = 30; // D77 ready-check: sign + confirm
 // (PING_GATE_MS); this shared value is the default AND the client's
 // display fallback. NB: plain constant on purpose — `process.env` here
 // would crash the browser bundle (no `process` in Vite).
-export const PING_GATE_MS = 130;
+// A4.11 (2026-08-11): raised 130 -> 300 as a LIVE TEST so the user's
+// overseas friends (KL ~180ms, Bali ~200ms) can play PAID and report
+// whether high-latency collisions feel unfair. The rewind's fairness at
+// this latency is NOT yet validated — this test IS the measurement
+// (A4.11.b). Revert / retune once the feedback is in.
+export const PING_GATE_MS = 300;
 // What a lobby member is doing right now (synced on LobbyPlayer).
 export type LobbyStatus = "queued" | "accepting" | "depositing";
 

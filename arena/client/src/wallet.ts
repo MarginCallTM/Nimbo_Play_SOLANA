@@ -66,6 +66,17 @@ function getProvider(): PhantomProvider {
     return provider;
 }
 
+// A4.11 — the connected wallet, best-effort (undefined if not connected
+// or Phantom absent). Tags a death REPORT so a wronged tester can be
+// refunded by address. Never throws — a report is purely diagnostic.
+export function currentWallet(): string | undefined {
+    try {
+        return getProvider().publicKey?.toBase58();
+    } catch {
+        return undefined;
+    }
+}
+
 function toBase64(bytes: Uint8Array): string {
     let bin = "";
     for (const b of bytes) bin += String.fromCharCode(b);

@@ -32,6 +32,10 @@
 	handle /auth/* {
 		reverse_proxy server:2567
 	}
+	# A4.11 — death reports POST to the game server
+	handle /report {
+		reverse_proxy server:2567
+	}
 
 	# everything else: the static web client (nginx)
 	handle {
