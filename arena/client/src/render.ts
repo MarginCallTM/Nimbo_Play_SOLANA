@@ -279,11 +279,19 @@ export class GameView {
             .circle(x, y, EXTRACT_RADIUS)
             .fill({ color, alpha: pulse })
             .stroke({ width: 4, color, alpha: 0.9 });
-        // own channel: a ring filling clockwise from 12 o'clock
+        // own channel: a ring filling clockwise from 12 o'clock. Drawn
+        // JUST INSIDE the zone edge, and with an explicit moveTo to the
+        // arc's start — without it, Pixi connects a stray line from the
+        // circle above to the arc's start (the "green line into the sky"
+        // bug). The moveTo opens a fresh sub-path so only the arc strokes.
         if (channelFrames > 0) {
             const frac = Math.min(channelFrames / EXTRACT_CHANNEL_FRAMES, 1);
+            const rr = EXTRACT_RADIUS - 8; // hug the boundary from inside
+            const a0 = -Math.PI / 2;       // 12 o'clock
+            const a1 = a0 + frac * 2 * Math.PI;
             this.extractGfx
-                .arc(x, y, EXTRACT_RADIUS + 12, -Math.PI / 2, -Math.PI / 2 + frac * 2 * Math.PI)
+                .moveTo(x + Math.cos(a0) * rr, y + Math.sin(a0) * rr)
+                .arc(x, y, rr, a0, a1)
                 .stroke({ width: 6, color: 0x50fa7b });
         }
         this.extractLabel.visible = true;

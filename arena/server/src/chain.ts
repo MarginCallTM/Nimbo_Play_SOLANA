@@ -78,41 +78,73 @@ export async function loadRound(): Promise<void> {
         console.log("[chain] ROUND_ID not set — FREE-ONLY mode, paid joins refused");
         return;
     }
-    const roundId = BigInt(raw);
-    const pda = roundPda(roundId);
-    const info = await connection.getAccountInfo(pda);
-    if (info === null) {
-        throw new Error(`[chain] round ${roundId} not found on ${RPC_URL} — run init-arena-devnet`);
-    }
-    const round = decodeRoundAccount(info.data);
-    if (!round) throw new Error("[chain] account exists but is not a Round (wrong ROUND_ID?)");
-    if (!round.isOpen) throw new Error(`[chain] round ${roundId} is already Ended`);
-    // D74 — the pellet cut is OUR accounting on top of vault money; a
-    // round that ALSO routes lamports to the reserve PDA would count
-    // the same value twice (pellets backed by lamports the vault
-    // doesn't hold). Refuse to boot rather than run insolvent.
-    if (round.reserveBps !== 0) {
-        throw new Error(
-            `[chain] round ${roundId} has reserve_bps=${round.reserveBps} — ` +
-            "D74 requires 0 (pellet cut is server-side); open a fresh round",
+    // A4.10 (amends A3.2) — a SET-but-invalid round no longer kills the
+    // process. It disables the PAID arena (free-only) with a loud
+    // warning, so FREE play never depends on a healthy paid round.
+    //
+    // The money-safety invariant is intact: with no `current` round,
+    // roundInfo() stays undefined, GET /round returns 503, and every
+    // deposit is refused (resolveJoinPayment). What changed vs A3.2's
+    // "kill the boot": a misconfigured PAID deployment now fails
+    // loud-but-alive (nobody can pay, the log screams) instead of dead.
+    // No money is ever mishandled either way.
+    const reason = await loadPaidRound(raw);
+    if (reason) {
+        console.warn(
+            `[chain] ⚠️  PAID ARENA DISABLED — ${reason}.\n` +
+            "[chain] ⚠️  Running FREE-ONLY. Open a fresh round to enable paid play.",
         );
     }
-    const nowS = Math.floor(Date.now() / 1000);
-    if (Number(round.endTimestamp) <= nowS) {
-        throw new Error(`[chain] round ${roundId} deadline has passed — open a fresh one`);
+}
+
+// Validate the configured round WITHOUT throwing: returns undefined on
+// success (and sets `current`), or a human-readable reason string on any
+// failure — parse error, RPC blip, wrong/ended/expired round. The caller
+// turns a reason into a free-only downgrade, never a crash.
+async function loadPaidRound(raw: string): Promise<string | undefined> {
+    let roundId: bigint;
+    try {
+        roundId = BigInt(raw);
+    } catch {
+        return `ROUND_ID "${raw}" is not a valid integer`;
     }
-    current = {
-        roundId,
-        pda,
-        treasury: round.treasury,
-        rakeBps: round.rakeBps,
-        reserveBps: round.reserveBps,
-        endTimestamp: round.endTimestamp,
-    };
-    console.log(
-        `[chain] round ${roundId} loaded — rake ${round.rakeBps}bps,` +
-        ` reserve ${round.reserveBps}bps, ends ${new Date(Number(round.endTimestamp) * 1000).toISOString()}`,
-    );
+    try {
+        const pda = roundPda(roundId);
+        const info = await connection.getAccountInfo(pda);
+        if (info === null) {
+            return `round ${roundId} not found on ${RPC_URL} — run init-arena-devnet`;
+        }
+        const round = decodeRoundAccount(info.data);
+        if (!round) return `account for round ${roundId} is not a Round (wrong ROUND_ID?)`;
+        if (!round.isOpen) return `round ${roundId} is already Ended`;
+        // D74 — the pellet cut is OUR accounting on top of vault money; a
+        // round that ALSO routes lamports to the reserve PDA would count
+        // the same value twice (pellets backed by lamports the vault
+        // doesn't hold). Disable paid rather than run insolvent.
+        if (round.reserveBps !== 0) {
+            return `round ${roundId} has reserve_bps=${round.reserveBps} — D74 requires 0 (pellet cut is server-side)`;
+        }
+        const nowS = Math.floor(Date.now() / 1000);
+        if (Number(round.endTimestamp) <= nowS) {
+            return `round ${roundId} deadline has passed`;
+        }
+        current = {
+            roundId,
+            pda,
+            treasury: round.treasury,
+            rakeBps: round.rakeBps,
+            reserveBps: round.reserveBps,
+            endTimestamp: round.endTimestamp,
+        };
+        console.log(
+            `[chain] round ${roundId} loaded — rake ${round.rakeBps}bps,` +
+            ` reserve ${round.reserveBps}bps, ends ${new Date(Number(round.endTimestamp) * 1000).toISOString()}`,
+        );
+        return undefined;
+    } catch (err) {
+        // RPC/network failure at boot: disable paid, keep FREE alive.
+        return `could not verify round ${roundId} (${(err as Error).message})`;
+    }
 }
 
 // What GET /round serves the client (round_id as STRING: u64 does not

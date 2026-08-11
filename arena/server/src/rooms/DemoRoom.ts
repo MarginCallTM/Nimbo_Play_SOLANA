@@ -34,7 +34,13 @@ const BOT_NAMES = ["nibbler", "coily", "wormy", "noodle", "slinky", "zigzag", "l
 // Sparring override (2026-08-05): DEMO_BOTS=0 empties the tutorial
 // population so a human and ONE scripted sparring bot can rehearse a
 // clean 1v1 (A4.6 adversarial testing). Unset = the tutorial default.
-const BOT_COUNT = Number(process.env.DEMO_BOTS ?? DEMO_BOT_COUNT);
+//
+// A4.10 fix: EMPTY string means "default", NOT zero. The .env(.example)
+// ships `DEMO_BOTS=` empty as a placeholder for "unset", but Number("")
+// is 0 — which silently emptied the FREE world (the "free doesn't work"
+// report). Only an EXPLICIT number (including 0 for sparring) overrides.
+const rawBots = process.env.DEMO_BOTS;
+const BOT_COUNT = rawBots === undefined || rawBots === "" ? DEMO_BOT_COUNT : Number(rawBots);
 
 export class DemoRoom extends ArenaRoom {
     // Bots by sessionId, with their target commitment (the loadtest
@@ -62,8 +68,8 @@ export class DemoRoom extends ArenaRoom {
     }
 
     // Tutorial rule (2026-08-05, after the "bots disparus" report):
-    // spawn NEAR the action, never in a desert. 6 bots on a radius-
-    // 3000 disc = ~5% of the map on screen — a random spawn lands out
+    // spawn NEAR the action, never in a desert. 6 bots on a large
+    // disc = a sliver of the map on screen — a random spawn lands out
     // of sight of everyone almost every time (measured: nearest bot
     // 1000-2500px away). The demo exists to SHOW the game; anchor
     // every human spawn within sight of a bot. Demo-only: in the paid

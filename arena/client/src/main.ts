@@ -38,7 +38,14 @@ const statusEl = document.getElementById("status")!;
 // machine. The SIWS domain is separate — the client always signs with
 // window.location.host (wallet.ts), so the SERVER's AUTH_DOMAIN must
 // match wherever this bundle is served from.
-const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? "http://localhost:2567";
+// `||` not `??` ON PURPOSE: docker-compose passes VITE_SERVER_URL as an
+// EMPTY string when it is unset in .env (build arg `${VITE_SERVER_URL}`).
+// `??` only defaults on undefined, so an empty value baked "" — and
+// Colyseus then falls back to the PAGE ORIGIN (the nginx client on :8080)
+// instead of the game server on :2567, silently breaking every join.
+// `||` treats "" as "use the local default". A real VPS still overrides
+// it by setting VITE_SERVER_URL to its own https origin.
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:2567";
 const NAME = "tester";
 
 const solOf = (lamports: string) => (Number(lamports) / 1e9).toFixed(4);

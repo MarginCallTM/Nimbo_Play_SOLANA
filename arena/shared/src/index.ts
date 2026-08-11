@@ -36,7 +36,12 @@ export const DEMO_BOT_COUNT = 6;      // same population as the proto
 // Shared because the client will PREDICT its own movement (A1.5) with
 // the exact same numbers the server simulates with. Units are "per
 // 60fps frame", inherited from the proto so every value keeps meaning.
-export const WORLD_RADIUS = 3000;
+// A4.10: shrunk 3000 -> 1400 for the low-population beta. A 3000 disc is
+// sized for a ~500-player portal; at 4-8 players nobody ever crosses paths
+// (AoI ~1200px = you see ~1/5 of the width). Smaller map packs players AND
+// deposit-backed pellets denser per screen WITHOUT minting value (same
+// pellets, less area). Later: make this a function of live population.
+export const WORLD_RADIUS = 1400;
 export const SNAKE_SPEED = 4;
 export const SNAKE_BOOST_SPEED = 8;
 export const SNAKE_TURN_SPEED = 0.08; // rad per frame
@@ -70,7 +75,11 @@ export const DEATH_ORB_VALUE = 5;      // score per corpse orb
 // Boost drain (proto A0.3 playtest values): sprinting burns score in
 // ORB QUANTA — what the snake loses exists in the world as eatable
 // orbs at its tail. Below one orb of score, the sprint cuts off.
-export const SNAKE_BOOST_COST = 0.25;  // score per 60fps frame
+// A4.10: softened 0.25 -> 0.08 for the beta. At 0.25 (15 score/s) sprint
+// felt too expensive to ever use, so movement stayed slow. This is a FEEL
+// knob, not an economy change: what's burned is dropped as eatable orbs at
+// the tail (BOOST_ORB_VALUE), so the value stays in the world.
+export const SNAKE_BOOST_COST = 0.08;  // score per 60fps frame
 export const BOOST_ORB_VALUE = 1.5;    // orb size dropped at the tail
 
 // Area of Interest (A1.8): each client is only subscribed to entities
@@ -153,11 +162,11 @@ export type LobbyStatus = "queued" | "accepting" | "depositing";
 // --- Extract points (A0.6 rules, ported to the authoritative server) --
 // All durations in 60fps FRAMES (the proto's time unit — the server
 // tick advances by TICK_DT frames, so these transpose unchanged).
-export const EXTRACT_RADIUS = 130;         // px, zone radius
+export const EXTRACT_RADIUS = 200;         // px, zone radius (A4.10: 130 -> 200, easier to hold)
 export const EXTRACT_SPAWN_COOLDOWN = 600; // ~10s between extract points
 export const EXTRACT_TTL = 2400;           // ~40s: the zone's full lifetime
 export const EXTRACT_WARNING_FRAMES = 180; // last 3s: bomb blink, then it KILLS
-export const EXTRACT_CHANNEL_FRAMES = 240; // 4s of channeling to cash out
+export const EXTRACT_CHANNEL_FRAMES = 720; // 12s of channeling to cash out (A4.10: 4s -> 12s, riskier)
 
 // --- Messages -------------------------------------------------------
 
