@@ -84,7 +84,10 @@ async function sendDeathReport(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             name: meta.name,
-            wallet: currentWallet() ?? "unknown",
+            // FREE runs report with the pseudo ONLY (no wallet) — stakeSol
+            // 0 tags them. Paid runs carry the address so a wronged tester
+            // can be refunded.
+            wallet: meta.stakeSol === 0 ? "free" : (currentWallet() ?? "unknown"),
             stakeSol: meta.stakeSol,
             at: new Date().toISOString(),
             death: end.msg,         // killedBy, kind, lamports, score
@@ -123,7 +126,10 @@ async function endScreens(
                 : `◎${solOf(died.msg.lamports)} left on the field`,
             detail: deathDetail(died.msg),
             color: "#f63963",
-            onReport: !isDemo && reportMeta
+            // A4.11 (alpha, TEMPORARY — to remove later): report enabled
+            // in FREE too (pseudo only, no wallet) to maximise early
+            // feedback. reportMeta arms it; it is now passed on both paths.
+            onReport: reportMeta
                 ? () => sendDeathReport(died, reportMeta)
                 : undefined,
         });
@@ -163,7 +169,7 @@ async function main() {
             { protocol: PROTOCOL_VERSION, name, stake: 0 },
             view,
         );
-        await endScreens(await demo.ended, true);
+        await endScreens(await demo.ended, true, { name, stakeSol: 0 });
         return;
     }
 
