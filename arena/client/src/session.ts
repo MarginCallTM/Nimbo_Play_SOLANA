@@ -71,6 +71,11 @@ interface NetPlayer {
 // (dist/reach). Purely diagnostic — no gameplay effect.
 export interface DeathSnapshot {
     myId: string;
+    // A4.11.d — my rendered head at the instant of death: the reference
+    // point every bodyDist below is measured from (the same head the
+    // server tested collisions against). Lets a reviewer recompute.
+    myHeadX: number;
+    myHeadY: number;
     snakes: {
         id: string;
         name: string;
@@ -79,6 +84,15 @@ export interface DeathSnapshot {
         clientY: number;
         serverX: number;
         serverY: number;
+        // A4.11.d — the head fields above miss the case that kills most:
+        // running into a killer's BODY. For each OTHER snake, the closest
+        // body segment to my head AS THE CLIENT RENDERED IT, plus its
+        // distance. Cross-reference bodyDist against the server [death-geo]
+        // dist/reach to judge a body-collision death. Absent for self and
+        // for snakes with no reconstructed body in view.
+        bodyX?: number;
+        bodyY?: number;
+        bodyDist?: number;
     }[];
 }
 
@@ -540,10 +554,15 @@ export async function startGameSession(
     // server's synced state had it. The divergence is what a report needs.
     function buildDeathSnapshot(): DeathSnapshot {
         const snakes: DeathSnapshot["snakes"] = [];
+        // My head as I rendered it (predicted). Fall back to the server
+        // state if prediction never initialized. This is the point every
+        // bodyDist is measured from — the same head the server collides.
+        const myHeadX = predicted.initialized ? predicted.x : (players.get(myId)?.x ?? 0);
+        const myHeadY = predicted.initialized ? predicted.y : (players.get(myId)?.y ?? 0);
         for (const [id, p] of players) {
             const isSelf = id === myId;
             const render = isSelf ? predicted : remoteRender.get(id);
-            snakes.push({
+            const entry: DeathSnapshot["snakes"][number] = {
                 id,
                 name: p.name,
                 isSelf,
@@ -551,9 +570,33 @@ export async function startGameSession(
                 clientY: render?.y ?? p.y,
                 serverX: p.x,
                 serverY: p.y,
-            });
+            };
+            // A4.11.d — for other snakes, scan the CLIENT-rendered trail
+            // (bodies = the dead-reckoned segments we actually drew) for
+            // the segment closest to my head. That segment is what a body
+            // collision hits; capturing it makes such deaths judgeable.
+            if (!isSelf) {
+                const body = bodies.get(id);
+                if (body && body.length > 0) {
+                    let bestD2 = Infinity;
+                    let bx = 0;
+                    let by = 0;
+                    for (const seg of body) {
+                        const d2 = (seg.x - myHeadX) ** 2 + (seg.y - myHeadY) ** 2;
+                        if (d2 < bestD2) {
+                            bestD2 = d2;
+                            bx = seg.x;
+                            by = seg.y;
+                        }
+                    }
+                    entry.bodyX = bx;
+                    entry.bodyY = by;
+                    entry.bodyDist = Math.sqrt(bestD2);
+                }
+            }
+            snakes.push(entry);
         }
-        return { myId, snakes };
+        return { myId, myHeadX, myHeadY, snakes };
     }
 
     // --- endings ----------------------------------------------------
