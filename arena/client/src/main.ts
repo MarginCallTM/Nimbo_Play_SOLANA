@@ -26,7 +26,7 @@ import {
     type JoinOptions,
 } from "@nimbo/shared";
 import { GameView } from "./render";
-import { currentWallet, sendJoinDeposit, signInWithSolana } from "./wallet";
+import { currentWallet, sendJoinDeposit, signInWithSolana, type JoinDeposit } from "./wallet";
 import { showGameOver, showMenu } from "./menu";
 import { enterQueue } from "./lobby";
 import { startGameSession, type DeathSnapshot, type SessionEnd } from "./session";
@@ -68,6 +68,10 @@ function deathDetail(msg: DiedMessage): string {
         case "bomb": return "the extract zone closed on you";
         case "collision": return `you ran into ${who}`;
         case "head-on": return `head-on with ${who} — you both died`;
+        // AF.1(f) — never a surprise: two warnings preceded this, and
+        // extraction was open the whole time. Say so plainly rather than
+        // leaving the player to suspect a bug.
+        case "drain": return "the arena cycle closed while you were still in it";
         default: return "";
     }
 }
@@ -205,12 +209,18 @@ async function main() {
     // guard makes those untestable alone otherwise).
     if (new URLSearchParams(location.search).has("direct")) {
         statusEl.textContent = depositStatus(stakeSol);
-        const directSig = await sendJoinDeposit(SERVER_URL, stakeSol);
+        const deposit = await sendJoinDeposit(SERVER_URL, stakeSol);
         statusEl.textContent = "deposit confirmed — joining the arena…";
         const direct = await startGameSession(
             client,
             ARENA_ROOM,
-            { protocol: PROTOCOL_VERSION, name, stake: stakeSol, txSig: directSig },
+            {
+                protocol: PROTOCOL_VERSION,
+                name,
+                stake: stakeSol,
+                txSig: deposit.signature,
+                roundId: deposit.roundId,
+            },
             view,
         );
         await endScreens(await direct.ended, false, { name, stakeSol });
@@ -262,12 +272,12 @@ async function main() {
     }
 
     // --- deposit window (D81 step 2): 30s to sign and confirm --------
-    let txSig: string;
+    let deposit: JoinDeposit;
     try {
         statusEl.textContent = "match ready — sign in for the arena…";
         client.auth.token = await signInWithSolana(SERVER_URL);
         statusEl.textContent = depositStatus(stakeSol);
-        txSig = await sendJoinDeposit(SERVER_URL, stakeSol);
+        deposit = await sendJoinDeposit(SERVER_URL, stakeSol);
     } catch (err) {
         // Phantom rejected / tx failed / window expired server-side:
         // no deposit happened, nothing is lost — back to the menu.
@@ -285,7 +295,13 @@ async function main() {
     const arena = await startGameSession(
         client,
         ARENA_ROOM,
-        { protocol: PROTOCOL_VERSION, name, stake: stakeSol, txSig },
+        {
+            protocol: PROTOCOL_VERSION,
+            name,
+            stake: stakeSol,
+            txSig: deposit.signature,
+            roundId: deposit.roundId,
+        },
         view,
     );
     // the lobby removes us by itself once the deposit spawns

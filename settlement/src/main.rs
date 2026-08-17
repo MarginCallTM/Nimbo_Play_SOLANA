@@ -35,11 +35,36 @@ struct Claim {
     round_id: String,
 }
 
+/// AF.1 — one requested round operation, as served by
+/// GET /settlement/rounds. The game server decides WHEN rounds rotate;
+/// this service is the only thing that can sign, and it verifies every
+/// request against the chain before doing so.
+#[derive(Deserialize)]
+struct RoundOp {
+    kind: String, // "open" | "end"
+    #[serde(rename = "roundId")]
+    round_id: String,
+    /// "open" only: the on-chain deadline to set (unix seconds).
+    #[serde(rename = "endTimestamp")]
+    end_timestamp: Option<String>,
+}
+
+impl RoundOp {
+    /// Mirrors the server's opKey(): what an ack is keyed by.
+    fn key(&self) -> String {
+        format!("{}:{}", self.kind, self.round_id)
+    }
+}
+
 struct Config {
     game_server: String,
     rpc_url: String,
     secret: Option<String>,
     poll: Duration,
+    /// Where the rake goes on rounds this service opens. Defaults to the
+    /// authority itself (devnet convention, same as init-arena-devnet).
+    treasury: Option<String>,
+    rake_bps: u16,
 }
 
 fn env_or(name: &str, default: &str) -> String {
@@ -52,6 +77,13 @@ fn load_config() -> Result<Config> {
         rpc_url: env_or("RPC_URL", "https://api.devnet.solana.com"),
         secret: std::env::var("SETTLEMENT_SECRET").ok(),
         poll: Duration::from_secs(env_or("POLL_INTERVAL_S", "5").parse().unwrap_or(5)),
+        // An env var set to "" is NOT absent (docker-compose passes empty
+        // strings for unset values — the DEMO_BOTS="" trap of A4.10).
+        // Empty must mean "use the authority", not "parse '' as a key".
+        treasury: std::env::var("TREASURY_PUBKEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        rake_bps: env_or("RAKE_BPS", "550").parse().unwrap_or(550),
     })
 }
 
@@ -91,6 +123,101 @@ fn ack(cfg: &Config, http: &reqwest::blocking::Client, nonce: &str, tx_sig: &str
         return Err(anyhow!("ack: HTTP {}", res.status()));
     }
     Ok(())
+}
+
+fn fetch_pending_rounds(cfg: &Config, http: &reqwest::blocking::Client) -> Result<Vec<RoundOp>> {
+    let mut req = http.get(format!("{}/settlement/rounds", cfg.game_server));
+    if let Some(s) = &cfg.secret {
+        req = req.header("x-settlement-secret", s);
+    }
+    let res = req.send().context("GET /settlement/rounds")?;
+    if !res.status().is_success() {
+        return Err(anyhow!("rounds: HTTP {}", res.status()));
+    }
+    res.json().context("rounds: bad JSON")
+}
+
+fn ack_round(cfg: &Config, http: &reqwest::blocking::Client, key: &str, tx_sig: &str) -> Result<()> {
+    let mut req = http.post(format!("{}/settlement/rounds/ack", cfg.game_server));
+    if let Some(s) = &cfg.secret {
+        req = req.header("x-settlement-secret", s);
+    }
+    let res = req
+        .json(&serde_json::json!({ "key": key, "txSig": tx_sig }))
+        .send()
+        .context("POST /settlement/rounds/ack")?;
+    if !res.status().is_success() {
+        return Err(anyhow!("rounds ack: HTTP {}", res.status()));
+    }
+    Ok(())
+}
+
+/// Execute ONE round operation, idempotently. Same three outcomes as
+/// settle(), and the same rule: the CHAIN decides what has already
+/// happened, never our own record of what we asked for.
+///
+/// This is why round ids must be deterministic: after an ambiguous RPC
+/// failure we re-derive the identical PDA and simply find our own round
+/// sitting there. A clock-derived id would derive a NEW address instead,
+/// and quietly open a second round next to the first.
+fn run_round_op(
+    rpc: &RpcClient,
+    authority: &Keypair,
+    cfg: &Config,
+    op: &RoundOp,
+) -> Result<Option<String>> {
+    let round_id: u64 = op.round_id.parse().context("op.roundId is not u64")?;
+    let state = chain::round_state(rpc, round_id)?;
+
+    let ix = match op.kind.as_str() {
+        "open" => {
+            if state.is_some() {
+                return Ok(None); // already opened (possibly by our own retry)
+            }
+            let end_timestamp: i64 = op
+                .end_timestamp
+                .as_deref()
+                .ok_or_else(|| anyhow!("open op without endTimestamp"))?
+                .parse()
+                .context("op.endTimestamp is not i64")?;
+            let treasury = match &cfg.treasury {
+                Some(t) => Pubkey::from_str(t).context("TREASURY_PUBKEY is not base58")?,
+                None => authority.pubkey(),
+            };
+            chain::build_initialize_round_instruction(
+                authority.pubkey(),
+                round_id,
+                end_timestamp,
+                treasury,
+                cfg.rake_bps,
+            )
+        }
+        "end" => match state {
+            // Nothing to end, or already ended: both mean done. Note the
+            // first case is also what an operator sees if a round was
+            // never opened — acking is right either way, the game server
+            // has already stopped routing anyone to it.
+            None | Some(chain::RoundState::Ended) => return Ok(None),
+            Some(chain::RoundState::Open) => {
+                chain::build_end_round_instruction(authority.pubkey(), round_id)
+            }
+        },
+        other => return Err(anyhow!("unknown round op kind {other:?}")),
+    };
+
+    let blockhash = rpc.get_latest_blockhash().context("rpc: latest blockhash")?;
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&authority.pubkey()),
+        &[authority],
+        blockhash,
+    );
+    let sig = rpc
+        .send_and_confirm_transaction(&tx)
+        // end_round before the deadline, or open before the successor is
+        // due, both land here — and both are retried, not acked.
+        .with_context(|| format!("{} round {} failed", op.kind, round_id))?;
+    Ok(Some(sig.to_string()))
 }
 
 /// Settle ONE claim. Three outcomes:
@@ -153,6 +280,32 @@ fn main() -> Result<()> {
     );
 
     loop {
+        // AF.1 — round operations first: an extraction claim is worth
+        // nothing if the round that owes it was never opened.
+        match fetch_pending_rounds(&cfg, &http) {
+            Err(e) => eprintln!("[settlement] round poll failed: {e:#}"),
+            Ok(ops) => {
+                for op in &ops {
+                    let key = op.key();
+                    match run_round_op(&rpc, &authority, &cfg, op) {
+                        Ok(Some(sig)) => {
+                            println!("[settlement] {key} done — {sig}");
+                            if let Err(e) = ack_round(&cfg, &http, &key, &sig) {
+                                eprintln!("[settlement] round ack failed (will retry): {e:#}");
+                            }
+                        }
+                        Ok(None) => {
+                            println!("[settlement] {key} already done on chain — acking");
+                            let _ = ack_round(&cfg, &http, &key, "already-done");
+                        }
+                        Err(e) => {
+                            eprintln!("[settlement] {key} failed (will retry): {e:#}")
+                        }
+                    }
+                }
+            }
+        }
+
         match fetch_pending(&cfg, &http) {
             Err(e) => eprintln!("[settlement] poll failed: {e:#}"),
             Ok(claims) => {

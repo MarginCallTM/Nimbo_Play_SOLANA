@@ -307,7 +307,14 @@ async function makeToken(keys: Keypair): Promise<string> {
 
 // The join deposit, self-signed and self-sent. The server re-reads the
 // EXACT lamports from the confirmed tx — nothing here is trusted.
-async function sendDeposit(keys: Keypair, stakeSol: number): Promise<string> {
+//
+// AF.1 — returns the round it paid alongside the signature: the join
+// must announce it (rooms are filtered by round), and it has to be the
+// round THIS tx funded, not whatever /round says a moment later.
+async function sendDeposit(
+    keys: Keypair,
+    stakeSol: number,
+): Promise<{ txSig: string; roundId: string }> {
     const res = await fetch(`${SERVER_URL}/round`);
     if (!res.ok) {
         throw new Error(`round info failed (${res.status}) — server in free-only mode? set ROUND_ID`);
@@ -325,8 +332,9 @@ async function sendDeposit(keys: Keypair, stakeSol: number): Promise<string> {
     // it internally), so a timed-out attempt cannot double-spend — the
     // first tx either landed (and the second fails as duplicate) or
     // never existed.
-    return await rpcRetry("join deposit", () =>
+    const txSig = await rpcRetry("join deposit", () =>
         sendAndConfirmTransaction(chain!, tx, [keys], { commitment: "confirmed" }));
+    return { txSig, roundId: round.roundId };
 }
 
 // Turning-radius geometry (A1.10 lesson): a point inside one of the
@@ -374,7 +382,7 @@ async function run(BEHAVIOR: Behavior, slot: number, walletIdx: number) {
             return;
         }
         client.auth.token = await makeToken(keys);
-        const txSig = await sendDeposit(keys, stakeSol);
+        const { txSig, roundId } = await sendDeposit(keys, stakeSol);
         console.log(
             `[spar:${tag}] deposited ◎${stakeSol} (${txSig.slice(0, 8)}…,` +
             ` wallet ◎${((balance - stakeSol * LAMPORTS_PER_SOL) / LAMPORTS_PER_SOL).toFixed(4)} left)` +
@@ -385,6 +393,9 @@ async function run(BEHAVIOR: Behavior, slot: number, walletIdx: number) {
             name: `${SPAR_PREFIX}${BEHAVIOR}${slot}`,
             stake: stakeSol,
             txSig,
+            // AF.1 — without this the bot would be filtered into a room
+            // of its own and never meet the human it came to spar with.
+            roundId,
         });
     } else {
         room = await client.joinOrCreate(DEMO_ROOM, {

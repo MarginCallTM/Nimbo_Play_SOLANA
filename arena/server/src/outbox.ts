@@ -184,3 +184,17 @@ export function pendingClaims(): Claim[] {
     }
     return out;
 }
+
+// AF.1 — how many debts this round's vault still owes. end_round SWEEPS
+// the vault into the FoodReserve and flips the state, which makes every
+// later settle_extraction fail: closing a round with an unsettled claim
+// would destroy a player's payout with no way to appeal. This count
+// reaching zero is half the condition for ending a round (the other
+// half is "no rooms left playing it").
+export function unackedClaimCount(roundId: string): number {
+    let count = 0;
+    for (const [nonce, claim] of claims) {
+        if (claim.roundId === roundId && !acked.has(nonce)) count += 1;
+    }
+    return count;
+}

@@ -33,6 +33,7 @@ import {
     SCORE_PER_SOL,
     describeSnakeFromScore,
     turnTowards,
+    type CycleNoticeMessage,
     type DiedMessage,
     type JoinedMessage,
     type ExtractedMessage,
@@ -533,6 +534,22 @@ export async function startGameSession(
         feedEl.prepend(line);
         setTimeout(() => line.classList.add("old"), 5000); // fade…
         setTimeout(() => line.remove(), 6000);             // …then gone
+    });
+
+    // AF.1 — end-of-cycle warning. Rounds are invisible to players by
+    // design (joins route themselves, nobody is pulled out of a live
+    // run), so this is the ONE moment the escrow boundary surfaces: this
+    // arena will close, and a snake still on the field when it does dies.
+    // Twice as long on screen as a join line, and it never fades early.
+    room.onMessage("cycle", (msg: CycleNoticeMessage) => {
+        const minutes = Math.max(1, Math.round(msg.secondsLeft / 60));
+        const line = document.createElement("div");
+        line.style.color = "#ffb020";
+        line.textContent =
+            `⚠ arena cycle ends in ~${minutes} min — EXTRACT or you lose your run`;
+        feedEl.prepend(line);
+        setTimeout(() => line.classList.add("old"), 12000);
+        setTimeout(() => line.remove(), 13000);
     });
 
     // A4.6f — one-shot body seed, sent by the server whenever a snake

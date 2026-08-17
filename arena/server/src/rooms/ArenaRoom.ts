@@ -36,11 +36,20 @@ import {
     type InputMessage,
     type JoinedMessage,
     type JoinOptions,
+    type CycleNoticeMessage,
     type RefundedMessage,
 } from "@nimbo/shared";
 import { SpatialGrid } from "../grid";
 import { verifyAuthToken } from "../auth";
-import { DepositRejected, releaseDeposit, roundInfo, verifyDeposit } from "../chain";
+import {
+    DepositRejected,
+    knownRound,
+    openRound,
+    releaseDeposit,
+    verifyDeposit,
+    type RoundRecord,
+} from "../chain";
+import { roomClosed, roomOpened } from "../round-manager";
 import { nextNonce, pendingClaims, recordClaim } from "../outbox";
 import { notifyDepositorJoined, registerArenaRoom, unregisterArenaRoom } from "../arena-registry";
 import { RttTracker } from "../rtt";
@@ -58,6 +67,9 @@ export interface AuthResult {
     stakeLamports?: string;
     // kept so a failed onJoin can release the consumed signature
     txSig?: string;
+    // AF.1 — the round the deposit tx ACTUALLY funded, read from the
+    // transaction's Round account. Absent in the demo (no money).
+    roundId?: string;
 }
 
 export class Player extends Schema {
@@ -246,9 +258,20 @@ export class ArenaState extends Schema {
 }
 
 
-export class ArenaRoom extends Room<{ state: ArenaState }> {
+// The metadata type is what makes `filterBy(["roundId"])` typecheck in
+// index.ts: Colyseus copies the listed join options into room metadata
+// and matches on them, so a room only ever hosts ONE round (AF.1).
+export class ArenaRoom extends Room<{ state: ArenaState; metadata: { roundId: string } }> {
     state = new ArenaState();
     maxClients = 16;
+
+    // AF.1 — THE PIN. Captured once at onCreate and never re-read: every
+    // payout this room makes (extraction, refund) is drawn on THIS
+    // round's vault. Reading "the current round" at payout time was the
+    // bug — a room that outlived a rotation would have spent the next
+    // round's money, breaking per-vault solvency (A2.9). Undefined in
+    // the demo room and in free-only mode: no round, no payouts.
+    protected round?: RoundRecord;
 
     // Whitelist of accepted client messages: anything not listed here
     // is dropped.
@@ -458,16 +481,31 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         this.addFood(Math.cos(angle) * dist, Math.sin(angle) * dist, value);
     }
 
-    onCreate(_options: JoinOptions) {
+    onCreate(options: JoinOptions) {
         console.log(`[room] created — sim ${SERVER_TICK_RATE}Hz fixed, broadcast ${BROADCAST_RATE}Hz`);
         // A4.2a — visible to the lobby's matchmaking. PAID arena only:
         // the demo inherits this method but must never receive a
         // queue member (fake value, D72).
         if (this.roomName === ARENA_ROOM) {
+            // AF.1 — pin the round, once and for all. The requested id is
+            // a client claim, so it is only ever used to LOOK UP a round
+            // we opened ourselves; anything else falls back to the open
+            // round. The claim is not trusted, merely routed on: onJoin
+            // refuses any player whose deposit went somewhere else, so a
+            // mispinned room is a room nobody can enter — it disposes
+            // empty, having paid nothing.
+            this.round = (options?.roundId ? knownRound(options.roundId) : undefined) ?? openRound();
+            if (!this.round) {
+                console.warn(`[room] ${this.roomId} created with NO round — free-only mode?`);
+            } else {
+                console.log(`[room] ${this.roomId} pinned to round ${this.round.roundId}`);
+                roomOpened(this.round.roundId, this);
+            }
             registerArenaRoom(this.roomId, () => ({
                 phase: this.state.phase,
                 connectedDepositors: this.connectedCount(),
                 capacity: this.maxClients,
+                roundId: this.round?.roundId.toString(),
             }));
         }
         // D73: NO boot-time food. Every pellet on this map is backed
@@ -999,13 +1037,14 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         // room while the server ran free-only. roundId picks the paying
         // vault, so a wrong one spends another round's pot. A paid arena
         // always has a round; without one we owe nothing on this chain.
-        const round = roundInfo();
+        // AF.1: this.round, not the current one — see the field's comment.
+        const round = this.round;
         if (round) {
             recordClaim({
                 wallet: player.wallet,
                 lamports: lamports.toString(),
                 nonce: nonce.toString(),
-                roundId: round.roundId,
+                roundId: round.roundId.toString(),
                 at: Date.now(),
             });
         } else {
@@ -1107,13 +1146,13 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         // A3.3 — the debt is written to DISK before the player hears
         // about it: a crash after this line owes correctly, a crash
         // before it never told the player they extracted.
-        const round = roundInfo();
+        const round = this.round; // AF.1 — the room's round, pinned at creation
         if (round) {
             recordClaim({
                 wallet: player.wallet,
                 lamports: lamports.toString(),
                 nonce: nonce.toString(),
-                roundId: round.roundId, // never "0": see refundPlayer
+                roundId: round.roundId.toString(), // never "0": see refundPlayer
                 at: Date.now(),
             });
         } else {
@@ -1255,8 +1294,12 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             // refund rails. Paid exactly once: the rejection is permanent
             // in chain.ts, so the signature stays consumed and a retry
             // never reaches this line again.
-            if (err instanceof DepositRejected && err.refundableLamports !== undefined) {
-                ArenaRoom.refundRejectedDeposit(wallet, err.refundableLamports);
+            if (
+                err instanceof DepositRejected &&
+                err.refundableLamports !== undefined &&
+                err.refundRoundId !== undefined
+            ) {
+                ArenaRoom.refundRejectedDeposit(wallet, err.refundableLamports, err.refundRoundId);
             }
             throw new Error("deposit verification failed");
         }
@@ -1265,8 +1308,11 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
     // Static because onAuth is: there is no room instance yet — the
     // player never got a seat. The claim rides the same outbox rails as
     // an extraction, so the settlement service needs no new code path.
-    private static refundRejectedDeposit(wallet: string, lamports: bigint) {
-        const round = roundInfo();
+    private static refundRejectedDeposit(wallet: string, lamports: bigint, roundId: string) {
+        // AF.1 — the vault that HOLDS this deposit pays it back. There is
+        // no room instance here (onAuth is static), so the round travels
+        // on the rejection itself, straight from the transaction.
+        const round = knownRound(roundId);
         if (!round) return; // free-only mode never verifies a deposit
         if (lamports < MIN_REFUNDABLE_LAMPORTS) {
             // Below this, the ExtractReceipt rent + fee cost the house
@@ -1283,7 +1329,7 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
             wallet,
             lamports: lamports.toString(),
             nonce: nonce.toString(),
-            roundId: round.roundId,
+            roundId: round.roundId.toString(),
             at: Date.now(),
         });
         console.log(
@@ -1294,6 +1340,22 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
 
     onJoin(client: Client, options: JoinOptions, auth: AuthResult) {
         try {
+            // AF.1 — THE enforcement of one-room-one-round. auth.roundId
+            // came out of the deposit transaction (chain.ts), this.round
+            // was pinned when the room was created: if they disagree, the
+            // player would be playing in a world whose corpses and pellets
+            // are backed by a DIFFERENT vault than the one that holds
+            // their money — the exact way a round goes insolvent.
+            // Throwing is safe and cheap: the catch below releases the
+            // signature, so the very same (already paid) tx buys the
+            // retry, which the matchmaker then routes correctly.
+            if (auth.roundId && auth.roundId !== this.round?.roundId.toString()) {
+                console.warn(
+                    `[join] round mismatch — deposit in ${auth.roundId},` +
+                    ` room ${this.roomId} plays ${this.round?.roundId ?? "none"}`,
+                );
+                throw new Error("round mismatch: retry the join");
+            }
             this.spawnPlayer(client, options, auth);
         } catch (err) {
             // the deposit paid for a spawn that never happened: free
@@ -1398,8 +1460,47 @@ export class ArenaRoom extends Room<{ state: ArenaState }> {
         }
     }
 
+    // --- AF.1 drain hooks (the round manager's handle on this room) -----
+
+    // Rounds are invisible to players by design; this is the exception.
+    // Two of these land before the backstop, so nobody loses a run to a
+    // deadline they were never shown.
+    warnEndOfCycle(secondsLeft: number) {
+        const msg: CycleNoticeMessage = { secondsLeft };
+        this.broadcast("cycle", msg);
+        console.log(`[rounds] room ${this.roomId} warned — ${secondsLeft}s before force-close`);
+    }
+
+    // Last resort, long after the deadline and two warnings: the run
+    // ends as a DEATH, deliberately. Paying survivors out here would be
+    // a cash-out with no risk attached — the one thing the extraction
+    // channel exists to prevent. The corpse feeds the round's own
+    // economy and end_round sweeps what is left to the FoodReserve, so
+    // no value is destroyed, only relocated.
+    forceCloseForDrain() {
+        for (const player of [...this.state.players.values()]) {
+            if (this.state.phase === "waiting") {
+                // Behind the launch gate nothing was ever at risk: this
+                // is a refund case, exactly like leaving the queue.
+                this.refundPlayer(player, "round cycle ended while waiting");
+            } else {
+                this.resolveDeath(player, {
+                    text: "arena cycle ended — extract before the cycle closes",
+                    kind: "drain",
+                });
+            }
+        }
+        // resolveDeath/refundPlayer already removed them from state, so
+        // the onLeave this triggers finds nothing left to settle twice.
+        void this.disconnect();
+    }
+
     onDispose() {
         unregisterArenaRoom(this.roomId); // no-op for the demo
+        // AF.1 — the drain counter. A round can only be ENDED (vault
+        // swept, account closed) once the last room playing it is gone;
+        // this is the decrement that eventually lets that happen.
+        if (this.round) roomClosed(this.round.roundId, this.roomId);
         console.log("[room] disposed (empty)");
     }
 }

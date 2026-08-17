@@ -27,6 +27,11 @@ WORKDIR /app/server
 ENV OUTBOX_FILE=/data/settlement-outbox.jsonl
 ENV DEPOSIT_LOG_FILE=/data/consumed-deposits.jsonl
 ENV REPORTS_FILE=/data/death-reports.jsonl
+# AF.1 — the round-rotation request queue. Durable for the same reason
+# as the outbox: a restart between "asked to open round N+1" and "the
+# chain confirmed it" must resume waiting for THAT round, not pick a
+# different one and open a second vault beside it.
+ENV ROUND_OPS_FILE=/data/round-ops.jsonl
 
 EXPOSE 2567
 CMD ["npx", "tsx", "src/index.ts"]

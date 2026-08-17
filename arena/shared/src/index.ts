@@ -185,6 +185,16 @@ export interface JoinOptions {
     // chain and verifies it before letting the snake spawn. Like the
     // SIWS token, this is a CLAIM until the server checks it.
     txSig?: string;
+    // AF.1 — which round this deposit funded, taken from the SAME
+    // GET /round response the tx was built from (never re-fetched: a
+    // rotation between the deposit and the join would send the player
+    // to a room of the wrong round).
+    //
+    // Its job here is ROUTING, not authority: the matchmaker filters
+    // rooms on it so one room only ever hosts one round. The server
+    // still reads the true round out of the transaction and refuses the
+    // join if the two disagree — a lie only gets you bounced.
+    roundId?: string;
 }
 
 // Menu tiers (SOL). FREE plays with zero value; in production free
@@ -230,6 +240,11 @@ export type DeathKind =
                    // Sent into the void — that client is gone — but the
                    // kind keeps logs and future killfeeds honest.
     | "bomb"      // still inside the extract zone when it expired
+    | "drain"     // AF.1(f) backstop: still playing an escrow round long
+                  // after its deadline, through two warnings. The run
+                  // ends as a death (corpse -> round economy -> swept to
+                  // the FoodReserve) because paying survivors out at a
+                  // round boundary would be a risk-free cash-out.
     | "unknown";
 
 // Server -> everyone already in a PAID arena, when someone spawns in:
@@ -254,6 +269,16 @@ export interface DiedMessage {
 // deposit comes back as a settlement claim on the SAME rails as an
 // extraction. The on-chain rake taken at join is the one part a
 // refund cannot recover (D77: documented edge case).
+// AF.1 — server -> every client in a room whose escrow round is past
+// its deadline. Rounds are normally INVISIBLE to players (joins route
+// themselves, nobody is ever pulled out of a live run), so this is the
+// one moment the boundary has to be shown: the room WILL close, and a
+// snake still on the field when it does dies. Two of these are sent
+// before the backstop fires.
+export interface CycleNoticeMessage {
+    secondsLeft: number;
+}
+
 export interface RefundedMessage {
     lamports: string; // the claim: spawn + pellet value, in lamports
     nonce: string;    // unique per round: the on-chain anti-replay key

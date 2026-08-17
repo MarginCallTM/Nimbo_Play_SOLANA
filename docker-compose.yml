@@ -32,12 +32,25 @@ services:
       AUTH_DOMAIN: ${AUTH_DOMAIN}
       SETTLEMENT_SECRET: ${SETTLEMENT_SECRET}
       DEMO_BOTS: ${DEMO_BOTS:-}
+      # AF.1 — round rotation. Unset = production defaults (24h round,
+      # 30min rotation margin, 30min drain grace). ROUND_AUTOROTATE=0
+      # pins the server to ROUND_ID and restores the manual behaviour.
+      ROUND_DURATION_S: ${ROUND_DURATION_S:-}
+      ROTATION_MARGIN_S: ${ROTATION_MARGIN_S:-}
+      DRAIN_GRACE_S: ${DRAIN_GRACE_S:-}
+      ROUND_AUTOROTATE: ${ROUND_AUTOROTATE:-}
     ports:
       - "${SERVER_PORT}:2567"
     volumes:
       - arena_data:/data                          # durable debts + anti-replay log
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:2567/round"]
+      # /auth/challenge, NOT /round: liveness must mean "the server is
+      # up", never "a paid round exists". /round answers 503 in free-only
+      # mode, which used to show the container as unhealthy (cosmetic) —
+      # and with AF.1 it would DEADLOCK: no round -> unhealthy -> the
+      # settlement service never starts -> nobody signs the round the
+      # server just asked to open.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:2567/auth/challenge"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -73,6 +86,10 @@ services:
       RPC_URL: ${RPC_URL}
       SETTLEMENT_SECRET: ${SETTLEMENT_SECRET}
       POLL_INTERVAL_S: ${POLL_INTERVAL_S:-5}
+      # AF.1 — settings for the rounds this service now OPENS itself.
+      # Unset treasury = the authority wallet (devnet convention).
+      TREASURY_PUBKEY: ${TREASURY_PUBKEY:-}
+      RAKE_BPS: ${RAKE_BPS:-550}
     volumes:
       # The authority keypair signs real payouts. Mounted read-only from
       # the host; the container reads it at AUTHORITY_KEYPAIR=/keys/...

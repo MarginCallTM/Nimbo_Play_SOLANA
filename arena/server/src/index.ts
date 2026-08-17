@@ -9,6 +9,8 @@ import { loadRound, roundInfo } from "./chain";
 import { loadDepositLog } from "./deposit-log";
 import { ackClaim, loadOutbox, pendingClaims } from "./outbox";
 import { recordReport } from "./reports";
+import { ackOp, loadRoundOps, pendingOps } from "./round-ops";
+import { startRoundManager } from "./round-manager";
 
 // A3.2 — know which round we escrow against BEFORE accepting anyone:
 // a misconfigured round must kill the boot, not the first paid join.
@@ -19,6 +21,10 @@ loadOutbox();
 // set, or every restart re-opens the last 10 minutes of deposits for a
 // free second spawn.
 loadDepositLog();
+// AF.1 — and so must the round operations: a restart between "asked to
+// open round N+1" and "the chain confirmed it" must resume waiting for
+// that exact round, not decide on a different one.
+loadRoundOps();
 
 // Shared secret for the settlement endpoints (MVP: same box, same
 // operator). These two routes are the softest part of the money path:
@@ -48,7 +54,13 @@ function settlementAuthorized(req: express.Request): boolean {
 
 const server = defineServer({
     rooms: {
-        [ARENA_ROOM]: defineRoom(ArenaRoom),
+        // AF.1 — filterBy(["roundId"]) is what keeps ONE ROOM = ONE
+        // ROUND: Colyseus copies the option into room metadata and only
+        // ever matches a player into a room whose value is identical, so
+        // two rounds can be live at once without a single shared arena.
+        // The value is a client claim used purely for routing — onJoin
+        // re-checks it against the round the deposit really funded.
+        [ARENA_ROOM]: defineRoom(ArenaRoom).filterBy(["roundId"]),
         // D72/D76 — the free tutorial world: bots, fake value, no
         // wallet. Physically separate from the paid arena.
         [DEMO_ROOM]: defineRoom(DemoRoom),
@@ -126,6 +138,34 @@ const server = defineServer({
             console.log(`[outbox] claim ${nonce} settled — tx ${txSig.slice(0, 16)}…`);
             res.json({ ok: true });
         });
+        // AF.1 — the same two-endpoint shape, for ROUND operations. The
+        // settlement service is the only process holding the authority
+        // key, and it stays a pure PULL worker: it asks what needs
+        // signing, signs it, and reports back. Nothing can reach INTO it.
+        app.get("/settlement/rounds", (req, res) => {
+            if (!settlementAuthorized(req)) {
+                res.status(401).json({ error: "unauthorized" });
+                return;
+            }
+            res.json(pendingOps());
+        });
+        app.post("/settlement/rounds/ack", express.json(), (req, res) => {
+            if (!settlementAuthorized(req)) {
+                res.status(401).json({ error: "unauthorized" });
+                return;
+            }
+            const { key, txSig } = req.body ?? {};
+            if (typeof key !== "string" || typeof txSig !== "string") {
+                res.status(400).json({ error: "key and txSig required" });
+                return;
+            }
+            if (!ackOp(key, txSig)) {
+                res.status(404).json({ error: "unknown round op" });
+                return;
+            }
+            console.log(`[rounds] ${key} confirmed — tx ${txSig.slice(0, 16)}…`);
+            res.json({ ok: true });
+        });
     },
 });
 
@@ -138,6 +178,11 @@ const server = defineServer({
 const PORT = Number(process.env.PORT ?? 2567);
 await server.listen(PORT);
 console.log(`arena server listening on ws://localhost:${PORT}`);
+
+// AF.1 — start rotating rounds only once the server actually accepts
+// players: the manager's first act may be to OPEN a round, and opening
+// one nobody can join would burn a vault for nothing.
+startRoundManager();
 
 // Artificial latency for netcode testing (A1.5+): localhost has ~0ms
 // RTT, so prediction/interpolation can only be SEEN with fake lag.

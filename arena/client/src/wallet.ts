@@ -128,10 +128,20 @@ export async function signInWithSolana(serverUrl: string): Promise<string> {
 // confirmation, and hand back the signature. That signature is the
 // client's PROOF OF DEPOSIT: the server will read the tx from the
 // chain and verify everything before the snake spawns.
+// AF.1 — the signature ALONE is no longer enough for the caller: with
+// several rounds alive during a rotation, the join has to name the round
+// this very transaction funded. Returning both together is what makes
+// that impossible to get wrong — re-reading GET /round after the deposit
+// could hand back a successor that took over in the meantime.
+export interface JoinDeposit {
+    signature: string;
+    roundId: string;
+}
+
 export async function sendJoinDeposit(
     serverUrl: string,
     stakeSol: number,
-): Promise<string> {
+): Promise<JoinDeposit> {
     const provider = getProvider();
     if (!provider.publicKey || !provider.signAndSendTransaction) {
         throw new Error("wallet not connected — sign in first");
@@ -174,5 +184,7 @@ export async function sendJoinDeposit(
     if (conf.value.err) {
         throw new Error(`deposit tx failed on-chain: ${JSON.stringify(conf.value.err)}`);
     }
-    return signature;
+    // round.roundId, NOT a fresh fetch: this is the round the bytes above
+    // actually paid into.
+    return { signature, roundId: round.roundId };
 }

@@ -1,5 +1,9 @@
 # Déploiement de l'arène en une commande (Docker)
 
+LINK: https://167.233.250.97.sslip.io/
+
+ssh root@167.233.250.97    
+
 Objectif : lancer tout l'environnement jouable (serveur de jeu + client
 web + settlement) avec **une seule commande**, en local comme sur un VPS,
 pour faire tester le jeu à des amis sur devnet.
@@ -12,14 +16,27 @@ pour faire tester le jeu à des amis sur devnet.
 ## 1. Prérequis (une fois)
 
 - **Docker** + **Docker Compose v2** installés (`docker compose version`).
-- Un **round on-chain ouvert** sur devnet. Depuis la racine du repo :
+- La **FoodReserve** initialisée une fois pour toutes (le premier appelant
+  en devient l'autorité — à faire juste après le premier déploiement du
+  programme). Depuis la racine du repo :
   ```
   yarn ts-mocha -p ./tsconfig.json -t 1000000 scripts/init-arena-devnet.ts
   ```
-  Noter le `ROUND_ID` imprimé. (Un round devnet vit ~24 h ; à refaire
-  quand le serveur logue « Ended ».)
-- La **clé authority** (celle qui a ouvert le round et qui paiera les
-  gains). En local c'est `~/.config/solana/id.json`.
+- La **clé authority** (celle qui ouvre les rounds et paie les gains).
+  En local c'est `~/.config/solana/id.json`.
+
+> **AF.1 (2026-08-17) — plus de round à ouvrir à la main.** Le serveur
+> gère lui-même le cycle de vie des rounds : il en ouvre un s'il n'y en a
+> pas, ouvre le suivant avant l'échéance du courant, et ferme l'ancien
+> quand plus personne n'y joue. `ROUND_ID` est donc **facultatif** :
+> renseigné, il adopte ce round-là au démarrage ; vide, il en ouvre un.
+> Le script ci-dessus ne sert plus qu'à la FoodReserve.
+>
+> La signature reste chez le service settlement (seul détenteur de la
+> clé) : le serveur ne fait que déposer des demandes dans une file, que
+> le settlement vient chercher. **Si le settlement ne tourne pas, aucun
+> round ne s'ouvre** — le serveur reste en free-only et le dit dans ses
+> logs.
 
 ## 2. Configuration (une fois)
 
@@ -31,7 +48,7 @@ Puis éditer `.env` :
 | Variable | Local | VPS |
 |---|---|---|
 | `PUBLIC_HOST` | `localhost` | l'IP publique du VPS |
-| `ROUND_ID` | le numéro de l'étape 1 | idem |
+| `ROUND_ID` | facultatif (vide = le serveur en ouvre un) | idem |
 | `SETTLEMENT_SECRET` | `openssl rand -hex 32` | idem (obligatoire) |
 | `AUTHORITY_KEYPAIR_HOST` | chemin de ta clé | chemin de la clé sur le VPS |
 
@@ -75,9 +92,24 @@ docker compose logs -f settlement # suivre les paiements
 docker compose --profile full up  # ajouter Postgres (indexer/historique)
 ```
 
-Les **dettes** (créances d'extraction/refund) et le **journal anti-rejeu**
-vivent dans un volume Docker (`arena_data`) : un redémarrage n'oublie ni
-qui doit être payé, ni quelles signatures de dépôt ont déjà servi.
+Les **dettes** (créances d'extraction/refund), le **journal anti-rejeu**
+et la **file d'opérations de round** vivent dans un volume Docker
+(`arena_data`) : un redémarrage n'oublie ni qui doit être payé, ni quelles
+signatures de dépôt ont déjà servi, ni quel round il était en train
+d'ouvrir.
+
+### Réglages de rotation (AF.1)
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `ROUND_DURATION_S` | `86400` (24 h) | durée pendant laquelle un round accepte des dépôts |
+| `ROTATION_MARGIN_S` | `1800` (30 min) | combien de temps AVANT l'échéance son successeur ouvre et prend la main |
+| `DRAIN_GRACE_S` | `1800` (30 min) | combien de temps les retardataires peuvent encore jouer après l'échéance, avant fermeture forcée (= mort, après 2 avertissements) |
+| `ROUND_AUTOROTATE` | `1` | `0` fige le serveur sur `ROUND_ID` (ancien comportement manuel) |
+
+⚠️ Ces valeurs sont des **secondes**. Les défauts du code sont ceux de
+production ; toute valeur courte (test) doit vivre dans `.env` et être
+retirée avant un déploiement réel.
 
 ## 5. Aller plus loin (plus tard, sans tout refaire)
 
