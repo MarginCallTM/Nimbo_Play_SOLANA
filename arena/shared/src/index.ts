@@ -91,11 +91,26 @@ export const BOOST_ORB_VALUE = 1.5;    // orb size dropped at the tail
 //
 // The client scales the world by max(w/W, h/H) — "cover" — so nobody
 // ever sees more than this in EITHER dimension; an unusual aspect ratio
-// sees LESS, never more. 1920x1080 is chosen to preserve the current
-// feel: it is exactly what the most common screen already shows at 100%
-// zoom, so this closes the exploit without changing how the game plays.
-export const REFERENCE_VIEW_W = 1920;
-export const REFERENCE_VIEW_H = 1080;
+// sees LESS, never more.
+//
+// THE TUNING KNOB (2026-08-18). Compared side by side with slither.io on
+// identical screenshots, our snake covered 1.4% of the screen width
+// against their 2.9% — we were zoomed out by a factor ~2. Matching them
+// exactly was REJECTED (user): halving the visible world at once removes
+// too much anticipation, which is a change of game rather than a change
+// of framing. 1.3 is the deliberate middle: noticeably closer to the
+// action, same reading distance for threats.
+// Tune THIS number alone; everything below follows.
+export const VIEW_ZOOM = 1.3;
+
+// The base is what a 1080p screen showed at 100% browser zoom before
+// AF.3bis existed, i.e. the framing every value in this file was
+// playtested against. The reference viewport is that base, tightened by
+// VIEW_ZOOM.
+const VIEW_BASE_W = 1920;
+const VIEW_BASE_H = 1080;
+export const REFERENCE_VIEW_W = VIEW_BASE_W / VIEW_ZOOM;
+export const REFERENCE_VIEW_H = VIEW_BASE_H / VIEW_ZOOM;
 // The furthest a player can see from their own head: the screen corner.
 // ~1101 units at the reference viewport.
 export const REFERENCE_VIEW_CORNER = Math.hypot(REFERENCE_VIEW_W / 2, REFERENCE_VIEW_H / 2);
@@ -124,7 +139,14 @@ export const REFERENCE_VIEW_CORNER = Math.hypot(REFERENCE_VIEW_W / 2, REFERENCE_
 // Shrinking the fog further means a tighter reference viewport (a feel
 // change) or a bigger map (undoing A4.10) — a gameplay call, not a
 // constant to quietly nudge.
-export const AOI_RADIUS = 1200;
+// 2026-08-18: 1200 -> 950, following VIEW_ZOOM 1 -> 1.3. The margin over
+// the screen corner is what matters, not the absolute number: it was
+// 1200-1101 = 99px, it is now 950-847 = 103px. Same anti-pop-in safety,
+// moved in with the framing. Leaving it at 1200 would have kept streaming
+// entities nobody can see AND kept the maphack surface wide right after
+// we narrowed the view. Bonus: the bubble's AREA drops to 63% of the old
+// one — a third less entity traffic per client.
+export const AOI_RADIUS = 950;
 
 // Anti-concentration rule (user, 2026-07-24 — the proto's A0.7/D71
 // spirit): whenever value is RELEASED (death corpse OR sprint drain),
