@@ -111,6 +111,43 @@ d'ouvrir.
 production ; toute valeur courte (test) doit vivre dans `.env` et être
 retirée avant un déploiement réel.
 
+## 4bis. Mettre à jour un déploiement existant (VPS)
+
+```
+ssh root@167.233.250.97
+cd /root/nimbo
+git pull
+docker compose --profile https up -d --build server client settlement
+```
+
+- **`settlement` fait partie de la liste.** C'est lui qui signe l'ouverture
+  et la fermeture des rounds (AF.1) : un vieux binaire ignore les demandes,
+  et le jour où le round courant expire le serveur tombe en free-only.
+- `--build` est **obligatoire** pour `server` et `client` : tous deux
+  copient les sources au build, et le client grave `VITE_SERVER_URL` +
+  `WORLD_RADIUS` dans son bundle.
+- **`caddy` n'est pas recréé automatiquement** (le `Caddyfile` est un
+  bind-mount) : après une modif du Caddyfile, `docker compose
+  --profile https restart caddy`.
+- **`.env` n'est jamais touché par `git pull`** (gitignoré) : les réglages
+  du VPS survivent aux déploiements.
+
+⚠️ **Recréer le conteneur `server` déconnecte tous les joueurs actifs** —
+et déconnexion = mort instantanée (règle anti-rage-quit), donc mise perdue.
+Déployer à heure creuse, après avoir vérifié :
+```
+docker compose logs --since 30m server | grep -cE '\[join\]|\[death\]|\[extract\]'
+```
+`0` = personne en jeu, la fenêtre est bonne.
+
+Contrôle après redémarrage :
+```
+docker compose logs --tail 30 server | grep -E '\[chain\]|\[rounds\]'
+```
+La ligne `[rounds] manager up — duration 86400s, rotate 1800s early, drain
+grace 1800s` doit afficher les valeurs de PROD. Tout autre chiffre = une
+valeur de test traîne dans le `.env` du VPS.
+
 ## 5. Aller plus loin (plus tard, sans tout refaire)
 
 - **HTTPS + nom de domaine** : ajouter un reverse-proxy (Caddy) devant

@@ -646,11 +646,17 @@ export async function startGameSession(
         const now = performance.now();
         const dtFrames = Math.min(ticker.deltaTime, 3);
 
-        // aim: from the head's SCREEN position toward the mouse
+        // aim: from the head's SCREEN position toward the mouse.
+        // AF.3bis — the world/screen ratio is no longer 1: the head's
+        // offset from the camera is in WORLD units and has to be scaled
+        // before it can be compared with a mouse position in screen
+        // pixels. It only bites while the camera lags behind the head
+        // (smoothing), which is exactly when aiming matters most.
+        const k = view.viewScale();
         const cx = view.app.screen.width / 2;
         const cy = view.app.screen.height / 2;
-        const headSX = cam.initialized ? cx + (predicted.x - cam.x) : cx;
-        const headSY = cam.initialized ? cy + (predicted.y - cam.y) : cy;
+        const headSX = cam.initialized ? cx + (predicted.x - cam.x) * k : cx;
+        const headSY = cam.initialized ? cy + (predicted.y - cam.y) * k : cy;
         if (Math.hypot(mouseX - headSX, mouseY - headSY) >= AIM_DEADZONE) {
             input.angle = Math.atan2(mouseY - headSY, mouseX - headSX);
         }

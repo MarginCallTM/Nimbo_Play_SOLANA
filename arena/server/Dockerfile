@@ -32,6 +32,10 @@ ENV REPORTS_FILE=/data/death-reports.jsonl
 # chain confirmed it" must resume waiting for THAT round, not pick a
 # different one and open a second vault beside it.
 ENV ROUND_OPS_FILE=/data/round-ops.jsonl
+# A4.11.b — the server's own account of every death, next to the player
+# reports it has to be cross-referenced with. Durable because a player
+# disputes a death days later, long after container logs are gone.
+ENV DEATH_LOG_FILE=/data/death-geo.jsonl
 
 EXPOSE 2567
 CMD ["npx", "tsx", "src/index.ts"]

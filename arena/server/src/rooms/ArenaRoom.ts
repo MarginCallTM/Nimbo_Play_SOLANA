@@ -53,6 +53,7 @@ import { roomClosed, roomOpened } from "../round-manager";
 import { nextNonce, pendingClaims, recordClaim } from "../outbox";
 import { notifyDepositorJoined, registerArenaRoom, unregisterArenaRoom } from "../arena-registry";
 import { RttTracker } from "../rtt";
+import { recordDeath } from "../death-log";
 
 // What onAuth hands to onJoin once the SIWS proof checks out.
 export interface AuthResult {
@@ -774,16 +775,65 @@ export class ArenaRoom extends Room<{ state: ArenaState; metadata: { roundId: st
         // rtt (low = NOT latency) and the TURN gaps (client body recon
         // diverges most in sharp turns/loops = the pretzel in the report).
         for (const [victim, cause] of deaths) {
-            if (cause.kind !== "collision") continue;
             const vR = describeSnakeFromScore(victim.score).radius;
+            const rtt = this.rtt.get(victim.sessionId);
+            const at = new Date().toISOString();
+            const common = {
+                at,
+                room: this.roomId,
+                victim: victim.name,
+                victimId: victim.sessionId,
+                victimScore: Number(victim.score.toFixed(2)),
+                victimRttMs: rtt !== undefined ? Math.round(rtt) : undefined,
+                boosting: victim.boosting,
+            };
+
+            if (cause.kind === "border") {
+                // A4.11.b — border deaths produced NO server trace at all
+                // until now, and they were 5 of the first 8 player
+                // reports. `over` is the number that settles the dispute:
+                // how far past the lethal ring the server saw the head.
+                const fromCentre = Math.hypot(victim.x, victim.y);
+                const limit = WORLD_RADIUS - vR;
+                const over = fromCentre - limit;
+                recordDeath({ ...common, kind: "border", fromCentre, limit, over });
+                console.log(
+                    `[death-border] victim=${victim.name}[${victim.sessionId.slice(0, 4)}]` +
+                    ` dist=${fromCentre.toFixed(1)} limit=${limit.toFixed(1)} over=${over.toFixed(1)}` +
+                    ` rtt=${rtt !== undefined ? Math.round(rtt) : "?"}ms` +
+                    ` boost=${victim.boosting}` +
+                    ` vTurn=${angleGap(victim.angle, victim.desiredAngle).toFixed(2)}`,
+                );
+                continue;
+            }
+
             const kR = describeSnakeFromScore(cause.killer.score).radius;
             const dist = Math.hypot(cause.hitX - victim.x, cause.hitY - victim.y);
-            const rtt = this.rtt.get(victim.sessionId);
+            // A4.11.b — the KILLER's latency, the half that was missing.
+            // A laggy killer is what puts a body on your screen 50-75px
+            // behind where the server holds it; the victim's own rtt
+            // never showed that.
+            const kRtt = this.rtt.get(cause.killer.sessionId);
+            const theirs = deaths.get(cause.killer);
+            const mutual = theirs?.kind === "collision" && theirs.killer === victim;
+            recordDeath({
+                ...common,
+                kind: mutual ? "head-on" : "collision",
+                killer: cause.killer.name,
+                killerId: cause.killer.sessionId,
+                killerRttMs: kRtt !== undefined ? Math.round(kRtt) : undefined,
+                hitHead: cause.hitIsHead,
+                dist,
+                reach: vR + kR,
+                victimTurn: Number(angleGap(victim.angle, victim.desiredAngle).toFixed(3)),
+                killerTurn: Number(angleGap(cause.killer.angle, cause.killer.desiredAngle).toFixed(3)),
+            });
             console.log(
                 `[death-geo] victim=${victim.name}[${victim.sessionId.slice(0, 4)}]` +
                 ` killer=${cause.killer.name}[${cause.killer.sessionId.slice(0, 4)}]` +
                 ` hit=${cause.hitIsHead ? "HEAD" : "body"} dist=${dist.toFixed(1)} reach=${(vR + kR).toFixed(1)}` +
                 ` rtt=${rtt !== undefined ? Math.round(rtt) : "?"}ms` +
+                ` kRtt=${kRtt !== undefined ? Math.round(kRtt) : "?"}ms` +
                 ` vTurn=${angleGap(victim.angle, victim.desiredAngle).toFixed(2)}` +
                 ` kTurn=${angleGap(cause.killer.angle, cause.killer.desiredAngle).toFixed(2)}`,
             );

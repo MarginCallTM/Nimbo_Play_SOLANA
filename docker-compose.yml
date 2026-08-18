@@ -43,6 +43,13 @@ services:
       - "${SERVER_PORT}:2567"
     volumes:
       - arena_data:/data                          # durable debts + anti-replay log
+    # Docker's default json-file driver NEVER rotates: with real players
+    # the server's stdout would grow until the VPS disk fills. Bounded
+    # here — what must survive (debts, deposits, round ops, death
+    # forensics) is written to /data, not to stdout.
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
     healthcheck:
       # /auth/challenge, NOT /round: liveness must mean "the server is
       # up", never "a paid round exists". /round answers 503 in free-only

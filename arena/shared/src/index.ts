@@ -82,11 +82,48 @@ export const DEATH_ORB_VALUE = 5;      // score per corpse orb
 export const SNAKE_BOOST_COST = 0.08;  // score per 60fps frame
 export const BOOST_ORB_VALUE = 1.5;    // orb size dropped at the tail
 
+// AF.3bis (2026-08-17) — THE REFERENCE VIEWPORT, in WORLD units: how
+// much of the world a player may see, whatever their screen or browser
+// zoom. Before this existed the renderer mapped 1 world unit to 1 CSS
+// pixel, so the field of view was whatever the window happened to be —
+// and Ctrl+- literally bought map awareness in a real-money PvP game
+// (user report: a friend on a zoomed-out window saw the ENTIRE arena).
+//
+// The client scales the world by max(w/W, h/H) — "cover" — so nobody
+// ever sees more than this in EITHER dimension; an unusual aspect ratio
+// sees LESS, never more. 1920x1080 is chosen to preserve the current
+// feel: it is exactly what the most common screen already shows at 100%
+// zoom, so this closes the exploit without changing how the game plays.
+export const REFERENCE_VIEW_W = 1920;
+export const REFERENCE_VIEW_H = 1080;
+// The furthest a player can see from their own head: the screen corner.
+// ~1101 units at the reference viewport.
+export const REFERENCE_VIEW_CORNER = Math.hypot(REFERENCE_VIEW_W / 2, REFERENCE_VIEW_H / 2);
+
 // Area of Interest (A1.8): each client is only subscribed to entities
 // inside this bubble around its head. Per-client cost becomes
 // independent of world size — and clients never even RECEIVE distant
 // state, which makes maphacks physically impossible (a must for a
 // real-money game).
+//
+// ⚠ INVARIANT — AOI_RADIUS >= REFERENCE_VIEW_CORNER (~1101), or honest
+// players get POP-IN: snakes materialising at the edge of a screen that
+// was already showing that spot. The margin above the corner is what
+// lets a body enter view before it can reach you.
+//
+// ⚠ AND KEEP IT TIGHT. This bubble is the ONLY bound a MODIFIED client
+// cannot escape (the scale clamp above lives in the browser; an attacker
+// patches it). Every unit above the corner distance is map awareness
+// handed to a cheater. Do NOT raise it "for comfort".
+//
+// HISTORY (why this comment is long): the old note here claimed the AoI
+// showed "~1/5 of the width". True at WORLD_RADIUS 3000 — A4.10 shrank
+// the map to 1400 and nobody revisited this, so the bubble silently grew
+// to 86% of the world. It is correctly sized for the viewport above; the
+// weak fog of war is now a property of the SMALL MAP, not of this value.
+// Shrinking the fog further means a tighter reference viewport (a feel
+// change) or a bigger map (undoing A4.10) — a gameplay call, not a
+// constant to quietly nudge.
 export const AOI_RADIUS = 1200;
 
 // Anti-concentration rule (user, 2026-07-24 — the proto's A0.7/D71

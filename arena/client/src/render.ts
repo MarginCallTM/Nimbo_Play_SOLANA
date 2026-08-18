@@ -13,6 +13,8 @@ import {
     FOOD_RADIUS,
     FOOD_VALUE,
     SNAKE_RADIUS,
+    REFERENCE_VIEW_H,
+    REFERENCE_VIEW_W,
     WORLD_RADIUS,
 } from "@nimbo/shared";
 
@@ -110,13 +112,40 @@ export class GameView {
         return view;
     }
 
+    // AF.3bis — how many screen pixels one world unit takes. The world
+    // used to be drawn at scale 1 (1 unit = 1 CSS pixel), which made the
+    // FIELD OF VIEW a function of the window size: a bigger screen — or
+    // just Ctrl+- — showed more of the arena. In a real-money PvP game
+    // that is bought map awareness, the same thing the minimap radar was
+    // removed for (A1.8).
+    //
+    // "cover" (max, not min): the visible world is width/k by height/k,
+    // and k >= w/REF_W means the visible width is at most REF_W. Same for
+    // height. So an unusual aspect ratio sees LESS than the reference,
+    // never more — the fair direction. Using min() would let an ultrawide
+    // screen see past it and reopen the hole through the aspect ratio.
+    //
+    // Recomputed every frame on purpose: two divisions, and it tracks
+    // window resizes AND browser zoom with no event plumbing at all.
+    viewScale(): number {
+        return Math.max(
+            this.app.screen.width / REFERENCE_VIEW_W,
+            this.app.screen.height / REFERENCE_VIEW_H,
+        );
+    }
+
     // Camera: keep (x, y) — the predicted head — at screen center by
-    // translating the WORLD, never the view. World px == screen px
-    // (scale 1), so screen-space math stays trivial.
+    // scaling and translating the WORLD, never the view. The HUD is NOT
+    // in this container (DOM overlay + the minimap on the stage), so it
+    // keeps its screen pixels: zooming the page resizes the interface,
+    // exactly as it does in slither.io, and leaves the field of view
+    // untouched.
     camera(x: number, y: number) {
+        const k = this.viewScale();
+        this.world.scale.set(k);
         this.world.position.set(
-            this.app.screen.width / 2 - x,
-            this.app.screen.height / 2 - y,
+            this.app.screen.width / 2 - x * k,
+            this.app.screen.height / 2 - y * k,
         );
     }
 
