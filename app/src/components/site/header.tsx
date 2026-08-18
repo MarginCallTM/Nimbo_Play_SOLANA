@@ -6,6 +6,7 @@
 // public/official_logo.png (kept as the untouched source).
 import Image from "next/image";
 import { ConnectWalletButton } from "@/components/site/connect-wallet-button";
+import { ARENA_URL } from "@/lib/constants";
 
 export function Header() {
   return (
@@ -23,10 +24,15 @@ export function Header() {
         </a>
         <nav className="hidden items-center gap-1 md:flex">
           {/* "/#..." (not "#...") so anchors also work from /vaults. */}
+          {/* AF.2 — Arena comes FIRST: since the 2026-07-10 pivot it is
+              the flagship product and the lottery is the side-feature
+              (it becomes the skin gacha, A5.4). It is an absolute URL
+              because the game is a separate app on its own subdomain,
+              not a route of this Next site. */}
           {[
+            { label: "Arena", href: ARENA_URL },
             { label: "Lotteries", href: "/vaults" },
             { label: "How it works", href: "/#how" },
-            { label: "Winners", href: "#" },
             { label: "Docs", href: "#" },
           ].map((l) => (
             <a
@@ -39,11 +45,13 @@ export function Header() {
           ))}
         </nav>
         <div className="flex items-center gap-2">
+          {/* AF.2 — the primary call to action is now PLAYING, not the
+              lottery. Same reason as the nav order above. */}
           <a
-            href="/vaults"
+            href={ARENA_URL}
             className="hidden rounded-[10px] border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-secondary sm:inline-flex"
           >
-            View lottery
+            Play Arena
           </a>
           <ConnectWalletButton />
         </div>

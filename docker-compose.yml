@@ -78,6 +78,28 @@ services:
     ports:
       - "${CLIENT_PORT}:80"
 
+  # --- web: the Nimbo Play portal (Next.js) --------------------------
+  # AF.2 — the public front door. Served at the APEX domain; the game
+  # lives on the `arena.` subdomain (see Caddyfile).
+  web:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+      args:
+        # BAKED INTO THE CLIENT BUNDLE at build time (Next inlines every
+        # NEXT_PUBLIC_*), so a change here needs --build, not a restart —
+        # same rule as VITE_SERVER_URL for the game client.
+        NEXT_PUBLIC_PROGRAM_ID: ${NEXT_PUBLIC_PROGRAM_ID}
+        NEXT_PUBLIC_RPC_ENDPOINT: ${NEXT_PUBLIC_RPC_ENDPOINT}
+        NEXT_PUBLIC_ROUND_ID: ${NEXT_PUBLIC_ROUND_ID}
+    container_name: nimbo_web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
   # --- settlement: pays extractions & refunds to wallets -------------
   settlement:
     build:
@@ -115,6 +137,7 @@ services:
     depends_on:
       - client
       - server
+      - web        # AF.2 — the apex host proxies to it
     environment:
       SITE_HOST: ${SITE_HOST}
     ports:

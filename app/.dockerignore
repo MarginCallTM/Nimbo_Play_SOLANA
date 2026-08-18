@@ -1,0 +1,11 @@
+# Keep the build context small: node_modules is reinstalled from the
+# lockfile inside the image, and .next/ from a local `npm run dev` would
+# otherwise be copied in and confuse the build.
+node_modules
+.next
+.git
+*.log
+# .env.local is a LOCAL dev file. The image gets its values from build
+# ARGs (docker-compose), never from a file copied in — otherwise a
+# developer's local RPC would ship to production silently.
+.env.local

@@ -12,7 +12,28 @@
 # NOTE: /settlement/* is deliberately NOT exposed — that traffic is
 # server<->settlement over the internal docker network, never public.
 
+# AF.2 (2026-08-18) — TWO hosts now.
+#
+#   {$SITE_HOST}         -> the Nimbo Play portal (Next.js)
+#   arena.{$SITE_HOST}   -> Nimbo Arena (game client + Colyseus)
+#
+# Why a subdomain and not a path: the game server already owns routes at
+# the root (/matchmake/*, /round, /auth/*, /report and the WebSocket
+# upgrade). Sharing one host with Next would mean arbitrating those
+# collisions AND rebuilding the Vite client under a base path. Caddy
+# issues a certificate per host automatically, so the split costs nothing.
+#
+# ⚠ .dev IS HSTS-PRELOADED in browsers: https is mandatory and there is NO
+# http fallback. If certificate issuance fails, the site is unreachable
+# with no way to debug over plain http — check the logs, not the browser.
+
+# --- the portal ------------------------------------------------------
 {$SITE_HOST} {
+	reverse_proxy web:3000
+}
+
+# --- the game --------------------------------------------------------
+arena.{$SITE_HOST} {
 	# the play connection (Colyseus WebSocket) -> game server
 	@ws {
 		header Connection *Upgrade*

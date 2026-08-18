@@ -21,3 +21,12 @@ export const RPC_ENDPOINT =
 export const CURRENT_ROUND_ID = Number(
     process.env.NEXT_PUBLIC_ROUND_ID ?? "1",
 );
+
+// AF.2 — where Nimbo Arena lives. The game is a SEPARATE app (Vite +
+// Colyseus) on its own subdomain, so every link to it is absolute.
+// Env-driven so the same code serves local dev, the .dev testbed and
+// later the .app production host without an edit.
+// Baked at build time like every NEXT_PUBLIC_* — changing it needs a
+// rebuild, not a restart.
+export const ARENA_URL =
+    process.env.NEXT_PUBLIC_ARENA_URL || "https://arena.nimboplay.dev";
