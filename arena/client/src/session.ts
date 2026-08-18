@@ -28,7 +28,6 @@ import {
     SNAKE_BOOST_SPEED,
     SNAKE_SPACING,
     SNAKE_SPEED,
-    SNAKE_TURN_SPEED,
     WORLD_RADIUS,
     SCORE_PER_SOL,
     describeSnakeFromScore,
@@ -311,7 +310,27 @@ export async function startGameSession(
         // Same math as ArenaRoom.tick(): same function, same constants,
         // same units — shared/ exists precisely so these two
         // simulations cannot drift apart by accident.
-        predicted.angle = turnTowards(predicted.angle, input.angle, SNAKE_TURN_SPEED * dtFrames);
+        //
+        // 2026-08-18 — and it drifted anyway, because sharing the CODE is
+        // not enough if the INPUTS differ. This line passed the base
+        // SNAKE_TURN_SPEED while the server turns at dims.turnSpeed, i.e.
+        // SNAKE_TURN_SPEED * sqrt(SNAKE_RADIUS / radius) — the agility
+        // penalty that comes with size. The client therefore over-steered
+        // by a margin that GROWS WITH SCORE: 0% at spawn, 18% at score
+        // 593, 27% at score 2000.
+        //
+        // Why it went unseen for so long: at score 0 the two are
+        // identical, so every early test agreed. It only appears once a
+        // player is big — precisely when they have the most to lose, and
+        // it is the shape of the "I was clearly far from him" reports
+        // (measured: a 67px head gap at 24ms ping, where latency alone
+        // accounts for ~15px).
+        //
+        // The reconciliation below could not save us either: it nudges
+        // x/y but never the ANGLE, so a wrong heading regenerates the
+        // position error every frame instead of converging.
+        const myDims = describeSnakeFromScore(me.score);
+        predicted.angle = turnTowards(predicted.angle, input.angle, myDims.turnSpeed * dtFrames);
         // !graced mirrors the server's 2026-08-06 rule (a ghost cannot
         // boost). Predicting a denied boost ran the whole screen up to
         // 180px ahead of the server during spawn grace — every enemy
@@ -321,7 +340,7 @@ export async function startGameSession(
         predicted.x += Math.cos(predicted.angle) * speed * dtFrames;
         predicted.y += Math.sin(predicted.angle) * speed * dtFrames;
         const dist = Math.hypot(predicted.x, predicted.y);
-        const max = WORLD_RADIUS - describeSnakeFromScore(me.score).radius;
+        const max = WORLD_RADIUS - myDims.radius; // same dims as the turn above
         if (dist > max) {
             predicted.x *= max / dist;
             predicted.y *= max / dist;

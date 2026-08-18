@@ -1,8 +1,0 @@
-{"type":"op","kind":"open","roundId":"1786972800","endTimestamp":"1786973400","at":1786972984197}
-{"type":"ack","key":"open:1786972800","txSig":"4AwvEHCm9XXwi3MKy8CbdDwLK1fYgJv1NX9pGw5ej2V9TX89NkiKWKbS155f26JpChgq8CCvJCr8jLkPdWkdHEZK","at":1786973005314}
-{"type":"op","kind":"open","roundId":"1786973400","endTimestamp":"1786974000","at":1786973284224}
-{"type":"ack","key":"open:1786973400","txSig":"rzpxiLrkPGWoi8RpSKVpCNiEn2FkDL1po8vcH6XF9YvFDYPpikwcJZdeYKgwyZz1kvyMbe4eJuVQCq1i3f5nmHj","at":1786973287091}
-{"type":"op","kind":"end","roundId":"1786972800","at":1786973654246}
-{"type":"ack","key":"end:1786972800","txSig":"2Gae2ifTPVSnHcUUoGDoLDFs4iRwRkVHPBZqd22mcTdgQDydcVWESanydVcgUy8jGTEHhu5yByM8Nq16nYFXnWA2","at":1786973659410}
-{"type":"op","kind":"open","roundId":"1786974000","endTimestamp":"1786974600","at":1786973884270}
-{"type":"ack","key":"open:1786974000","txSig":"4ZVcyDxZGWA2rxrrj8gkMaJ2Ad1D3fNRbZ3BL9zdchssH7E4WxmPnYA8qNigrVhcHSebkbHx6wqVAAojXyujRTaC","at":1786973888791}

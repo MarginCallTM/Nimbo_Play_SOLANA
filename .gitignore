@@ -34,6 +34,15 @@ arena/server/settlement-outbox.jsonl
 # Runtime data: consumed deposit-signature ledger (anti-replay, not code)
 arena/server/consumed-deposits.jsonl
 
+# Runtime data (2026-08-18): the remaining local server artefacts. These
+# were TRACKED by oversight while their siblings above were ignored, so
+# every local playtest dirtied the working tree and slipped test rows —
+# player reports carry wallet addresses — into unrelated commits.
+# The copies that matter live on the VPS volume (/data), never here.
+arena/server/death-reports.jsonl
+arena/server/death-geo.jsonl
+arena/server/round-ops.jsonl
+
 # A4.6 red-team fleet: devnet bot wallets (PRIVATE KEYS — devnet-only,
 # but they never belong in a repo)
 arena/loadtest/wallets/

@@ -126,9 +126,40 @@ docker compose --profile https up -d --build server client settlement
 - `--build` est **obligatoire** pour `server` et `client` : tous deux
   copient les sources au build, et le client grave `VITE_SERVER_URL` +
   `WORLD_RADIUS` dans son bundle.
+### ⚠️ restart vs up -d vs --build : la distinction qui coûte une heure
+
+Trois commandes, trois portées différentes. Se tromper donne un service
+qui tourne **avec l'ancienne configuration**, sans la moindre erreur :
+
+| Commande | Ce qu'elle fait | Quand |
+|---|---|---|
+| `restart <svc>` | même conteneur, **même environnement** | recharger un fichier monté en bind-mount (le `Caddyfile`) |
+| `up -d <svc>` | Compose compare la config et **recrée** si elle a changé | dès qu'on touche au **`.env`** |
+| `up -d --build <svc>` | en plus, **reconstruit l'image** | tout ce qui est *gravé au build* : `VITE_SERVER_URL`, `NEXT_PUBLIC_*` |
+
+**Les variables d'environnement sont figées à la CRÉATION du conteneur.**
+`restart` réutilise le conteneur existant, donc il ne relira jamais le
+`.env` — même si le fichier est correct sur le disque.
+
+Vécu le 2026-08-18 (migration vers nimboplay.dev) : `.env` à jour,
+`server` et `client` corrects, mais `caddy` — redémarré et non recréé —
+continuait de servir l'ancien hôte sslip.io et de demander des
+certificats pour lui. Le conteneur datait de 8 jours et portait encore le
+`SITE_HOST` de l'époque. Correctif :
+
+```
+docker compose --profile https up -d --force-recreate caddy
+```
+
+Pour vérifier ce qu'un conteneur porte VRAIMENT, sans deviner :
+```
+docker compose exec <svc> printenv <VARIABLE>
+```
+
 - **`caddy` n'est pas recréé automatiquement** (le `Caddyfile` est un
-  bind-mount) : après une modif du Caddyfile, `docker compose
-  --profile https restart caddy`.
+  bind-mount) : après une modif du seul Caddyfile, `docker compose
+  --profile https restart caddy` suffit. Après une modif du `.env`,
+  il faut `up -d --force-recreate caddy`.
 - **`.env` n'est jamais touché par `git pull`** (gitignoré) : les réglages
   du VPS survivent aux déploiements.
 
