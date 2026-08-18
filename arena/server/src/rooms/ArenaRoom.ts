@@ -287,7 +287,12 @@ export class ArenaRoom extends Room<{ state: ArenaState; metadata: { roundId: st
     // DIVERGES in tight turns (post-alpha "far death"). Re-syncing the
     // real tracers ~15Hz stops the divergence from ever accumulating.
     private bodyCounter = 0;
-    private static readonly BODY_SYNC_TICKS = 2; // ~15Hz
+    private static readonly BODY_SYNC_TICKS = 2;     // ~15Hz — kill zone
+    // A4.12 — mid band: still corrected, six times less often. Beyond
+    // BODY_FAR_R the client is left to its own reconstruction.
+    private static readonly BODY_SYNC_MID_TICKS = 6; // ~5Hz
+    private static readonly BODY_NEAR_R2 = 400 * 400;
+    private static readonly BODY_FAR_R2 = 800 * 800;
 
     messages = {
         // A4.0 — trustworthy RTT: the client echoes our server-stamped
@@ -872,22 +877,59 @@ export class ArenaRoom extends Room<{ state: ArenaState; metadata: { roundId: st
             this.updateViews();
         }
 
-        // A4.9 — CONTINUOUS body sync (~15Hz). The client renders the
+        // A4.9 — CONTINUOUS body sync. The client renders the
         // authoritative server tracers instead of a reconstruction that
         // drifts in tight turns/loops. Uses the same "body" message as
-        // the AoI-entry seed; the client already resets to it on receipt,
-        // so the drift is bounded to BODY_SYNC_TICKS instead of the whole
-        // snake's time in view. (Scale later: only NEAR snakes + decimate
-        // — the collision-relevant ones — cf D85 / A4.9.)
+        // the AoI-entry seed; the client already resets to it on receipt.
+        //
+        // A4.12 (2026-08-18) — GRADED BY DISTANCE, and this is a
+        // STABILITY fix, not an optimisation. This loop used to send
+        // EVERY tracer of EVERY in-view snake at 15Hz: a 7 SOL snake
+        // (2140 tracers) cost ~500 KB/s PER SPECTATOR on its own, which
+        // is what froze a real client. The length cap alone would fix
+        // today's numbers, but balance must never be the only thing
+        // standing between us and a half-megabyte stream — retune the
+        // curve tomorrow and the hole reopens. So the transport is
+        // bounded independently.
+        //
+        // Why RATE and not decimation: the client dead-reckons bodies
+        // between syncs and normalises the array to describeSnakeFromScore
+        // length every frame. Half a body would be padded back out by
+        // duplicating the tail — the "bodyless snake" artefact A4.6f
+        // fixed. Sending FEWER TIMES is transparent to it; sending FEWER
+        // POINTS is not.
+        //
+        // The bands keep A4.9's guarantee exactly where it is load-
+        // bearing: inside NEAR, where a body can actually kill you, the
+        // rate is unchanged and what you see is still what kills you.
+        // Beyond FAR the client reconstructs on its own — as it did for
+        // everyone before A4.9 — and its drift hurts nobody at that
+        // range. A snake crossing inward snaps to truth hundreds of
+        // pixels before it can reach you.
         this.bodyCounter += 1;
-        if (this.bodyCounter >= ArenaRoom.BODY_SYNC_TICKS) {
-            this.bodyCounter = 0;
+        const syncNear = this.bodyCounter % ArenaRoom.BODY_SYNC_TICKS === 0;
+        const syncMid = this.bodyCounter % ArenaRoom.BODY_SYNC_MID_TICKS === 0;
+        if (syncNear || syncMid) {
             for (const client of this.clients) {
                 const self = this.state.players.get(client.sessionId);
                 const inView = this.playersInView.get(client.sessionId);
                 if (!self || !inView) continue;
                 for (const p of inView) {
                     if (p === self || p.tracers.length === 0) continue;
+                    // Distance head-to-head is the cheap proxy; a long
+                    // body reaching toward us is covered by NEAR being
+                    // generous relative to closing speed (~480px/s
+                    // head-on at boost = over a second of warning).
+                    const dx = p.x - self.x;
+                    const dy = p.y - self.y;
+                    const d2 = dx * dx + dy * dy;
+                    const due =
+                        d2 <= ArenaRoom.BODY_NEAR_R2
+                            ? syncNear
+                            : d2 <= ArenaRoom.BODY_FAR_R2
+                                ? syncMid
+                                : false;
+                    if (!due) continue;
                     const points: number[] = [];
                     for (const t of p.tracers) points.push(t.x, t.y);
                     client.send("body", { id: p.sessionId, points });

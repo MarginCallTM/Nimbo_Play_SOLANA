@@ -389,11 +389,55 @@ export interface SnakeDims {
 // Ported from the proto (A0.3): sqrt growth = fast early, diminishing
 // later; bigger snake = slower turning (the weight feel, and the
 // balance lever against big buy-ins).
+// A4.12 — THE LENGTH SOFT CAP (2026-08-18, after a 7 SOL snake in free
+// play). Length was the ONE unbounded lever: linear in score while the
+// radius grows as a square root, so a whale became a rope, not a bigger
+// snake. Measured at 7 SOL: 2140 tracers = 21390 units = 7.6x the world
+// width, when wrapping the entire map takes only 880. The user could
+// fence everyone in — and the server tick peaked at 33.18ms against a
+// 33.3ms budget, one step from falling behind for everybody.
+//
+// The knee is where the brake engages; below it NOTHING changes, so the
+// 0.1-1 SOL tiers — the vast majority of runs — keep the exact feel they
+// were playtested with. Above it the curve approaches LENGTH_MAX
+// asymptotically: a smooth slowdown, never a freeze (a hard stop would
+// put a cliff between score X and X+1).
+//
+// LENGTH_MAX is chosen BELOW the map's circumference in tracers
+// (8796 / SNAKE_SPACING = 880): encircling the world stops being a
+// balance question and becomes geometrically impossible.
+//
+// ECONOMICALLY NEUTRAL: length carries no value. Score does, and a
+// corpse drops 100% of it either way (D71). Flattening this curve is
+// pure spatial balance — zero money-path impact. It even sharpens D79:
+// a rich player with a bounded body is a fat prize in a normal-sized
+// target, i.e. EASIER to hunt relative to what they are worth.
+export const LENGTH_KNEE_SCORE = 1000;  // 1 SOL — brake starts here
+export const LENGTH_MAX = 600;          // tracer ceiling (2.1x world width)
+
+function cappedLength(score: number): number {
+    const linear = SNAKE_BASE_LENGTH + score * GROWTH_LENGTH_PER_SCORE;
+    if (score <= LENGTH_KNEE_SCORE) return linear;
+    const atKnee = SNAKE_BASE_LENGTH + LENGTH_KNEE_SCORE * GROWTH_LENGTH_PER_SCORE;
+    const room = LENGTH_MAX - atKnee;
+    // Guard a future mis-tune: a knee at or past the ceiling has no room
+    // left to decay into, and the exponential below would blow up.
+    if (room <= 0) return LENGTH_MAX;
+    // Slope-continuous at the knee: d/ds of the decay is
+    // GROWTH_LENGTH_PER_SCORE exactly at score = knee, so the curve has
+    // no visible kink where the brake engages.
+    return LENGTH_MAX - room * Math.exp(
+        -((score - LENGTH_KNEE_SCORE) * GROWTH_LENGTH_PER_SCORE) / room,
+    );
+}
+
 export function describeSnakeFromScore(score: number): SnakeDims {
     const growth = Math.sqrt(score);
     const radius = SNAKE_RADIUS * (1 + growth * GROWTH_RADIUS_FACTOR);
     return {
-        length: Math.round(SNAKE_BASE_LENGTH + score * GROWTH_LENGTH_PER_SCORE),
+        // Radius keeps its own sqrt curve: a whale still gets visibly
+        // thicker, it just stops becoming a wall.
+        length: Math.round(cappedLength(score)),
         radius,
         turnSpeed: SNAKE_TURN_SPEED * Math.sqrt(SNAKE_RADIUS / radius),
     };
