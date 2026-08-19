@@ -32,8 +32,7 @@ export function Header() {
           {[
             { label: "Arena", href: ARENA_URL },
             { label: "Lotteries", href: "/vaults" },
-            { label: "How it works", href: "/#how" },
-            { label: "Docs", href: "#" },
+            { label: "Leaderboard", href: "#"}
           ].map((l) => (
             <a
               key={l.label}
@@ -48,10 +47,9 @@ export function Header() {
           {/* AF.2 — the primary call to action is now PLAYING, not the
               lottery. Same reason as the nav order above. */}
           <a
-            href={ARENA_URL}
             className="hidden rounded-[10px] border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-secondary sm:inline-flex"
           >
-            Play Arena
+            Documentation
           </a>
           <ConnectWalletButton />
         </div>

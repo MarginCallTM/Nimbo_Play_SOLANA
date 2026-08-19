@@ -17,10 +17,13 @@ const fredoka = Fredoka({
   subsets: ["latin"],
 });
 
+// This is the title/description a shared link shows. It states devnet on
+// purpose: the arena settles real transactions, but on devnet SOL, and the
+// site must never read as a mainnet product (CLAUDE.md — nothing misleading).
 export const metadata: Metadata = {
-  title: "Nimbo Play — The On-Chain Lottery on Solana",
+  title: "Nimbo Play — Skill-Based Play-to-Earn on Solana",
   description:
-    "Provably fair lottery on Solana. Buy a ticket, win the vault. Transparent, secure, instant payouts.",
+    "Stake, play a real-time arena, and get paid on-chain in seconds. Gameplay runs off-chain; every stake and payout is settled by a Solana program. Live on devnet.",
 };
 
 export default function RootLayout({

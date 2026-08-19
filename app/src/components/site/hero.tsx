@@ -3,12 +3,13 @@
 // Images live in /public and are referenced with plain <img> to match the
 // maquette 1:1 (next/image could alter layout/aspect; fidelity first).
 //
-// TODO(10.16): the badge text "Solana mainnet · Round #248" is a mock kept for
-// pixel-parity. It MUST be corrected to devnet + a single real round.
+// AF.2(g) — the copy sells the ARENA, not the lottery, and says devnet.
+// The old badge claimed "Solana mainnet · Round #248": both were false.
 import Link from "next/link";
 import { PoweredBy } from "@/components/site/powered-by";
 import { LiveActivity } from "@/components/site/live-activity";
 import { GlobeAnalytics } from "@/components/site/globe-analytics";
+import { ARENA_URL } from "@/lib/constants";
 
 export function Hero() {
   return (
@@ -60,23 +61,23 @@ export function Hero() {
         {/* Headline block — kept centered above the two-column showcase */}
         <div className="flex flex-col items-center text-center">
           <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur animate-fade-in">
-            <span className="size-1.5 rounded-full bg-success" /> Live on Solana mainnet · Round #248
+            <span className="size-1.5 rounded-full bg-success" /> Live on Solana devnet
           </span>
           <h1 className="mt-6 font-display text-[clamp(2.5rem,7vw,5.5rem)] leading-[0.95] tracking-tight animate-fade-in lg:whitespace-nowrap">
-            The Lottery on <span className="brand-text">Solana</span>
+            Skill Pays. <span className="brand-text">On Solana.</span>
           </h1>
           <p className="mt-6 max-w-xl text-lg text-muted-foreground animate-fade-in">
-            Buy a ticket, join the vault. Every draw is provably fair, settled on-chain, and paid out in seconds.
+            Stake to enter a real-time arena. Grow, dodge the lobby, and cash out before someone takes you down.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3 animate-fade-in">
             {/* Main CTA -> vault selection. next/link = client-side nav +
                 prefetch when the link enters the viewport. */}
             <Link
-              href="/vaults"
+              href={ARENA_URL}
               className="inline-flex items-center gap-3 rounded-[10px] px-5 py-3 text-base font-semibold text-primary-foreground cta-glow transition-transform hover:scale-[1.02]"
               style={{ background: "var(--gradient-brand)" }}
             >
-              Get a Ticket
+              Enter the Arena
             </Link>
           </div>
         </div>
