@@ -1,5 +1,5 @@
 # Nimbo Play
-
+Still under construction ➡️ https://nimboplay.dev/ 🦺🚧
 Web3 gaming experiments on Solana — a learning and portfolio project exploring
 on-chain programs, real-time games, and the infrastructure that connects them.
 
