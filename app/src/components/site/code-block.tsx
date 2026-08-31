@@ -2,8 +2,11 @@
 // Changes vs the original:
 //  - recolored from cyan to our palette (primary #3981f6 family);
 //  - the demo React counter was replaced by our REAL client call: the
-//    section claims the lottery is auditable, so we show the actual
-//    on-chain interaction instead of decorative code;
+//    section claims the arena is auditable, so we show the actual on-chain
+//    interaction instead of decorative code. Kept in sync with
+//    programs/arena/src/lib.rs (`join`, JoinRound) — if the instruction or
+//    its accounts change, THIS CARD MUST CHANGE TOO, otherwise the section
+//    advertises a call that does not exist;
 //  - `isolate` on the wrapper: the rotating border uses z-index:-10, and
 //    without a local stacking context it would paint BEHIND the section's
 //    white background (i.e. invisible);
@@ -18,7 +21,7 @@ export function CodeBlock() {
       <div className="rounded-xl bg-[radial-gradient(at_88%_40%,#181925_0,transparent_85%),radial-gradient(at_49%_30%,#181925_0,transparent_85%),radial-gradient(at_14%_26%,#181925_0,transparent_85%),radial-gradient(at_0%_64%,#14337a_0,transparent_85%),radial-gradient(at_41%_94%,#3981f6_0,transparent_85%),radial-gradient(at_100%_99%,#101c3a_0,transparent_85%)] p-6 shadow-[0px_-16px_24px_0px_rgba(255,255,255,0.25)_inset]">
         <div className="flex items-center justify-between pb-4">
           <span className="text-base font-semibold text-white">
-            buy_ticket.ts
+            join_round.ts
           </span>
           <button className="rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition hover:bg-primary/85">
             Copy
@@ -34,17 +37,18 @@ export function CodeBlock() {
             <br />
             <br />
             <span className="italic text-[#7c8aa5]">
-              {"// one ticket = one on-chain account"}
+              {"// one entry = one stake locked in the round vault"}
             </span>
             <br />
             <span className="text-[#7aa8ff]">const</span> signature ={" "}
             <span className="text-[#7aa8ff]">await</span> program.methods
             <br />
-            &nbsp;&nbsp;.<span className="text-[#ffd60a]">buyTicket</span>()
+            &nbsp;&nbsp;.<span className="text-[#ffd60a]">join</span>(
+            <span className="text-[#7aa8ff]">new</span> BN(stake))
             <br />
             &nbsp;&nbsp;.<span className="text-[#ffd60a]">accounts</span>(
-            <span className="text-[#e0e0e0]">{"{"}</span> lottery, vault, buyer{" "}
-            <span className="text-[#e0e0e0]">{"}"}</span>)
+            <span className="text-[#e0e0e0]">{"{"}</span> player, round, vault,
+            treasury, reserve <span className="text-[#e0e0e0]">{"}"}</span>)
             <br />
             &nbsp;&nbsp;.<span className="text-[#ffd60a]">rpc</span>();
             <br />

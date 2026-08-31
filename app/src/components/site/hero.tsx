@@ -64,8 +64,9 @@ export function Hero() {
             <span className="size-1.5 rounded-full bg-success" /> Live on Solana devnet
           </span>
           <h1 className="mt-6 font-display text-[clamp(2.5rem,7vw,5.5rem)] leading-[0.95] tracking-tight animate-fade-in lg:whitespace-nowrap">
-            Skill Pays. <span className="brand-text">On Solana.</span>
+            Bet and Play<span className="brand-text">  </span>
           </h1>
+          <h2 className="">your Skill Pays.</h2>
           <p className="mt-6 max-w-xl text-lg text-muted-foreground animate-fade-in">
             Stake to enter a real-time arena. Grow, dodge the lobby, and cash out before someone takes you down.
           </p>

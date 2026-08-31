@@ -8,17 +8,17 @@ const steps = [
   {
     n: "01",
     title: "Connect your wallet",
-    desc: "Securely connect your favorite Solana wallet in one click.",
+    desc: "Connect your Solana wallet. Your keys stay yours we never hold your funds.",
   },
   {
     n: "02",
-    title: "Buy a ticket",
-    desc: "Pick the vault you want to enter and buy your ticket.",
+    title: "Join the ARENA",
+    desc: "Select your amount, join the matchmaking, wait for opponent",
   },
   {
     n: "03",
-    title: "Win the pot",
-    desc: "When the draw ends, the winner is paid instantly on-chain.",
+    title: "Use your skills",
+    desc: "Try to extract the biggest SOL amount possible.",
   },
 ];
 
@@ -36,10 +36,10 @@ export function HowItWorks() {
         <div className="max-w-2xl">
           <p className="text-sm font-medium text-primary">How it works</p>
           <h2 className="mt-2 font-display text-3xl md:text-4xl">
-            Transparency Comes Standard.
+            Play Off-Chain. Paid On-Chain.
           </h2>
           <p className="mt-4 text-muted-foreground">
-            Every lottery is secured on-chain and paid automatically.
+          Real-time multiplayer gameplay. Every stake and every payout handled by a Solana program.
           </p>
         </div>
 

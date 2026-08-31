@@ -1,30 +1,28 @@
 "use client";
 
 // Live activity feed for the Hero's right column.
-// Uses the AnimatedList primitive to reveal lottery events (ticket buys + wins)
+// Uses the AnimatedList primitive to reveal ARENA events (entries + cash-outs)
 // as a stack of notifications, newest on top.
 //
-// Portfolio project on devnet: the data below is intentionally fabricated —
-// there is no real traffic on devnet, so we simulate a lively feed. Later this
-// can be fed from the indexer (phase 9: TicketBought / WinnerDrawn in Postgres).
+// The rows below are SAMPLE data — the arena server exposes no public stats
+// endpoint yet, so nothing here is live. The card footer says so out loud
+// (AF.2(g)): a wallet-connect page must not display invented traffic as real.
 import { AnimatedList } from "@/components/ui/animated-list";
 import Jazzicon from "react-jazzicon";
 
 type Activity = {
   id: number;
-  kind: "win" | "buy";
+  kind: "cashout" | "entry";
   addr: string;
-  amount: number; // SOL won (win) or ticket count (buy)
-  round: number;
+  amount: number; // SOL: the stake locked in (entry) or the payout taken (cashout)
+  match: number;
   ago: string;
 };
 
-// Real on-chain ticket price. Buys contribute tickets * TICKET_PRICE to the pot.
-const TICKET_PRICE = 0.5;
 const sol = (n: number) =>
   n.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 2 });
 
-// Deterministic seed for jazzicon. Our mock addresses aren't valid hex, so the
+// Deterministic seed for jazzicon. Our sample addresses aren't valid hex, so the
 // package's jsNumberForAddress would yield NaN — we hash the whole string
 // instead so each address always maps to the same unique icon.
 function seedFromAddr(addr: string): number {
@@ -35,24 +33,25 @@ function seedFromAddr(addr: string): number {
   return h;
 }
 
-// Fake but plausible stream, most recent last (AnimatedList reveals in order).
-// For "buy" rows, `amount` is the number of tickets; for "win" rows it's the
-// pot in SOL (a realistic multiple of TICKET_PRICE, not thousands).
+// Sample stream, most recent last (AnimatedList reveals in order). Amounts
+// stay inside the real economy: entries match the menu tiers (0.1 / 0.25 /
+// 0.5 / 1 SOL, shared/src/index.ts) and a cash-out pays what the snake grew
+// to — a few multiples of the stake, never a jackpot.
 const activity: Activity[] = [
-  { id: 1, kind: "buy", addr: "Ck8v…qA3n", amount: 2, round: 248, ago: "5m" },
-  { id: 2, kind: "win", addr: "7xKq…9fPa", amount: 42.5, round: 247, ago: "2h" },
-  { id: 3, kind: "buy", addr: "9pLd…2vXo", amount: 5, round: 248, ago: "8m" },
-  { id: 4, kind: "buy", addr: "Bv2m…hLZ4", amount: 1, round: 248, ago: "12m" },
-  { id: 5, kind: "win", addr: "3nRe…kQ8w", amount: 27.5, round: 246, ago: "6h" },
-  { id: 6, kind: "buy", addr: "Ht4c…mZ7y", amount: 3, round: 248, ago: "15m" },
-  { id: 7, kind: "win", addr: "Rp5t…Wq2b", amount: 18, round: 245, ago: "11h" },
-  { id: 8, kind: "buy", addr: "Kf9n…Lm4d", amount: 8, round: 248, ago: "20m" },
-  { id: 9, kind: "buy", addr: "Zx3w…Pv7k", amount: 1, round: 248, ago: "22m" },
-  { id: 10, kind: "win", addr: "Nb6y…Tc8r", amount: 33, round: 244, ago: "1d" },
+  { id: 1, kind: "entry", addr: "Ck8v…qA3n", amount: 1, match: 1482, ago: "5m" },
+  { id: 2, kind: "cashout", addr: "7xKq…9fPa", amount: 2.15, match: 1478, ago: "2h" },
+  { id: 3, kind: "entry", addr: "9pLd…2vXo", amount: 0.5, match: 1482, ago: "8m" },
+  { id: 4, kind: "entry", addr: "Bv2m…hLZ4", amount: 0.25, match: 1482, ago: "12m" },
+  { id: 5, kind: "cashout", addr: "3nRe…kQ8w", amount: 1.86, match: 1481, ago: "6h" },
+  { id: 6, kind: "entry", addr: "Ht4c…mZ7y", amount: 0.5, match: 1482, ago: "15m" },
+  { id: 7, kind: "cashout", addr: "Rp5t…Wq2b", amount: 0.74, match: 1480, ago: "11h" },
+  { id: 8, kind: "entry", addr: "Kf9n…Lm4d", amount: 0.1, match: 1482, ago: "20m" },
+  { id: 9, kind: "entry", addr: "Zx3w…Pv7k", amount: 1, match: 1482, ago: "22m" },
+  { id: 10, kind: "cashout", addr: "Nb6y…Tc8r", amount: 3.4, match: 1479, ago: "1d" },
 ];
 
-function ActivityCard({ kind, addr, amount, round, ago }: Activity) {
-  const isWin = kind === "win";
+function ActivityCard({ kind, addr, amount, match, ago }: Activity) {
+  const isCashout = kind === "cashout";
   return (
     <div className="relative mx-auto w-full overflow-hidden rounded-2xl border border-border bg-background/70 p-3 transition-all duration-200 ease-in-out hover:scale-[1.02] hover:border-primary/40">
       <div className="flex items-center gap-3">
@@ -63,31 +62,23 @@ function ActivityCard({ kind, addr, amount, round, ago }: Activity) {
 
         <div className="min-w-0 flex-1">
           <h5 className="truncate text-sm font-semibold text-foreground">
-            {isWin ? (
-              <>
-                <span className="font-mono">{addr}</span> won the pot
-              </>
-            ) : (
-              <>
-                <span className="font-mono">{addr}</span> bought {amount}{" "}
-                {amount > 1 ? "tickets" : "ticket"}
-              </>
-            )}
+            <span className="font-mono">{addr}</span>{" "}
+            {isCashout ? "cashed out" : "entered the arena"}
           </h5>
           <p className="truncate text-xs text-muted-foreground">
-            Round #{round} · {ago}
+            Match #{match} · {ago}
           </p>
         </div>
 
-        {/* Right value in SOL: the pot won (green) or the stake added to it */}
+        {/* Right value in SOL: the payout taken (green) or the stake locked in */}
         <div className="text-right">
           <div
-            className={`text-sm font-semibold ${isWin ? "text-success" : "text-foreground"}`}
+            className={`text-sm font-semibold ${isCashout ? "text-success" : "text-foreground"}`}
           >
-            +{sol(isWin ? amount : amount * TICKET_PRICE)} SOL
+            +{sol(amount)} SOL
           </div>
           <div className="text-[10px] text-muted-foreground">
-            {isWin ? "Paid on-chain" : "to the pot"}
+            {isCashout ? "Paid on-chain" : "to the vault"}
           </div>
         </div>
       </div>
@@ -111,9 +102,9 @@ export function LiveActivity() {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
               <span className="relative inline-flex size-2 rounded-full bg-success" />
             </span>
-            Live activity
+            Live arena
           </div>
-          <span className="text-xs text-muted-foreground">Round #248</span>
+          <span className="text-xs text-muted-foreground">Match #1482</span>
         </div>
 
         {/* Animated feed (fixed height, older items fade under the gradient) */}
@@ -128,9 +119,9 @@ export function LiveActivity() {
 
         {/* Footer */}
         <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3 text-xs text-muted-foreground">
-          <span>Updated in real time</span>
-          <a href="#lotteries" className="font-medium text-foreground hover:underline">
-            View all →
+          <span>Sample data · devnet</span>
+          <a href="/games" className="font-medium text-foreground hover:underline">
+            View all games →
           </a>
         </div>
       </div>

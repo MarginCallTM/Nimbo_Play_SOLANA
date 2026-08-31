@@ -28,6 +28,12 @@ interface CityMarker {
   id: string;
   city: string;
   location: [number, number]; // [latitude, longitude]
+  // Marketing figures, NOT telemetry (the arena exposes no public stats
+  // endpoint). `players` is pinned only where we want a specific number on
+  // screen; omit it and the city falls back to a random one. `growth` is
+  // always pinned, so the green badge stops changing on every reload.
+  players?: number;
+  growth: string;
 }
 
 interface GlobeAnalyticsProps {
@@ -36,18 +42,17 @@ interface GlobeAnalyticsProps {
   speed?: number;
 }
 
-// Seven big cities spread over five continents — the marketing message is
-// "a blockchain lottery has no borders". Player counts are faked and
-// generated client-side (see the `counts` state below).
+// Eight big cities spread over five continents — the marketing message is
+// "a real-time arena has no borders".
 const defaultMarkers: CityMarker[] = [
-  { id: "nyc", city: "New York", location: [40.71, -74.01] },
-  { id: "sao", city: "São Paulo", location: [-23.55, -46.63] },
-  { id: "lon", city: "London", location: [51.51, -0.13] },
-  { id: "lag", city: "Lagos", location: [6.52, 3.38] },
-  { id: "mum", city: "Mumbai", location: [19.08, 72.88] },
-  { id: "tok", city: "Tokyo", location: [35.68, 139.65] },
-  { id: "syd", city: "Sydney", location: [-33.87, 151.21] },
-  { id: "par", city: "Paris", location: [48.86, 2.35] },
+  { id: "nyc", city: "New York", location: [40.71, -74.01], growth: "2.1" },
+  { id: "sao", city: "São Paulo", location: [-23.55, -46.63], growth: "3.7" },
+  { id: "lon", city: "London", location: [51.51, -0.13], growth: "1.4" },
+  { id: "lag", city: "Lagos", location: [6.52, 3.38], players: 271, growth: "4.2" },
+  { id: "mum", city: "Mumbai", location: [19.08, 72.88], players: 599, growth: "0.9" },
+  { id: "tok", city: "Tokyo", location: [35.68, 139.65], growth: "3.3" },
+  { id: "syd", city: "Sydney", location: [-33.87, 151.21], growth: "2.8" },
+  { id: "par", city: "Paris", location: [48.86, 2.35], players: 233, growth: "1.6" },
 ];
 
 // Projects a [lat, lng] location to canvas-relative coordinates (0..1),
@@ -86,9 +91,11 @@ export function GlobeAnalytics({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // One DOM node per city label, repositioned every frame without React.
   const labelRefs = useRef<(HTMLDivElement | null)[]>([]);
-  // Fake per-city stats. Generated in an effect (client only): Math.random()
-  // during SSR would differ between server and client HTML and trigger a
-  // React hydration mismatch. `null` = labels not mounted yet.
+  // Per-city display stats. Still resolved in an effect (client only) rather
+  // than during render: the cities WITHOUT a pinned `players` still roll a
+  // Math.random(), and rolling it during SSR would make the server HTML differ
+  // from the client's and trigger a React hydration mismatch.
+  // `null` = labels not mounted yet.
   const [stats, setStats] = useState<
     { players: number; growth: string }[] | null
   >(null);
@@ -98,14 +105,15 @@ export function GlobeAnalytics({
   const thetaOffsetRef = useRef(0);
   const isPausedRef = useRef(false);
 
-  // Roll the fake stats once per mount: 150..999 "players" per city, plus a
-  // small always-positive growth (+0.5%..+4.9%) — modest numbers everywhere
-  // read as steady worldwide growth, big spikes would look fake.
+  // Resolve the stats once per mount. A city that pins its own `players`
+  // keeps it verbatim; the others roll 150..999 — modest numbers everywhere
+  // read as steady worldwide activity, big spikes would look fake. `growth`
+  // is never rolled: it comes straight from the marker.
   useEffect(() => {
     setStats(
-      markers.map(() => ({
-        players: 150 + Math.floor(Math.random() * 850),
-        growth: (0.5 + Math.random() * 4.4).toFixed(1),
+      markers.map((m) => ({
+        players: m.players ?? 150 + Math.floor(Math.random() * 850),
+        growth: m.growth,
       }))
     );
   }, [markers]);
@@ -264,6 +272,7 @@ export function GlobeAnalytics({
               <span className="font-semibold text-foreground">
                 {stats[i].players}
               </span>
+              <span className="text-muted-foreground">online</span>
               <span className="font-medium text-success">
                 +{stats[i].growth}%
               </span>
