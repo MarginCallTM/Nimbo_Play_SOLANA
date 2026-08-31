@@ -28,7 +28,10 @@ export function WhySolvault() {
       <div className="mx-auto grid max-w-7xl items-center gap-12 px-6 md:grid-cols-2">
         {/* Left: animated code card showing the real buy_ticket client call —
             the "auditable" argument, shown instead of told. */}
-        <div className="relative flex justify-center">
+        {/* min-w-0: same reason as inside CodeBlock — a grid item defaults to
+            min-width:auto and would otherwise be stretched by the code card's
+            longest line, pushing the page into horizontal scroll on mobile. */}
+        <div className="relative flex min-w-0 justify-center">
           <CodeBlock />
         </div>
 

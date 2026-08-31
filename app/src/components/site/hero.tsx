@@ -20,16 +20,15 @@ export function Hero() {
     // `grain` (globals.css) lays film grain over the WHOLE section, artwork and
     // headline alike, the way grain runs across a printed poster. It also sets
     // isolation:isolate so the blend can't reach the page background.
-    // The literal #08080c is deliberate and TEMPORARY: it is the illustration's
-    // own black, and the palette tokens are still the old light-theme blues
-    // (F3 replaces both with real tokens).
-    <section id="play" className="grain relative overflow-hidden bg-[#08080c]">
+    // `bg-background` is now the artwork's own black, sampled from the file
+    // itself (F3), so section, header and illustration share one value.
+    <section id="play" className="grain relative overflow-hidden bg-background">
       <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center px-6 pb-6 pt-20 text-center md:pt-24">
         {/* Honest status badge (F4.3 / F0): the arena settles real transactions,
             but on devnet SOL. The old badge claimed "Solana mainnet · Round #248"
             and both halves were false. */}
         <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-medium text-white/70 backdrop-blur">
-          <span className="size-1.5 rounded-full bg-[#50fa7b]" />
+          <span className="size-1.5 rounded-full bg-success" />
           Live on Solana devnet
         </span>
 
@@ -60,7 +59,7 @@ export function Hero() {
               subdomain, so this is an absolute URL, not a route of this site. */}
           <Link
             href={ARENA_URL}
-            className="rounded-xl bg-white px-6 py-3 text-base font-semibold text-[#08080c] transition-transform hover:scale-[1.02]"
+            className="rounded-xl bg-white px-6 py-3 text-base font-semibold text-background transition-transform hover:scale-[1.02]"
           >
             Enter the Arena
           </Link>
@@ -89,7 +88,12 @@ export function Hero() {
           wide. Retune by moving the second number only: lower = tighter crop.
           `relative` (not absolute) so the band takes real height and pushes the
           page down on its own — no magic offsets to keep in sync. */}
-      <div className="relative aspect-[3841/1650] w-full">
+      {/* Mobile uses a TALLER ratio (3/2) on purpose. At 425px the desktop crop
+          is only ~183px tall and the cabinet shrinks to nothing; a taller box
+          makes object-cover scale up and trim the SIDES instead, which costs
+          only empty cloud and keeps the subject readable. Provisional answer to
+          F1.8/F11.1 — a purpose-framed portrait asset would still be better. */}
+      <div className="relative aspect-[3/2] w-full md:aspect-[3841/1650]">
         <Image
           src="/Official_bg_webp.webp"
           alt=""
@@ -104,7 +108,7 @@ export function Hero() {
         />
         {/* The crop leaves a hard edge where the section's black meets the
             artwork's slightly different black. This melts one into the other. */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-[#08080c] to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-background to-transparent" />
       </div>
     </section>
   );

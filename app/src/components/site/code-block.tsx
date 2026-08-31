@@ -1,6 +1,9 @@
 // Animated code card for WhySolvault — adapted from a community snippet.
 // Changes vs the original:
-//  - recolored from cyan to our palette (primary #3981f6 family);
+//  - recoloured from cyan to the F3 palette: indigo surface, coral glow. The
+//    syntax colours stay blue-leaning on purpose — blue keywords are a code
+//    convention readers already know, and recolouring them would cost
+//    legibility for no gain;
 //  - the demo React counter was replaced by our REAL client call: the
 //    section claims the arena is auditable, so we show the actual on-chain
 //    interaction instead of decorative code. Kept in sync with
@@ -16,9 +19,19 @@
 
 export function CodeBlock() {
   return (
-    <div className="relative isolate w-full max-w-2xl rounded-xl p-0.5">
+    // `min-w-0` is load-bearing, not cosmetic. As a flex item this box defaults
+    // to min-width:auto, so it refuses to shrink below the intrinsic width of
+    // the <pre> inside — the longest code line. The pre's own overflow-x-auto
+    // then never engages, the box grows past the viewport and the whole PAGE
+    // scrolls sideways. min-w-0 lets it shrink so the pre scrolls instead.
+    <div className="relative isolate w-full min-w-0 max-w-2xl rounded-xl p-0.5">
       <div className="code-border-anim" />
-      <div className="rounded-xl bg-[radial-gradient(at_88%_40%,#181925_0,transparent_85%),radial-gradient(at_49%_30%,#181925_0,transparent_85%),radial-gradient(at_14%_26%,#181925_0,transparent_85%),radial-gradient(at_0%_64%,#14337a_0,transparent_85%),radial-gradient(at_41%_94%,#3981f6_0,transparent_85%),radial-gradient(at_100%_99%,#101c3a_0,transparent_85%)] p-6 shadow-[0px_-16px_24px_0px_rgba(255,255,255,0.25)_inset]">
+      {/* Six stacked radial glows make the card surface. The three coloured
+          ones used to be blues (#14337a / #3981f6 / #101c3a) left over from the
+          old brand: bottom-left is now the deep cloud indigo, bottom-centre the
+          coral accent (the light source, echoing the fire under the hero) and
+          bottom-right a dark indigo. The three neutrals only lift the top. */}
+      <div className="rounded-xl bg-[radial-gradient(at_88%_40%,#16122e_0,transparent_85%),radial-gradient(at_49%_30%,#16122e_0,transparent_85%),radial-gradient(at_14%_26%,#16122e_0,transparent_85%),radial-gradient(at_0%_64%,#282574_0,transparent_85%),radial-gradient(at_41%_94%,#ff7664_0,transparent_85%),radial-gradient(at_100%_99%,#241d4a_0,transparent_85%)] p-6 shadow-[0px_-16px_24px_0px_rgba(255,255,255,0.18)_inset]">
         <div className="flex items-center justify-between pb-4">
           <span className="text-base font-semibold text-white">
             join_round.ts

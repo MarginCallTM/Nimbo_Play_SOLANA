@@ -94,119 +94,110 @@
   }
 }
 
+/* ============================================================
+   PALETTE (F3) — sampled from the hero artwork, not invented.
+   Every hue below was measured on app/public/Official_bg_webp.webp by
+   classifying its pixels by hue family, so the site cannot drift away
+   from the illustration it sits under:
+
+     coral / fire    #ce6c5d -> #ff7664 -> #fdb09a
+     indigo / clouds #140d32 -> #282574 -> #5945c9
+     violet / clouds #391d48 -> #924eaf -> #a262cb
+     gold / orbs     #f0b359 -> #f7c774
+     background      #09080d
+
+   ROLES (the part worth reading):
+     - ACTIONS ARE WHITE, not coloured. On artwork this dense, white is
+       the only fill that always wins, and it is what the reference does.
+       So --primary is not a button colour: it is the INTERACTIVE accent
+       for links, kickers, focus rings and charts.
+     - --primary is the cloud indigo LIFTED to oklch L 0.61. Straight
+       #5945c9 sits at 2.8:1 on this background and fails as text; lifted
+       it reaches 5.0:1 and passes AA.
+     - --accent is the coral. It is editorial ("look here"), never
+       interactive, so it can never be confused with a link.
+     - --gold means MONEY, matching the loot orbs in-game (#ffcc66). Never
+       spend it on decoration, or it stops meaning anything.
+     - --destructive is deliberately a deeper, redder red than the coral
+       (hue 23 vs 29.5, L 0.63 vs 0.73). Two near-identical warm tones,
+       one editorial and one meaning "danger", would be unreadable.
+
+   There is no light theme any more, so these live in :root and .dark no
+   longer overrides them — one source of truth. The `dark` class stays on
+   <html> because shadcn components use `dark:` variants.
+   Every contrast ratio below was measured against --background.
+   ============================================================ */
 :root {
   --radius: 0.625rem;
 
-  /* --- New blue palette (light) --- */
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.32 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.32 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.32 0 0);
-  --primary: oklch(0.62 0.19 259.81);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.97 0.004 264.54);
-  --secondary-foreground: oklch(0.45 0.03 256.8);
-  --muted: oklch(0.98 0.004 247.84);
-  --muted-foreground: oklch(0.55 0.02 264.36);
-  --accent: oklch(0.95 0.03 236.82);
-  --accent-foreground: oklch(0.38 0.14 265.52);
-  --destructive: oklch(0.64 0.21 25.33);
-  --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.93 0.01 264.53);
-  --input: oklch(0.93 0.01 264.53);
-  --ring: oklch(0.62 0.19 259.81);
+  --background: oklch(0.138 0.011 294.7);        /* #09080d — the artwork's own black */
+  --foreground: oklch(0.940 0.016 297.5);        /* 16.7:1 */
+  --card: oklch(0.195 0.053 287.3);              /* #14102b — lifted, indigo-tinted */
+  --card-foreground: oklch(0.940 0.016 297.5);
+  --popover: oklch(0.195 0.053 287.3);
+  --popover-foreground: oklch(0.940 0.016 297.5);
 
-  /* Semantic success stays green (it's meaning, not brand). */
-  --success: oklch(0.72 0.18 160);
-  --success-foreground: oklch(0.99 0 0);
+  --primary: oklch(0.612 0.192 285.0);           /* lifted cloud indigo — 5.0:1 */
+  --primary-foreground: oklch(0.138 0.011 294.7);/* dark on indigo: 5.0:1.
+                                                    White on it is only 4.0:1 —
+                                                    fine for large text, not body. */
+  --secondary: oklch(0.227 0.064 286.9);
+  --secondary-foreground: oklch(0.940 0.016 297.5);
+  --muted: oklch(0.209 0.054 287.3);
+  --muted-foreground: oklch(0.694 0.053 292.6);  /* 7.2:1 */
+  --accent: oklch(0.725 0.171 29.5);             /* coral #ff7664 — 7.6:1 */
+  --accent-foreground: oklch(0.138 0.011 294.7);
+  --destructive: oklch(0.626 0.193 23.0);        /* 5.1:1 */
+  --destructive-foreground: oklch(0.980 0 0);
+  --border: oklch(0.292 0.078 286.8);
+  --input: oklch(0.292 0.078 286.8);
+  --ring: oklch(0.612 0.192 285.0);
 
-  /* Soft candy accents (unchanged decorative helpers). */
-  --sky-soft: oklch(0.94 0.04 250);
-  --sky-softer: oklch(0.98 0.015 255);
-  --caramel: oklch(0.78 0.14 60);
-  --rose-soft: oklch(0.88 0.06 20);
-  --gold: oklch(0.85 0.14 85);
+  --success: oklch(0.871 0.220 148.0);           /* the in-game extraction ring */
+  --success-foreground: oklch(0.138 0.011 294.7);
 
-  /* --- Brand gradients & shadows, recolored violet -> blue --- */
-  --gradient-hero: radial-gradient(ellipse at 50% 0%, oklch(0.95 0.03 236.82) 0%, oklch(0.98 0.01 250) 60%, oklch(1 0 0) 100%);
-  --gradient-brand: linear-gradient(135deg, oklch(0.62 0.19 259.81) 0%, oklch(0.49 0.22 264.38) 100%);
-  --shadow-cta: 0 14px 32px -10px oklch(0.62 0.19 259.81 / 0.45);
-  --shadow-soft: 0 1px 2px oklch(0.2 0.02 264 / 0.04), 0 8px 24px -8px oklch(0.2 0.02 264 / 0.08);
-  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 1px 3px oklch(0.2 0.02 264 / 0.05), 0 12px 28px -12px oklch(0.2 0.02 264 / 0.12);
+  --gold: oklch(0.834 0.126 76.5);               /* value / money — 11.8:1 */
+  --violet: oklch(0.596 0.164 316.0);            /* the clouds' violet face */
+  --sky-soft: oklch(0.292 0.078 286.8);          /* kept: still referenced by
+                                                    lottery-era components */
+  --sky-softer: oklch(0.209 0.054 287.3);
 
-  /* Charts (blue ramp) + sidebar. */
-  --chart-1: oklch(0.62 0.19 259.81);
-  --chart-2: oklch(0.55 0.22 262.88);
-  --chart-3: oklch(0.49 0.22 264.38);
-  --chart-4: oklch(0.42 0.18 265.64);
-  --chart-5: oklch(0.38 0.14 265.52);
-  --sidebar: oklch(0.98 0.004 247.84);
-  --sidebar-foreground: oklch(0.32 0 0);
-  --sidebar-primary: oklch(0.62 0.19 259.81);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.95 0.03 236.82);
-  --sidebar-accent-foreground: oklch(0.38 0.14 265.52);
-  --sidebar-border: oklch(0.93 0.01 264.53);
-  --sidebar-ring: oklch(0.62 0.19 259.81);
+  /* Gradients & shadows, rebuilt for a dark ground. Drop shadows are nearly
+     invisible on near-black, so depth comes from a lit top edge (inset
+     highlight) plus a deep spread, not from a soft grey blur. */
+  --gradient-hero: linear-gradient(180deg, oklch(0.138 0.011 294.7) 0%, oklch(0.138 0.011 294.7) 100%);
+  --gradient-brand: linear-gradient(135deg, oklch(0.612 0.192 285.0) 0%, oklch(0.470 0.170 288.0) 100%);
+  /* Coral twin of --gradient-brand, for editorial fills. Currently unused —
+     the highlighted word was tried in coral and reverted to indigo — but kept
+     because the pairing is part of the palette, not a one-off. */
+  --gradient-accent: linear-gradient(135deg, oklch(0.725 0.171 29.5) 0%, oklch(0.620 0.190 27.0) 100%);
+  --shadow-cta: 0 14px 32px -10px oklch(0.612 0.192 285.0 / 0.45);
+  --shadow-soft: 0 1px 2px oklch(0 0 0 / 0.4), 0 8px 24px -8px oklch(0 0 0 / 0.5);
+  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.06) inset, 0 1px 3px oklch(0 0 0 / 0.4), 0 12px 28px -12px oklch(0 0 0 / 0.55);
+
+  /* Charts: indigo -> violet -> coral, i.e. a walk across the artwork rather
+     than five shades of one hue, so adjacent series stay distinguishable. */
+  --chart-1: oklch(0.612 0.192 285.0);
+  --chart-2: oklch(0.596 0.164 316.0);
+  --chart-3: oklch(0.725 0.171 29.5);
+  --chart-4: oklch(0.834 0.126 76.5);
+  --chart-5: oklch(0.470 0.170 288.0);
+
+  --sidebar: oklch(0.195 0.053 287.3);
+  --sidebar-foreground: oklch(0.940 0.016 297.5);
+  --sidebar-primary: oklch(0.612 0.192 285.0);
+  --sidebar-primary-foreground: oklch(0.138 0.011 294.7);
+  --sidebar-accent: oklch(0.227 0.064 286.9);
+  --sidebar-accent-foreground: oklch(0.940 0.016 297.5);
+  --sidebar-border: oklch(0.292 0.078 286.8);
+  --sidebar-ring: oklch(0.612 0.192 285.0);
 }
 
-.dark {
-  /* --- New blue palette (dark) ---
-     "Soft dark": every neutral is tinted with the brand hue (~265) instead
-     of pure gray, so dark pages read as blue-night rather than black.
-     Used page-scoped (e.g. /vaults root has class="dark") — there is no
-     global theme toggle. */
-  --background: oklch(0.21 0.03 265);
-  --foreground: oklch(0.93 0.01 255);
-  --card: oklch(0.25 0.035 265);
-  --card-foreground: oklch(0.93 0.01 255);
-  --popover: oklch(0.25 0.035 265);
-  --popover-foreground: oklch(0.93 0.01 255);
-  --primary: oklch(0.62 0.19 259.81);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.29 0.035 265);
-  --secondary-foreground: oklch(0.88 0.02 255);
-  --muted: oklch(0.27 0.03 265);
-  --muted-foreground: oklch(0.68 0.025 260);
-  --accent: oklch(0.38 0.14 265.52);
-  --accent-foreground: oklch(0.88 0.06 254.13);
-  --destructive: oklch(0.64 0.21 25.33);
-  --destructive-foreground: oklch(1 0 0);
-  --border: oklch(0.33 0.035 265);
-  --input: oklch(0.33 0.035 265);
-  --ring: oklch(0.62 0.19 259.81);
-
-  --success: oklch(0.72 0.18 160);
-  --success-foreground: oklch(0.99 0 0);
-  --sky-soft: oklch(0.42 0.06 250);
-  --sky-softer: oklch(0.3 0.03 255);
-  --caramel: oklch(0.78 0.14 60);
-  --rose-soft: oklch(0.6 0.08 20);
-  --gold: oklch(0.85 0.14 85);
-
-  --chart-1: oklch(0.71 0.14 254.62);
-  --chart-2: oklch(0.62 0.19 259.81);
-  --chart-3: oklch(0.55 0.22 262.88);
-  --chart-4: oklch(0.49 0.22 264.38);
-  --chart-5: oklch(0.42 0.18 265.64);
-  --sidebar: oklch(0.21 0.03 265);
-  --sidebar-foreground: oklch(0.93 0.01 255);
-  --sidebar-primary: oklch(0.62 0.19 259.81);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.38 0.14 265.52);
-  --sidebar-accent-foreground: oklch(0.88 0.06 254.13);
-  --sidebar-border: oklch(0.33 0.035 265);
-  --sidebar-ring: oklch(0.62 0.19 259.81);
-
-  /* Gradients & shadows are declared light-only in :root — without these
-     overrides a dark page would inherit the LIGHT hero gradient and the
-     white inset line baked into --shadow-card. */
-  --gradient-hero: radial-gradient(ellipse at 50% 0%, oklch(0.33 0.09 265) 0%, oklch(0.25 0.05 265) 55%, oklch(0.21 0.03 265) 100%);
-  --shadow-soft: 0 1px 2px oklch(0 0 0 / 0.25), 0 8px 24px -8px oklch(0 0 0 / 0.35);
-  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.06) inset, 0 1px 3px oklch(0 0 0 / 0.3), 0 12px 28px -12px oklch(0 0 0 / 0.45);
-}
+/* No `.dark` colour block any more. The palette above IS the theme: there is
+   no light variant of this site, so overriding the same values a second time
+   under `.dark` would just be two places to keep in sync. The `dark` class
+   stays on <html> (layout.tsx) purely so shadcn's `dark:` utility variants
+   still match. */
 
 @layer base {
   * {
@@ -305,14 +296,16 @@
     left: 50%;
     width: 200%;
     height: 10rem;
-    /* Sweep: our primary hue lightened (+10 L) to sit closer to the site's
-       soft-blue accents. Primary itself would be hsl(217 91% 60%). */
+    /* Sweep: the coral accent (F3), not the old blue. Written as var(--accent)
+       rather than a literal so it tracks the palette instead of drifting from
+       it — the previous hard-coded hsl(217 91% 70%) is exactly how the blue
+       survived the theme change. */
     background: linear-gradient(
       0deg,
-      hsla(0, 0%, 100%, 0) 0%,
-      hsl(217, 91%, 70%) 40%,
-      hsl(217, 91%, 70%) 60%,
-      hsla(0, 0%, 40%, 0) 100%
+      transparent 0%,
+      var(--accent) 40%,
+      var(--accent) 60%,
+      transparent 100%
     );
     transform: translate(-50%, -50%) rotate(0deg);
     transform-origin: left;

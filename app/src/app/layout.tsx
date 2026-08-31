@@ -36,7 +36,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geist.variable} h-full antialiased`}>
+    // F3.4 — `dark` lives on <html>, not on a wrapper inside the page. The
+    // token values then reach <body> too, so the document itself is dark. With
+    // the class further down, body kept the LIGHT --background: invisible while
+    // a full-width child covered it, but the moment anything overflowed
+    // horizontally a white band appeared beside the page.
+    <html lang="en" className={`dark ${geist.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
         <Providers>{children}</Providers>
       </body>

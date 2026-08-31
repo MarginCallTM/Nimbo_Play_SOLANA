@@ -15,11 +15,8 @@ import { Footer } from "@/components/site/footer";
 
 export default function Home() {
   return (
-    // F3.4 (provisional): the redesign is dark, so the page opts into the
-    // `.dark` token set that already exists for /vaults. Doing it with a class
-    // here keeps the change to one line and reversible; the proper fix is to
-    // make dark the default in globals.css once the palette is settled.
-    <div className="dark min-h-screen bg-background text-foreground">
+    // The `dark` class now lives on <html> (layout.tsx) so <body> is dark too.
+    <div className="min-h-screen bg-background text-foreground">
       <Header />
       <main>
         <Hero />
