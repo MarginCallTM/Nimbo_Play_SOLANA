@@ -1,53 +1,71 @@
-// Site header — ported 1:1 from the Lovable maquette (Header section).
-// Still a Server Component: ConnectWalletButton is a client LEAF inside it
-// (same pattern as HighlightedWord) — the rest of the header renders on the
-// server. "mainnet" wording is corrected in 10.16.
-// logo-mark.png = official logo, background-removed + trimmed from
-// public/official_logo.png (kept as the untouched source).
+// Site header — front redesign (F5.1/F5.2), modelled on the reference layout:
+// wordmark left, navigation centred, two pill actions right.
+//
+// The centring is done with a three-column grid whose side columns are both
+// `1fr`, NOT with flex `justify-between`. With flex the nav would sit wherever
+// the logo and the button group happened to leave room, so it would drift every
+// time a label changed length; equal side columns pin it to the true centre.
+//
+// Server Component: ConnectWalletButton is the only client leaf inside it.
 import Image from "next/image";
 import { ConnectWalletButton } from "@/components/site/connect-wallet-button";
 import { ARENA_URL } from "@/lib/constants";
 
+// Arena comes first: since the 2026-07-10 pivot it is the flagship and the
+// lottery is the side-feature. It is an absolute URL because the game is a
+// separate app on its own subdomain, not a route of this site.
+// No "Docs" entry here: the Documentation button on the right already covers
+// it, and two routes to the same page in one bar just splits the click.
+// TODO F7 — Leaderboard is a placeholder until that page exists.
+const navLinks = [
+  { label: "Arena", href: ARENA_URL },
+  { label: "Leaderboard", href: "#" },
+  { label: "Lotteries", href: "/vaults" },
+];
+
 export function Header() {
   return (
-    <header className="sticky top-0 z-30 w-full border-b border-border/60 bg-background/80 backdrop-blur-md">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3.5">
-        <a href="/" className="flex items-center gap-2">
+    // Exactly the hero's black, fully opaque, and no bottom border: the header
+    // has to dissolve into the artwork rather than sit in its own bar.
+    // It is OPAQUE on purpose. At /80 the header let the PAGE background show
+    // through — a blue-tinted dark (oklch(0.21 0.03 265)), not #08080c — so the
+    // two blacks never matched. Solid also makes backdrop-blur pointless, hence
+    // its removal: nothing passes behind an opaque surface.
+    // Trade-off accepted: no frosted-glass effect when scrolling past the hero.
+    <header className="sticky top-0 z-50 w-full bg-[#08080c]">
+      <div className="mx-auto grid max-w-7xl grid-cols-[1fr_auto_1fr] items-center px-6 py-4">
+        <a href="/" className="flex items-center gap-2 justify-self-start">
           <Image
             src="/logo-mark.png"
             alt="Nimbo Play logo"
             width={64}
             height={64}
-            className="size-8 object-contain"
+            className="size-7 object-contain"
           />
-          <span className="font-brand text-lg font-semibold">Nimbo Play</span>
+          <span className="font-brand text-lg font-semibold text-white">
+            Nimbo Play
+          </span>
         </a>
-        <nav className="hidden items-center gap-1 md:flex">
-          {/* "/#..." (not "#...") so anchors also work from /vaults. */}
-          {/* AF.2 — Arena comes FIRST: since the 2026-07-10 pivot it is
-              the flagship product and the lottery is the side-feature
-              (it becomes the skin gacha, A5.4). It is an absolute URL
-              because the game is a separate app on its own subdomain,
-              not a route of this Next site. */}
-          {[
-            { label: "Arena", href: ARENA_URL },
-            { label: "Lotteries", href: "/vaults" },
-            { label: "Leaderboard", href: "#"}
-          ].map((l) => (
+
+        <nav className="hidden items-center gap-8 md:flex">
+          {navLinks.map((l) => (
             <a
               key={l.label}
               href={l.href}
-              className="rounded-full px-3.5 py-2 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
+              className="text-sm text-white/70 transition-colors hover:text-white"
             >
               {l.label}
             </a>
           ))}
         </nav>
-        <div className="flex items-center gap-2">
-          {/* AF.2 — the primary call to action is now PLAYING, not the
-              lottery. Same reason as the nav order above. */}
+
+        <div className="flex items-center gap-2 justify-self-end">
+          {/* Outline pill = secondary, solid white = primary. Same pairing as
+              the reference, and the same pairing as the hero's two CTAs, so
+              the page teaches the hierarchy once. */}
           <a
-            className="hidden rounded-[10px] border border-border bg-card px-4 py-2 text-sm font-medium hover:bg-secondary sm:inline-flex"
+            href="#"
+            className="hidden rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/5 sm:inline-flex"
           >
             Documentation
           </a>

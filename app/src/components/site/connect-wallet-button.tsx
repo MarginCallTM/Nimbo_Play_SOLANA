@@ -43,11 +43,13 @@ export function ConnectWalletButton() {
         type="button"
         onClick={handleClick}
         title={isConnected ? "Click to disconnect" : undefined}
-        className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-primary-foreground cta-glow"
-        style={{ background: "var(--gradient-brand)" }}
+        // F5.4 — solid white pill, matching the reference header and the hero's
+        // primary CTA. The old brand-gradient fill was calibrated for a light
+        // page; on the new black it read as a floating blue blob.
+        className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#08080c] transition-transform hover:scale-[1.02]"
         >
           <span
-            className={`size-1.5 rounded-full ${isConnected ? "bg-success" : "bg-white/90"}`}
+            className={`size-1.5 rounded-full ${isConnected ? "bg-[#50fa7b]" : "bg-black/40"}`}
           />
           {label}
         </button>

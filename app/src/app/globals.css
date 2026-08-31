@@ -10,7 +10,8 @@
  *
  * Only two things changed vs the original Lovable candy theme:
  *  1. Every color value now comes from the new blue palette.
- *  2. Fonts are Inter (loaded via next/font as --font-inter). Display font = Inter too.
+ *  2. Fonts are Geist (loaded via next/font as --font-geist), used for display,
+ *     body and brand alike — see the font tokens below.
  * The layout, custom utilities and animations are kept identical (pixel-perfect intent).
  */
 
@@ -53,12 +54,16 @@
   --color-sky-softer: var(--sky-softer);
   --color-gold: var(--gold);
 
-  /* Fonts — Inter everywhere (loaded by next/font as --font-inter).
-     Fredoka (--font-fredoka) is reserved for the brand name (font-brand). */
-  --font-display: var(--font-inter), system-ui, sans-serif;
-  --font-sans: var(--font-inter), system-ui, sans-serif;
+  /* Fonts (F3.6) — Geist everywhere: headlines, body and wordmark all use the
+     same face, as the reference does. A single typeface across a page reads as
+     deliberate; the earlier Inter + Fredoka pairing was a leftover from the
+     lottery template. Weight, not family, carries the hierarchy.
+     Kept as three separate tokens so a display-only face can be swapped back in
+     later (e.g. if PP Neue Montreal is ever licensed) without touching markup. */
+  --font-display: var(--font-geist), system-ui, sans-serif;
+  --font-sans: var(--font-geist), system-ui, sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", monospace;
-  --font-brand: var(--font-fredoka), var(--font-inter), system-ui, sans-serif;
+  --font-brand: var(--font-geist), system-ui, sans-serif;
 
   /* Charts + sidebar. */
   --color-chart-1: var(--chart-1);
@@ -402,5 +407,49 @@
   @keyframes shadow-pulse {
     0%, 100% { transform: translateX(-50%) scale(1); opacity: 0.85; }
     50%      { transform: translateX(-50%) scale(0.75); opacity: 0.55; }
+  }
+
+  /* Analog film grain (front redesign, F3.8).
+     Sits on TOP of a whole section — illustration and text alike — the way
+     grain runs across a printed poster. The hero art is generated at a fixed
+     resolution, so any grain baked into it would be upscaled (and turn mushy)
+     on a HiDPI screen; this one is rasterized by the browser at the screen's
+     real density instead, so it stays fine everywhere.
+
+     The noise is an SVG filter, not an image file: a few hundred bytes inline,
+     zero network request.
+       fractalNoise ....... soft photographic grain (`turbulence` would look
+                            marbled/smoky instead)
+       baseFrequency ...... grain size — higher is finer
+       numOctaves ......... layers of detail; past 4 we pay compute for nothing
+       stitchTiles ........ makes the tile seamless, so a 180px square can be
+                            REPEATED rather than computing noise over the whole
+                            viewport — the difference is large on a full-bleed hero
+       feColorMatrix ...... desaturates. Without it feTurbulence rolls R, G and B
+                            independently and the grain comes out coloured.
+
+     `overlay` is what separates grain from a grey veil: mid-grey is neutral,
+     lighter pixels lighten, darker ones darken, and blacks stay black. Plain
+     opacity would wash the blacks out.
+
+     Usage: put `.grain` on the section. It needs `isolation: isolate` so the
+     blend stays inside that subtree instead of reaching the page background —
+     which is why the class sets it rather than leaving it to the caller.
+     Tune per section with --grain-opacity / --grain-size. */
+  .grain {
+    position: relative;
+    isolation: isolate;
+  }
+  .grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+    background-size: var(--grain-size, 180px);
+    background-repeat: repeat;
+    opacity: var(--grain-opacity, 0.18);
+    mix-blend-mode: overlay;
   }
 }

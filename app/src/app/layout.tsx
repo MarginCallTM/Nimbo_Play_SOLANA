@@ -1,19 +1,23 @@
 import type { Metadata } from "next";
-import { Inter, Fredoka } from "next/font/google";
+import { Geist } from "next/font/google";
 import { Providers } from "./providers";
 import "./globals.css";
 
 // Fonts are loaded once here via next/font (self-hosted at build time — no
-// runtime request to Google, no flash of unstyled text) and exposed as CSS
-// variables. globals.css maps --font-sans/--font-display onto Inter and
-// --font-brand onto Fredoka (brand name next to the logo only).
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-});
-
-const fredoka = Fredoka({
-  variable: "--font-fredoka",
+// runtime request to Google, no flash of unstyled text) and exposed as a CSS
+// variable that globals.css maps onto --font-sans / --font-display.
+//
+// F3.6 — ONE typeface for the whole site, the way the reference does it.
+// The reference's own face is almost certainly PP Neue Montreal (commercial,
+// not on Google Fonts). Geist is the closest thing that is free: Vercel drew it
+// in the same Swiss geometric-grotesque lineage, and it carries the four traits
+// that identify the reference — a straight bevelled `y` descender with no tail,
+// a single-storey `g`, near-circular bowls, and horizontally cut terminals on
+// `C`/`e`/`s`. Inter and Plus Jakarta Sans both miss on the `y` and the `g`.
+//
+// Variable font (100-900), so every weight ships in a single file.
+const geist = Geist({
+  variable: "--font-geist",
   subsets: ["latin"],
 });
 
@@ -32,7 +36,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${fredoka.variable} h-full antialiased`}>
+    <html lang="en" className={`${geist.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
         <Providers>{children}</Providers>
       </body>

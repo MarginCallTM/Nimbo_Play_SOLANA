@@ -1,104 +1,111 @@
-// Hero section — ported from the Lovable maquette (main block).
-// Stateless + only static images -> Server Component (no "use client").
-// Images live in /public and are referenced with plain <img> to match the
-// maquette 1:1 (next/image could alter layout/aspect; fidelity first).
+// Hero — front redesign (F4). Replaces the Lovable "candy" hero: the cartoon
+// cloud, the wobbling SOL coin, the cobe globe and the fabricated activity
+// feed are all gone.
 //
-// AF.2(g) — the copy sells the ARENA, not the lottery, and says devnet.
-// The old badge claimed "Solana mainnet · Round #248": both were false.
+// LAYOUT (F4.1): the illustration is NOT a background with text on top. Text
+// block first, artwork below, both inside one black section. The artwork's own
+// top is black, so the two read as a single continuous scene — and the height
+// of the text block stays a CSS value instead of a constraint baked into the
+// image. That matters here: the generated art has almost no clear sky left
+// once the wall of fire rises, so overlaying a headline on it would fight the
+// flames.
+//
+// Static markup only -> Server Component (no "use client"), zero JS shipped.
+import Image from "next/image";
 import Link from "next/link";
-import { PoweredBy } from "@/components/site/powered-by";
-import { LiveActivity } from "@/components/site/live-activity";
-import { GlobeAnalytics } from "@/components/site/globe-analytics";
 import { ARENA_URL } from "@/lib/constants";
 
 export function Hero() {
   return (
-    <section
-      id="play"
-      className="relative overflow-hidden"
-      style={{ background: "var(--gradient-hero)" }}
-    >
-      {/* Bottom fade-to-white: gradient-hero isn't fully white yet at the
-          section's end, so this overlay turns the background pure white from
-          the PoweredBy row down, matching HowItWorks' white top gradient.
-          First child on purpose: positioned siblings below (content, logos)
-          paint above it, so nothing gets washed out. */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-80 bg-gradient-to-b from-transparent to-background to-40%" />
+    // `grain` (globals.css) lays film grain over the WHOLE section, artwork and
+    // headline alike, the way grain runs across a printed poster. It also sets
+    // isolation:isolate so the blend can't reach the page background.
+    // The literal #08080c is deliberate and TEMPORARY: it is the illustration's
+    // own black, and the palette tokens are still the old light-theme blues
+    // (F3 replaces both with real tokens).
+    <section id="play" className="grain relative overflow-hidden bg-[#08080c]">
+      <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center px-6 pb-6 pt-20 text-center md:pt-24">
+        {/* Honest status badge (F4.3 / F0): the arena settles real transactions,
+            but on devnet SOL. The old badge claimed "Solana mainnet · Round #248"
+            and both halves were false. */}
+        <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-medium text-white/70 backdrop-blur">
+          <span className="size-1.5 rounded-full bg-[#50fa7b]" />
+          Live on Solana devnet
+        </span>
 
-      {/* Floating cute cloud — top left */}
-      <div className="pointer-events-none absolute left-6 top-10 w-[11.7rem] md:w-[14.3rem] lg:w-[16.9rem]">
-        <img
-          src="/cloud-cute.png"
+        {/* One <h1> only. The previous markup opened an h1 and then left an
+            unstyled <h2> dangling underneath, which broke both the visual
+            rhythm and the document outline. Two short parallel lines, forced by
+            <br>, leading pulled under 1 — the reference sets its headline the
+            same way (~76px type on ~70px lines). */}
+        <h1 className="mt-8 font-display text-[clamp(2.75rem,7vw,4.75rem)] font-semibold leading-[0.92] tracking-tight text-white">
+          Play Better.
+          <br />
+          Win Bigger.
+        </h1>
+
+        {/* The headline is a claim, so the sub-line teaches the actual rule:
+            food on the floor IS money (D47 — nothing on screen is decorative),
+            and extraction is the only way to keep it (D86 — a round ending is
+            never a cash-out). "cash out" is two words here because it is a
+            verb; the hyphenated "cash-out" is the noun.
+            One line on desktop; max-w-xl matches the width the reference gives
+            its own sub-line. */}
+        <p className="mt-7 max-w-xl text-lg leading-relaxed text-white/60">
+          Everything you eat is real SOL. Extract to cash out.
+        </p>
+
+        <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
+          {/* Single primary CTA (F4.6). The arena is a separate app on its own
+              subdomain, so this is an absolute URL, not a route of this site. */}
+          <Link
+            href={ARENA_URL}
+            className="rounded-xl bg-white px-6 py-3 text-base font-semibold text-[#08080c] transition-transform hover:scale-[1.02]"
+          >
+            Enter the Arena
+          </Link>
+          {/* The free demo is off-chain and needs no wallet (D72/D76) — a real
+              friction-free way in, worth showing next to the paid path. */}
+          <Link
+            href={ARENA_URL}
+            className="rounded-xl border border-white/20 px-6 py-3 text-base font-medium text-white/80 transition-colors hover:bg-white/5"
+          >
+            Try the free demo
+          </Link>
+        </div>
+      </div>
+
+      {/* Artwork band.
+          The source is 3841x2144 and its top ~26% is pure black — dead space
+          that stacked onto the text block's own padding and produced a black
+          gap roughly twice as tall as the reference's. So the band is a
+          container with a WIDER ratio than the image (3841/1650 vs 3841/2144);
+          `object-cover` scales the art to the full width and `object-bottom`
+          anchors it low, so the surplus is trimmed off the TOP. About 23% goes,
+          leaving only a thin strip of black for the glow to rise into.
+          Calibrated against the reference, which keeps ~55px between the CTA
+          row and the first artwork; at 1700 some 60px of dead black survived on
+          top of the text block's own padding and the gap came out twice as
+          wide. Retune by moving the second number only: lower = tighter crop.
+          `relative` (not absolute) so the band takes real height and pushes the
+          page down on its own — no magic offsets to keep in sync. */}
+      <div className="relative aspect-[3841/1650] w-full">
+        <Image
+          src="/Official_bg_webp.webp"
           alt=""
           aria-hidden
-          className="w-full drop-shadow-xl"
-          style={{ animation: "float-y 6s ease-in-out infinite" }}
+          fill
+          sizes="100vw"
+          // Next 16 renamed `priority` to `preload`. This is the LCP image, so
+          // it gets a <link rel=preload> in <head> instead of waiting for the
+          // layout pass to discover it.
+          preload
+          className="object-cover object-bottom"
         />
-        <span
-          aria-hidden
-          className="float-shadow"
-          style={{ animation: "shadow-pulse 6s ease-in-out infinite" }}
-        />
+        {/* The crop leaves a hard edge where the section's black meets the
+            artwork's slightly different black. This melts one into the other. */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-[#08080c] to-transparent" />
       </div>
-
-      <div className="relative mx-auto max-w-6xl px-6 pt-28 pb-16 md:pt-36">
-        {/* Floating SOL coin — top-right of the headline block */}
-        <div className="pointer-events-none absolute right-2 top-6 z-10 w-16 sm:right-6 sm:w-20 md:w-24 lg:right-8 lg:w-28">
-          <img
-            src="/solana-coin-left.png"
-            alt=""
-            aria-hidden
-            className="w-full"
-            style={{ animation: "candy-wobble 5s ease-in-out infinite" }}
-          />
-          <span
-            aria-hidden
-            className="float-shadow float-shadow--sm"
-            style={{ animation: "shadow-pulse 5s ease-in-out infinite" }}
-          />
-        </div>
-
-        {/* Headline block — kept centered above the two-column showcase */}
-        <div className="flex flex-col items-center text-center">
-          <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur animate-fade-in">
-            <span className="size-1.5 rounded-full bg-success" /> Live on Solana devnet
-          </span>
-          <h1 className="mt-6 font-display text-[clamp(2.5rem,7vw,5.5rem)] leading-[0.95] tracking-tight animate-fade-in lg:whitespace-nowrap">
-            Bet and Play<span className="brand-text">  </span>
-          </h1>
-          <h2 className="">your Skill Pays.</h2>
-          <p className="mt-6 max-w-xl text-lg text-muted-foreground animate-fade-in">
-            Stake to enter a real-time arena. Grow, dodge the lobby, and cash out before someone takes you down.
-          </p>
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3 animate-fade-in">
-            {/* Main CTA -> vault selection. next/link = client-side nav +
-                prefetch when the link enters the viewport. */}
-            <Link
-              href={ARENA_URL}
-              className="inline-flex items-center gap-3 rounded-[10px] px-5 py-3 text-base font-semibold text-primary-foreground cta-glow transition-transform hover:scale-[1.02]"
-              style={{ background: "var(--gradient-brand)" }}
-            >
-              Enter the Arena
-            </Link>
-          </div>
-        </div>
-
-        {/* Two-column showcase: smaller chest (left) + live leaderboard (right).
-            Stacks vertically on mobile, side-by-side from lg. */}
-        <div className="mt-16 grid items-center gap-10 lg:grid-cols-2 lg:gap-8">
-          {/* Interactive globe (corporate look) — replaces the treasure chest */}
-          <div className="relative mx-auto w-full max-w-[27.6rem] lg:mx-0">
-            <GlobeAnalytics />
-          </div>
-
-          {/* Live activity feed (fabricated devnet data — see component header) */}
-          <LiveActivity />
-        </div>
-      </div>
-
-      {/* Partner logos — plain row; the sparkles band was dropped for a
-          cleaner transition into HowItWorks. */}
-      <PoweredBy />
     </section>
   );
 }
