@@ -9,8 +9,9 @@
 import { Header } from "@/components/site/header";
 import { Hero } from "@/components/site/hero";
 import { HowItWorks } from "@/components/site/how-it-works";
-import { WhySolvault } from "@/components/site/why-solvault";
+import { WhyNimbo } from "@/components/site/why-nimbo";
 import { Faq } from "@/components/site/faq";
+import { FinalCta } from "@/components/site/final-cta";
 import { Footer } from "@/components/site/footer";
 
 export default function Home() {
@@ -23,10 +24,13 @@ export default function Home() {
         {/* Deliberate change from the reference: HowItWorks comes right
             after the Hero (reference had Lotteries first). */}
         <HowItWorks />
-        <WhySolvault />
+        <WhyNimbo />
         {/* Lotteries & Stats sections were skipped (2026-07-02): the round
             card will live in the Hero/play area once wired to real data. */}
         <Faq />
+        {/* F6.7 — closing CTA: the reader who got this far had nothing left
+            to click, and both entry points were a full scroll away. */}
+        <FinalCta />
       </main>
       <Footer />
     </div>

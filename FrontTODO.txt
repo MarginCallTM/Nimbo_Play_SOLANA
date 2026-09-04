@@ -10,22 +10,52 @@
 ##############################################################
 
 ==============================================================
-  ETAT AU 2026-09-04  — A LIRE EN PREMIER
+  ETAT AU 2026-09-04 (soir)  — A LIRE EN PREMIER
 ==============================================================
-  Branche `front-redesign` (2 commits), NON mergee dans master.
-  Le socle est FAIT : palette F3, typo Geist, grain, hero, header,
-  menu mobile, responsive. Le squelette visuel de la home tient.
+  LA HOMEPAGE EST FINIE. Toute la copy de loterie a disparu du
+  portail : WhyNimbo (F6.3), FAQ (F6.5), footer (F10.5) reecrits,
+  section CTA finale ajoutee (F6.7), composants orphelins purges
+  (F4.11 + F3.9). `npm run build` passe, 4 routes statiques.
+  -> la branche est PRETE A MERGER (fast-forward, aucun conflit
+     possible : master n'a pas bouge depuis 5c114a2).
 
-  >>> PROCHAINE TACHE : F6.3 (why-solvault.tsx) <<<
-  La proposition de contenu est deja redigee dans F6.3, prete a
-  appliquer. Puis F6.5 (FAQ, le plus gros) et F10.5 (footer).
+  >>> PROCHAINE TACHE : F8 (docs Mintlify) <<<
+  F8.1 EST TRANCHE (2026-09-04) : Mintlify, plan STARTER GRATUIT.
+  Verifie sur mintlify.com/pricing le meme jour : le plan a 0 EUR
+  inclut la plateforme complete, 5 sieges, ET LE DOMAINE
+  PERSONNALISE (c'etait LE point bloquant — chez beaucoup de
+  concurrents le domaine custom est le 1er mur payant, ce qui
+  aurait laisse la doc sur une URL *.mintlify.app et casse le
+  maillage F13.5). Ce qui est payant (Pro, 450 $/mois) = assistant
+  IA, agent de redaction, automatisations, previews. Rien de
+  necessaire pour publier.
+  ⚠ RESERVE : la grille tarifaire a bouge 3 fois en 2026 (2 tiers
+    en juillet, 3 en aout, Pro passe de 150 a 450 $). Le Starter
+    gratuit a tenu, mais c'est un fournisseur externe. CONSEQUENCE
+    PRATIQUE : garder les pages en Markdown DANS LE DEPOT, jamais
+    seulement dans leur editeur web — si le plan gratuit se ferme,
+    on demenage les .mdx vers Docusaurus/Starlight/Nextra en une
+    apres-midi. Le contenu est la valeur, l'hebergeur est
+    interchangeable.
+  RESTE A VERIFIER AVANT DE CONFIGURER (ne pas coder de memoire) :
+    - nom exact du fichier de config (mint.json -> docs.json ?)
+    - la commande CLI exacte (mintlify dev vs mint dev)
+    - les enregistrements DNS exacts pour docs.nimboplay.dev
 
-  POURQUOI ON N'A PAS ENCORE MERGE : le hero est neuf, mais les
-  sections en dessous (WhyNimbo, FAQ, footer) parlent encore de
-  LOTERIE. Le contraste rend le decalage plus visible qu'avant.
-  Et master est la branche depuis laquelle on DEPLOIE : un `git pull`
-  sur le VPS pour un correctif serveur embarquerait ce front a moitie
-  fini. -> finir F6 + F10.5, PUIS merger d'un bloc.
+  APRES LE MERGE, dans l'ordre :
+    1. F2.4 — retirer les 6 deps npm mortes (cobe, react-jazzicon,
+       @tsparticles/*4 = 22 Mo). PRETES, non faites EXPRES : elles
+       touchent package-lock.json, le seul fichier que `npm ci` lit
+       au build Docker. Separees du merge pour ne changer QU'UNE
+       variable a la fois dans la chaine de deploiement.
+       ✅ VERIFIE (test sur copie jetable, npm 11.6.1) : un
+       `npm uninstall` depuis macOS PRESERVE les 47 entrees musl du
+       lockfile (47 avant / 47 apres, seule la taille baisse de
+       27 Ko). Donc pas besoin du conteneur Alpine pour CETTE
+       operation. La commande de regeneration F14.3 reste valable
+       si un jour le lockfile est reconstruit de zero.
+    2. F14.3/F14.5 — build Docker + deploiement VPS.
+    3. F8 — Mintlify.
 
   FICHIERS DE REFERENCE :
    - promptnano.md ............. brief produit complet (pour toute IA
@@ -112,8 +142,10 @@ F2  BRANCHE & SOCLE
 [x] F2.2  master reste deployable (le VPS se met a jour a la main :
           merger != deployer).
 [x] F2.3  Mode de travail : refonte IN PLACE, sauf le Hero reecrit de zero.
-[ ] F2.4  Nettoyer les dependances devenues inutiles (cobe,
-          react-jazzicon, tsparticles/sparkles...). A faire APRES F4.11.
+[~] F2.4  Nettoyer les dependances devenues inutiles. IDENTIFIEES,
+          pas encore retirees (volontaire, cf bandeau) : cobe,
+          react-jazzicon, @tsparticles/{engine,react,shape-circle,slim}
+          = 22 Mo, aucune reference restante dans src/.
 
   ETAT GIT (2026-09-04) :
     - 2 commits sur la branche : cf4a724 "rebuild front",
@@ -172,10 +204,15 @@ F3  CHARTE / DESIGN SYSTEM  — FAIT
           `stitchTiles` permet de repeter une tuile de 180px au lieu de
           calculer du bruit sur tout le viewport.
           Reglages : --grain-opacity (0.18) / --grain-size (180px).
-[~] F3.9  Vestiges candy : tokens --caramel/--rose-soft supprimes,
-          --sky-soft/--sky-softer CONSERVES (encore references par des
-          composants loterie). Utilitaires .jackpot-text / .candy-wobble
-          / .float-shadow encore presents -> a purger avec F4.11.
+[x] F3.9  Vestiges candy PURGES (2026-09-04) avec F4.11 : tokens
+          --sky-soft/--sky-softer supprimes (le commentaire disait
+          "encore references par des composants loterie" — ce n'etait
+          plus vrai, les composants en question venaient de partir),
+          plus .jackpot-text, @keyframes candy-wobble, .float-shadow,
+          .float-shadow--sm, @keyframes shadow-pulse, la famille floaty
+          (.float-slow/med/fast), .spin-slow et .float-y.
+          L'en-tete de globals.css ne se presente plus comme
+          "Solvault design system — candy / treasure universe".
 [x] F3.10 Tokens shadcn (--sidebar-*, --chart-*) alignes. Les charts
           parcourent l'illustration (indigo -> violet -> coral -> or)
           plutot que 5 nuances d'une teinte.
@@ -218,12 +255,30 @@ F4  LE HERO  — FAIT
             Mobile : aspect-[3/2] -> object-cover rogne les COTES et la
             borne reste lisible.
 [x] F4.9  Grain applique sur toute la section.
-[ ] F4.10 Animation d'entree sobre + prefers-reduced-motion. Pas fait.
-[ ] F4.11 SUPPRIMER les composants orphelins : globe-analytics.tsx
-          (cobe), live-activity.tsx (donnees fabriquees),
-          sparkles-horizon.tsx, powered-by.tsx (a rejuger), et les
-          images cloud-cute/solana-coin-left/chest*/candy dans public/.
-          Ils ne s'affichent plus mais les fichiers existent.
+[~] F4.10 Animation d'entree : pas faite. MAIS prefers-reduced-motion
+          est desormais gere (cf F12.4) — il ne l'etait NULLE PART.
+[x] F4.11 FAIT (2026-09-04). Supprimes apres verification qu'AUCUN
+          fichier ne les importe :
+            - 4 composants site : globe-analytics.tsx (cobe + compteurs
+              de joueurs EPINGLES Lagos 271 / Mumbai 599 / Paris 233),
+              live-activity.tsx, sparkles-horizon.tsx, powered-by.tsx ;
+            - 2 composants ui qui ne servaient QU'A EUX : animated-list,
+              sparkles ;
+            - 17 assets orphelins (~7,5 Mo) : candy.png, cloud-cute.png,
+              chest-wallpaper.png, solana-coin-left.png, cloud-graduate,
+              official_logo.png, backpack/phantom/solana/solflare/
+              superteam/jupiter (utilises par le seul powered-by), et le
+              boilerplate create-next-app (next/vercel/file/globe/window).
+          -> public/ passe de 8,9 Mo a 1,1 Mo, 6 fichiers, tous
+             reellement references.
+          ⚠ CONSERVES car encore utilises par /vaults (F9) :
+            Chest_Wallpaper.png, chest-sunrise.png,
+            purple_with_coin-removebg-preview.png (vaults-data.ts),
+            et le composant ticker.tsx.
+          NOTE : `git rm` ne libere PAS le poids du depot (git garde
+          tout a vie) — le gain est sur l'image Docker et le contexte
+          de build. Tout est recuperable :
+            git show 5647b92:app/public/official_logo.png > fichier
 
 
 --------------------------------------------------------------
@@ -238,7 +293,12 @@ F5  HEADER / NAV / FOOTER / IDENTITE
           ⚠ Nav centree par une grille grid-cols-[1fr_auto_1fr], PAS par
             justify-between : sinon elle derive des qu'un libelle change
             de longueur. Flex sous md, grille a partir de md.
-[ ] F5.3  Bouton "Documentation" : href = "#" (attend F8).
+[ ] F5.3  Bouton "Documentation" : href = "#" (attend F8). Idem le
+          lien "Read the documentation" de la FAQ : ECRIT ET PRET dans
+          un commentaire de faq.tsx, retire avant le merge parce qu'il
+          pointait sur /docs et aurait fait un VRAI 404 (les "#" du
+          header, eux, sont juste inertes). A restaurer vers
+          https://docs.nimboplay.dev des que F8 est en ligne.
 [x] F5.4  ConnectWalletButton : pilule blanche pleine. Libelle "Connect"
           sous md via DEUX SPANS + CSS (jamais une largeur lue en JS :
           ca hydraterait faux au premier rendu).
@@ -282,17 +342,20 @@ F6  SECTIONS DE LA HOMEPAGE — contenu + habillage
           - Section passee sur bg-background : dans la palette F3
             --secondary (L 0.227) est PLUS CLAIR que --card (L 0.195),
             donc les cartes s'enfoncaient au lieu de se detacher.
-          RESTE (petit) : l'etape 03 s'intitule "Extract, or lose it"
-          mais le texte ne parle plus de la perte, et il manque des
-          points finaux sur les etapes 01 et 03.
+          FINITIONS FAITES (2026-09-04) : l'etape 03 parle enfin de la
+          perte que son titre promet ("hold it for 12 seconds... die on
+          the way and 70% of it drops on the floor for someone else"),
+          et la phrase cassee de l'etape 01 est reparee.
           NOTE : le user a choisi "bet" plutot que "stake" (signale une
           fois : D42 positionne le produit CONTRE le vocabulaire de
           pari ; le programme dit `stake`). Acte, c'est son call.
           NOTE : montants ecrits "0.1 SOL" et non "◎0.1" -> divergence
           avec le jeu, qui affiche "◎0.0925 secured". A trancher avant
           F7.5 (leaderboard), ou les montants sont partout.
-[ ] F6.3  WHY NIMBO — PROCHAINE TACHE. why-solvault.tsx est ENCORE
-          INTEGRALEMENT EN COPY DE LOTERIE (ticket / lottery / prize).
+[x] F6.3  WHY NIMBO — FAIT (2026-09-04). Fichier RENOMME via `git mv`
+          why-solvault.tsx -> why-nimbo.tsx (export WhySolvault ->
+          WhyNimbo, import page.tsx, commentaire de code-block.tsx).
+          Les 3 arguments ci-dessous sont en ligne mot pour mot.
           ⚠ Le bullet "Every lottery runs ENTIRELY ON-CHAIN" serait FAUX
             transpose a l'arene : le gameplay est off-chain (D44), seul
             l'escrow et le reglement sont on-chain.
@@ -319,8 +382,28 @@ F6  SECTIONS DE LA HOMEPAGE — contenu + habillage
           Couleurs de syntaxe laissees bleutees VOLONTAIREMENT (les
           mots-cles en bleu sont une convention de lecture).
           ⚠ A GARDER EN SYNC avec programs/arena/src/lib.rs.
-[ ] F6.5  FAQ — integralement une FAQ de LOTERIE (cotes, achat de
-          ticket, tirage, VRF). Le plus gros morceau de F6.
+[x] F6.5  FAQ — FAIT (2026-09-04). Reecrite integralement pour l'arene.
+          9 questions redigees, puis 3 RETIREES sur demande du user :
+          "Who holds my SOL?", "What do you take?", "Is this real
+          money?". -> 6 en ligne.
+          ⚠ Chacune portait un fait que F0 impose de dire QUELQUE PART.
+            Une note en tete de faq.tsx dit ou chaque fait survit :
+            custody -> WhyNimbo #2 (c'est le plus important : il
+            remplace le "we never hold your funds" qui etait FAUX) ;
+            rake 5,5% -> WhyNimbo #1 + "How much does it cost" +
+            "Are there bots" ; devnet -> badge hero + CTA finale +
+            2x footer (8 occurrences de "devnet" sur la page).
+          MASCOTTE : le nuage diplome (vestige candy) est remplace par
+          une borne d'arcade 3D sur nuage nimbus, generee par le user.
+          Recadree 1377x768 -> 660x768 (le sujet ne faisait que 572px
+          de large dans un canevas de 1377 : sans recadrage la borne
+          n'aurait fait que 65px a l'affichage). Servie en 11 Ko de
+          WebP par next/image. Le noir du fichier (#0a090d) est a
+          1/255 du fond de section (#09080d) -> aucun detourage
+          necessaire, le rectangle est invisible.
+          RESERVE NON TRAITEE : les orbes flottantes vert/rose/cyan
+          sortent de la palette F3 (ce sont les dernieres couleurs
+          candy du site). Signalee au user, non bloquante.
           A reecrire pour l'arene : c'est quoi la mise, que se passe-t-il
           si je meurs (70/30), comment j'extrais (12s de canalisation),
           qui detient mes fonds, c'est quoi devnet, y a-t-il des bots
@@ -328,7 +411,13 @@ F6  SECTIONS DE LA HOMEPAGE — contenu + habillage
           le rake 5,5%.
 [ ] F6.6  (a evaluer) Section "l'economie en clair" : rake, 70/30, part
           pellets. Peut aussi ne vivre que dans les docs (F8).
-[ ] F6.7  Section CTA finale avant le footer.
+[x] F6.7  FAIT (2026-09-04) : final-cta.tsx entre la FAQ et le footer.
+          Ne repete PAS le hero : le hero vend la promesse, celle-ci
+          repond a la question que la FAQ vient de soulever ("par ou je
+          commence, et combien je dois risquer pour voir"). Demo
+          gratuite mise sur un pied d'egalite avec le chemin payant.
+          Halos radiaux indigo (haut) + coral (bas) ecrits en
+          color-mix() sur les TOKENS, jamais en dur (lecon F3).
 [ ] F6.8  Verifier les ancres (#play, #how, #why, #faq) apres renommage.
 
 --------------------------------------------------------------
@@ -462,10 +551,16 @@ F10 VERACITE DU CONTENU  (= AF.2(g) / TODO 10.16 — DETTE OUVERTE)
           sur /vaults (F9), et globe-analytics.tsx (compteurs de
           joueurs EPINGLES : Lagos 271, Mumbai 599, Paris 233) existe
           toujours dans le repo — a supprimer en F4.11.
-[ ] F10.5 Reecrire les paragraphes legaux du footer : ils decrivent un
-          projet educatif de LOTERIE. Le produit est un jeu P2E ou l'on
-          mise. (Rappel F0 : le juridique est parke, on ne demande pas
-          d'avis — on cesse juste de decrire le mauvais produit.)
+[x] F10.5 FAIT (2026-09-04). Les 5 paragraphes decrivent enfin le vrai
+          produit : jeu de skill PvP, devnet sans valeur monetaire,
+          joueur contre joueur jamais contre la maison, escrow on-chain
+          MAIS gameplay sur nos serveurs (limite documentee, pas
+          cachee), aucune promesse de rendement, "vous pouvez tout
+          perdre". Nav du footer : + Arena, - la redite Home/Lotteries.
+          Les liens morts "Terms" et "Privacy policy" (tous deux sur
+          "#") sont SUPPRIMES : promettre des documents inexistants est
+          pire que ne rien afficher. Remplaces par "Running on Solana
+          devnet".
 [x] F10.6 <title> et meta description (layout.tsx) : deja a jour et
           honnetes ("Live on devnet"). RESTE l'og-image (cf F13.2).
 [ ] F10.7 Relecture finale de TOUTE la copy du site contre F0.
@@ -513,8 +608,16 @@ F12 PERFORMANCE & ACCESSIBILITE
 [ ] F12.3 Verifier que les Server Components le restent : ne pas
           transformer une section statique en client component pour
           une animation.
-[ ] F12.4 prefers-reduced-motion respecte partout (grain anime,
-          fades, hovers).
+[~] F12.4 AMORCE (2026-09-04) : le reglage n'etait gere NULLE PART.
+          Un bloc @media (prefers-reduced-motion: reduce) coupe
+          desormais .float-idle (la levitation de la mascotte FAQ).
+          Cible sur les helpers d'animation, PAS un
+          `* { animation: none }` qui tuerait aussi les transitions
+          fonctionnelles. Reste a couvrir : le reste du site.
+          NOTE : .float-idle remplace la famille .float-slow/med/fast,
+          qui ajoutait +6deg de rotation a mi-cycle — correct pour un
+          sticker cartoon plat, faux pour un rendu 3D qui porte deja sa
+          propre perspective (il glissait au lieu de leviter).
 [ ] F12.5 Contrastes AA verifies sur les vraies pages (pas seulement
           sur les tokens de F3.3).
 [ ] F12.6 Navigation clavier + focus visibles sur fond noir (un
@@ -540,7 +643,13 @@ F14 RECETTE & MISE EN LIGNE
 --------------------------------------------------------------
 [ ] F14.1 Relecture complete de la branche contre F0 (la checklist
           verite est le dernier filet).
-[ ] F14.2 Build de prod local : `npm run build` sans warning bloquant.
+[x] F14.2 FAIT (2026-09-04) : `npm run build` vert, 4 routes toutes
+          prerendues en statique, TypeScript OK.
+          TROUVE AU PASSAGE : un `console.log` de debug marque "TEMP"
+          au SCOPE DU MODULE dans src/lib/pda.ts (verification de
+          derivation de PDA). Le scope module = il s'executait a chaque
+          import : pendant le build ET dans le navigateur de chaque
+          visiteur chargeant ce module. Supprime.
 [ ] F14.3 Verifier la construction de l'image Docker `web`.
           ⚠ PIEGE CONNU (documente dans af-phase-state) : le lockfile
           npm doit etre genere DANS la plateforme cible, sinon `npm ci`

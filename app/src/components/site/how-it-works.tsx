@@ -26,7 +26,7 @@ const steps = [
     // exactly that ("human vs human, not player vs casino, skill decides").
     // The program itself calls the amount a `stake` (STAKE_TIERS_SOL), so
     // switching back is a one-word edit here and in the title.
-    desc: "From 0.1 SOL to 1 SOL. The more you bet, the bigger you spawn more power, and a much larger target.",
+    desc: "From 0.1 SOL to 1 SOL. The more you bet, the bigger you spawn — more power, and a much larger target.",
   },
   {
     n: "02",
@@ -37,8 +37,10 @@ const steps = [
   {
     n: "03",
     title: "Extract, or lose it",
-    // D47 again for the 70%, D86 for "the only way out".
-    desc: "Reach an extract point and hold it. Get out and take the SOL",
+    // D47 for the 70%, D86 for "the only way out", EXTRACT_CHANNEL_FRAMES=720
+    // (60 fps) for the 12 seconds. The card's title promises the downside, so
+    // the copy has to actually state it: leaving the round is the ONLY exit.
+    desc: "Reach an extract point and hold it for 12 seconds. Cash out and the SOL is yours — die on the way and 70% of it drops on the floor for someone else.",
   },
 ];
 

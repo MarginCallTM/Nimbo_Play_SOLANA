@@ -1,4 +1,4 @@
-// Animated code card for WhySolvault — adapted from a community snippet.
+// Animated code card for WhyNimbo — adapted from a community snippet.
 // Changes vs the original:
 //  - recoloured from cyan to the F3 palette: indigo surface, coral glow. The
 //    syntax colours stay blue-leaning on purpose — blue keywords are a code

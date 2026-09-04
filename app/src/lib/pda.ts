@@ -52,8 +52,9 @@ export function deriveTicketPda(
     return pda;
 }
 
-// TEMP check - round 1782381011 exists on devnet at this address:
-console.log(
-    deriveLotteryPda(1782381011).toBase58() ===
-        "3r5DSTtjBr3bEcSdySsqPJtM1LaRZ3muFC8SUBTV6H3J",
-);
+// A temporary derivation check used to live here as a bare `console.log` at
+// module scope, asserting that round 1782381011 derives to
+// 3r5DSTtjBr3bEcSdySsqPJtM1LaRZ3muFC8SUBTV6H3J on devnet. Module scope means it
+// ran on every import — during the production build AND in the browser of every
+// visitor loading this module. Removed; a derivation invariant belongs in a
+// test, not in a side effect shipped to users.
