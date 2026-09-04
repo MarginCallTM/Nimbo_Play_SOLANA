@@ -9,6 +9,35 @@
   Contexte produit pour toute IA/designer : promptnano.md
 ##############################################################
 
+==============================================================
+  ETAT AU 2026-09-04  — A LIRE EN PREMIER
+==============================================================
+  Branche `front-redesign` (2 commits), NON mergee dans master.
+  Le socle est FAIT : palette F3, typo Geist, grain, hero, header,
+  menu mobile, responsive. Le squelette visuel de la home tient.
+
+  >>> PROCHAINE TACHE : F6.3 (why-solvault.tsx) <<<
+  La proposition de contenu est deja redigee dans F6.3, prete a
+  appliquer. Puis F6.5 (FAQ, le plus gros) et F10.5 (footer).
+
+  POURQUOI ON N'A PAS ENCORE MERGE : le hero est neuf, mais les
+  sections en dessous (WhyNimbo, FAQ, footer) parlent encore de
+  LOTERIE. Le contraste rend le decalage plus visible qu'avant.
+  Et master est la branche depuis laquelle on DEPLOIE : un `git pull`
+  sur le VPS pour un correctif serveur embarquerait ce front a moitie
+  fini. -> finir F6 + F10.5, PUIS merger d'un bloc.
+
+  FICHIERS DE REFERENCE :
+   - promptnano.md ............. brief produit complet (pour toute IA
+                                 ou tout designer qui arrive)
+   - front_prompt/ ............. 8 fichiers : les prompts du hero
+                                 (03e = le final) + la procedure de
+                                 post-production Affinity
+   - app/public/Official_bg_webp.webp .. l'illustration (446 Ko)
+   - ~/nimbo-assets/ ........... le PNG source 3841x2144, HORS du repo
+                                 (7,9 Mo — ne jamais le commiter)
+==============================================================
+
 LEGENDE
   [ ] a faire     [x] fait     [~] en cours     [!] bloque
   (dep: Fx.y)     depend d'une autre tache
@@ -43,234 +72,264 @@ F0  GARDE-FOUS — a relire avant CHAQUE session sur ce fichier
 
 
 --------------------------------------------------------------
-F1  POST-PRODUCTION DE L'ASSET HERO  <<< ON COMMENCE ICI >>>
+F1  POST-PRODUCTION DE L'ASSET HERO
 --------------------------------------------------------------
-  Zero code. On finit l'image AVANT d'integrer, pour ne pas coder
-  autour d'un brouillon qu'il faudra remplacer.
-  Rendus retenus : les deux dernieres generations (mur de feu haut
-  + borne massive coupee en bas). Mode operatoire detaille dans
-  front_prompt/03e-arcade-final.md.
+  Fait en partie. Choix assume : on a saute le flou et les orbes pour
+  livrer un MVP, ils se rajouteront sans rien casser.
+  Mode operatoire complet : front_prompt/F1-postproduction-affinity.md
+  (Affinity 3.2.2 est installe sur la machine).
 
-[ ] F1.1  Choisir l'asset de travail entre les 2 finalistes.
-          Critere : lequel supporte le mieux un bloc de texte au-dessus.
-          Garder l'autre en reserve pour un A/B plus tard.
-[ ] F1.2  Profondeur de champ (ce que le modele n'a jamais voulu faire) :
-          flou gaussien 8-15px sur les SEULS nuages du bas-gauche et
-          bas-droite qui touchent les bords. Feu et borne restent nets.
-[ ] F1.3  Orbes dorees : supprimer celle qui est plaquee sur le nuage
-          de droite ; en redessiner 2-3 a la main dans le noir ouvert,
-          tailles differentes, jamais alignees, jamais sur un nuage.
-[ ] F1.4  (optionnel) Rattraper l'asymetrie : elargir/monter la masse
-          nuageuse gauche pour casser l'effet miroir.
-[ ] F1.5  Upscale x3 (Upscayl gratuit/local suffit — l'image est en
-          aplats et degrades, cas facile pour un upscaler).
-[ ] F1.6  Grain final APRES upscale (jamais avant : l'upscaler le
-          lisserait). Soit calque bruit en Superposition 10-20%, soit
-          overlay CSS feTurbulence (fourni dans 03b) — le CSS reste net
-          en Retina, c'est la meilleure option si le grain genere passe
-          mal a l'echelle.
-[ ] F1.7  Export : WebP ET AVIF, ~2560px et ~3840px de large.
-          JAMAIS de PNG (plusieurs Mo de degrades = home plombee).
-          Ranger dans app/public/hero/.
-[ ] F1.8  Produire une variante de CADRAGE VERTICAL pour mobile
-          (ou verifier qu'un object-position centre suffit — la borne
-          doit rester entiere et centree). (dep: F11.1)
-[ ] F1.9  Extraire la palette REELLE de l'image finale (pipette, pas
-          les valeurs du prompt) et la noter -> entree de F3.
+[x] F1.1  Asset retenu = la derniere generation (mur de feu haut, borne
+          coupee en bas). Reserve : l'avant-derniere, plus de respiration.
+[ ] F1.2  Profondeur de champ : flou gaussien 8-15px sur les SEULS nuages
+          du bas-gauche et bas-droite. C'est le geste qui manque le plus
+          (le modele a refuse de le faire 3 fois).
+[ ] F1.3  Orbes dorees : effacer celle plaquee sur le nuage de droite,
+          en redessiner 2-3 dans le noir ouvert.
+[ ] F1.4  (optionnel) Asymetrie des masses nuageuses. A rejuger une fois
+          le texte pose ; risque de jointure visible.
+[x] F1.5  Upscale -> 3841x2144 (fait par le user).
+[x] F1.6  Grain : PAS bake dans l'image. Utilitaire CSS `.grain`
+          (feTurbulence) dans globals.css -> voir F3.8.
+[x] F1.7  Export WebP 446 Ko -> app/public/Official_bg_webp.webp
+          ⚠ Le PNG source 7,9 Mo a ete SORTI du repo (~/nimbo-assets/).
+            NE JAMAIS le commiter : git garde tout, a vie.
+          RESTE : AVIF (optionnel, ~20% de poids en moins), et le 2560px
+          (next/image genere deja les variantes, donc non bloquant).
+[~] F1.8  Variante mobile : pansement en place (ratio 3/2 sous md, cf
+          F4.8/F11.1). Un asset cadre en portrait resterait meilleur.
+[x] F1.9  Palette relevee -> voir F3. Methode : conversion en BMP via
+          `sips -Z 120 -s format bmp`, puis parsing en Python PUR
+          (aucune dependance dispo sur la machine : ni PIL, ni numpy,
+          ni ImageMagick). Classement des pixels PAR FAMILLE DE TEINTE,
+          pas par coordonnees.
 
 
 --------------------------------------------------------------
 F2  BRANCHE & SOCLE
 --------------------------------------------------------------
-[ ] F2.1  Creer la branche depuis master : `front-redesign`
-          (ou le nom que tu preferes ; le noter ici une fois fait).
-[ ] F2.2  Verifier que master reste deployable pendant toute la refonte
-          (le site est LIVE — on ne casse pas la prod pour un test).
-[ ] F2.3  Decider du mode de travail : refonte IN PLACE des composants
-          existants, ou nouveau dossier `components/site-v2/` avec
-          bascule a la fin. Reco : IN PLACE (le squelette de sections
-          est bon, c'est l'habillage et le contenu qui changent), sauf
-          pour le Hero qui est a reecrire de zero.
-[ ] F2.4  Nettoyer les dependances devenues inutiles une fois les
-          composants supprimes en F6 (cobe, react-jazzicon, sparkles...).
-          A faire EN FIN de F6, pas avant.
+[x] F2.1  Branche `front-redesign`, creee depuis master.
+[x] F2.2  master reste deployable (le VPS se met a jour a la main :
+          merger != deployer).
+[x] F2.3  Mode de travail : refonte IN PLACE, sauf le Hero reecrit de zero.
+[ ] F2.4  Nettoyer les dependances devenues inutiles (cobe,
+          react-jazzicon, tsparticles/sparkles...). A faire APRES F4.11.
+
+  ETAT GIT (2026-09-04) :
+    - 2 commits sur la branche : cf4a724 "rebuild front",
+      a0316ef "Second slice of the front redesign (F3, F5.7, F11)".
+    - NON COMMITE : app/src/components/site/how-it-works.tsx
+      (retouches de copy faites a la main par le user).
+    - ⚠ Le commit 5c114a2 "docs:" sur MASTER a embarque par accident
+      5 composants front (le `git restore --staged` avait ete saute).
+      Non reparé : l'historique est pousse, et la branche reecrit ces
+      fichiers de toute facon. Consequence : master porte deja la
+      phrase fausse "we never hold your funds" (corrigee sur la branche).
 
 
 --------------------------------------------------------------
-F3  CHARTE / DESIGN SYSTEM — le coeur de la refonte
+F3  CHARTE / DESIGN SYSTEM  — FAIT
 --------------------------------------------------------------
-  C'est LA tache qui conditionne tout le reste. Rien d'autre ne
-  commence tant que les tokens ne sont pas figes : sinon on recolorie
-  deux fois.
-  Fichier concerne : app/src/app/globals.css (Tailwind v4, tokens en
-  oklch, @theme inline + :root + .dark).
+  Fichier : app/src/app/globals.css (Tailwind v4, tokens en oklch).
 
-[ ] F3.1  TRANCHER LE ROLE DES COULEURS (decision produit, pas
-          cosmetique). Proposition a valider :
-            - Fond            : noir de l'illustration #08080c
-            - Surfaces/cartes : indigo tres sombre (famille des nuages)
-            - PRIMAIRE / interactif (boutons, liens, focus)
-                                : le BLEU DE MARQUE #3981f6
-            - ACCENT editorial (kickers, badges, glows, soulignes)
-                                : le CORAL #ff7878
-            - VALEUR / argent   : l'OR #ffcc66
-            - SUCCES            : le vert d'extraction #50fa7b
-            - DANGER            : le rouge de mort #ff4455
-          RAISONNEMENT : garder le bleu en interactif parce que (a) c'est
-          la couleur du serpent joueur en jeu, donc le seul pont existant
-          site<->jeu, et (b) un bouton coral entre en collision visuelle
-          avec le rouge "destructif". Le coral reste dominant dans le
-          hero, donc l'identite tient, sans faire de l'alerte un CTA.
-          -> Si tu preferes le coral en primaire, c'est defendable mais
-             il faut alors deplacer "danger" vers un magenta ou un
-             orange sature, sinon deux rouges cohabitent.
-[ ] F3.2  Convertir toute la palette retenue en oklch (le fichier est
-          deja en oklch de bout en bout, ne pas melanger les notations).
-[ ] F3.3  Verifier les CONTRASTES WCAG AA : texte sur fond noir, texte
-          mute, texte sur surface indigo, texte des boutons. Le coral
-          #ff7878 sur noir passe ; le violet #673ab7 en texte NON.
-[ ] F3.4  Basculer le site en THEME SOMBRE PAR DEFAUT. Aujourd'hui la
-          home est claire et seul /vaults porte la classe `dark`.
-          Deux options : (a) inverser :root et .dark, (b) mettre la
-          classe dark sur <html> dans layout.tsx. Reco (a) — plus propre,
-          evite un flash clair au chargement.
-[ ] F3.5  Refaire les gradients et ombres de marque, qui sont tous
-          calibres pour du clair : --gradient-hero, --gradient-brand,
-          --shadow-cta, --shadow-soft, --shadow-card. Sur fond noir une
-          ombre portee ne se voit pas -> passer a des lueurs (glow).
-[ ] F3.6  TYPOGRAPHIE : remplacer le couple actuel (Inter + Fredoka).
-          Fredoka est une ronde ludique heritee de la loterie, elle ne
-          tient pas face a cette illustration.
-          Cible : une grotesque geometrique serree (Neue Montreal,
-          Aeonik, General Sans, Satoshi...) en display, une neutre en
-          texte, et une MONOSPACE pour les chiffres/montants/HUD —
-          le jeu est integralement en monospace, c'est le detail qui
-          fera "meme produit".
-          Verifier la licence web de chaque fonte retenue.
-[ ] F3.7  Definir l'echelle typo (H1 -> caption), l'interlignage serre
-          du H1 (~0.95) et le tracking negatif, comme la reference.
-[ ] F3.8  Definir le GRAIN comme utilitaire global reutilisable
-          (.grain-overlay) et pas un bricolage dans le Hero — il servira
-          sur plusieurs sections.
-[ ] F3.9  Purger les vestiges "candy/treasure" : l'en-tete de commentaire
-          de globals.css, les tokens --caramel / --rose-soft / --sky-soft,
-          les utilitaires .jackpot-text / .candy-wobble / .float-shadow
-          s'ils ne servent plus. (Verifier les usages avant de supprimer.)
-[ ] F3.10 Mettre a jour les tokens shadcn (--sidebar-*, --chart-*) pour
-          qu'ils suivent la nouvelle palette, sinon /vaults et les
-          graphiques resteront bleus-clairs.
-[ ] F3.11 Page interne /styleguide (non liee, non indexee) affichant
-          tokens, echelle typo, boutons, cartes, etats. Sert de recette
-          visuelle pour tout le reste du chantier. A supprimer ou
-          noindex avant le merge.
+[x] F3.1  ROLES TRANCHES (le plus important a retenir) :
+            - LES ACTIONS SONT BLANCHES. Sur une illustration aussi
+              dense, rien d'autre ne gagne a tous les coups — et c'est
+              ce que fait la reference. Donc --primary N'EST PAS une
+              couleur de bouton.
+            - --primary = accent INTERACTIF (liens, kickers, focus,
+              charts) = indigo des nuages REMONTE a oklch L 0.61. Le
+              #5945c9 brut tombe a 2.8:1 sur le fond et echoue comme
+              texte ; remonte il atteint 5.0:1.
+            - --accent = le CORAL. EDITORIAL uniquement, jamais
+              cliquable, sinon plus rien ne distingue "regarde ici" de
+              "clique ici".
+            - --gold = ARGENT (comme les orbes de butin in-game). Ne
+              jamais le depenser en decoration.
+            - --destructive = rouge volontairement plus profond que le
+              coral (teinte 23 vs 29.5, L 0.63 vs 0.73).
+[x] F3.2  Palette convertie en oklch.
+[x] F3.3  Contrastes WCAG AA verifies sur TOUS les tokens.
+[x] F3.4  Theme sombre par defaut : la classe `dark` est sur <html>
+          (layout.tsx), PAS sur une div de page — sinon <body> garde la
+          palette claire et apparait en blanc des qu'un element deborde.
+[x] F3.5  Gradients & ombres refaits pour fond sombre (une ombre grise
+          est invisible sur du presque-noir : la profondeur vient d'un
+          liseré clair en inset + une diffusion profonde).
+[x] F3.6  TYPO : Geist PARTOUT (titres, texte, marque). Inter et Fredoka
+          supprimes. Hierarchie par la GRAISSE, pas par la famille.
+          Geist = le plus proche libre de la fonte de la reference
+          (tres probablement PP Neue Montreal, commerciale) : descendante
+          du `y` droite, `g` a un etage, panses circulaires, terminaisons
+          horizontales. Variable 100-900, un seul fichier.
+          General Sans (Fontshare) serait plus proche encore mais n'est
+          pas dans next/font/google.
+[ ] F3.7  Echelle typo formalisee (H1->caption). Pas fait : les tailles
+          vivent dans les composants.
+[x] F3.8  `.grain` : overlay SVG feTurbulence, rasterise par le
+          navigateur a la densite REELLE de l'ecran (un grain bake dans
+          l'image serait agrandi et redeviendrait pateux en Retina).
+          `stitchTiles` permet de repeter une tuile de 180px au lieu de
+          calculer du bruit sur tout le viewport.
+          Reglages : --grain-opacity (0.18) / --grain-size (180px).
+[~] F3.9  Vestiges candy : tokens --caramel/--rose-soft supprimes,
+          --sky-soft/--sky-softer CONSERVES (encore references par des
+          composants loterie). Utilitaires .jackpot-text / .candy-wobble
+          / .float-shadow encore presents -> a purger avec F4.11.
+[x] F3.10 Tokens shadcn (--sidebar-*, --chart-*) alignes. Les charts
+          parcourent l'illustration (indigo -> violet -> coral -> or)
+          plutot que 5 nuances d'une teinte.
+[ ] F3.11 Page /styleguide interne. Pas faite.
+
+  ⚠ LECON RECURRENTE (rencontree 3 fois : balayage de la carte de code,
+    halos radiaux, surlignage) : TOUTE couleur ecrite en dur survit au
+    changement de charte. Passer par les tokens systematiquement.
+
+  PALETTE MESUREE SUR L'ILLUSTRATION (pas inventee) :
+    coral / feu       #ce6c5d -> #ff7664 -> #fdb09a
+    indigo / nuages   #140d32 -> #282574 -> #5945c9
+    violet / nuages   #391d48 -> #924eaf -> #a262cb
+    or / orbes        #f0b359 -> #f7c774
+    fond              #09080d
 
 
 --------------------------------------------------------------
-F4  LE HERO
+F4  LE HERO  — FAIT
 --------------------------------------------------------------
-  Composant a REECRIRE de zero. L'actuel (hero.tsx) porte le nuage
-  cartoon, la piece SOL qui wobble, le globe cobe et le feed fictif.
-
-[ ] F4.1  Structure de section : illustration ANCREE EN BAS, full-bleed,
-          et bloc de texte AU-DESSUS dans le fond de section — PAS de
-          texte superpose a l'image. Raison : le mur de feu a mange la
-          bande noire du haut de l'asset ; en decouplant, la hauteur du
-          bloc texte devient un reglage CSS.
-[ ] F4.2  Degrade de raccord entre le haut de l'illustration et le fond
-          de section, pour qu'il n'y ait aucune couture visible.
-[ ] F4.3  Badge d'etat HONNETE : "Live on Solana devnet" + pastille.
-          C'est la place qu'occupe le badge "New" de la reference.
-[ ] F4.4  H1 : reecrire. L'actuel ("Bet and Play / your Skill Pays.")
-          est faible et mal compose (un <h2> orphelin traine dessous
-          dans le code actuel). Deux lignes, court, tendu.
-          Pistes a departager : "Your stake is your body." /
-          "Grow. Extract. Or lose it all." / "Skill is the only edge."
-[ ] F4.5  Sous-titre : une phrase qui donne la boucle miser -> jouer ->
-          extraire avant de mourir.
-[ ] F4.6  UN SEUL CTA principal -> "Enter the Arena" (ARENA_URL).
-          Secondaire discret possible : "Try the free demo" (D72/D76 :
-          la demo est hors-chaine, sans wallet — c'est une vraie porte
-          d'entree sans friction, il faut la montrer).
-[ ] F4.7  Optionnel, a evaluer une fois le reste pose : afficher les
-          paliers de mise (◎0.1 / ◎0.25 / ◎0.5 / ◎1) sous le CTA.
-[ ] F4.8  Image : <picture> AVIF/WebP, srcset 2560/3840, priority/LCP,
-          dimensions explicites (zero layout shift), alt vide (aria-hidden)
-          car purement decorative.
-[ ] F4.9  Ajouter le grain (F3.8) par-dessus l'ensemble de la section.
-[ ] F4.10 Animation d'entree SOBRE (fade + leger translate). Respecter
-          prefers-reduced-motion. Ne pas refaire flotter des objets :
-          c'etait le tic de l'ancien hero.
-[ ] F4.11 SUPPRIMER : globe-analytics.tsx (cobe), live-activity.tsx
-          (donnees fabriquees — F0), powered-by.tsx a rejuger,
-          sparkles-horizon.tsx, cloud-cute.png, solana-coin-left.png,
-          chest*.png, candy.png.
+[x] F4.1  Bloc texte AU-DESSUS de l'illustration, pas superpose. Le haut
+          de l'image est noir, donc les deux se lisent comme une seule
+          scene, et la hauteur du texte reste une valeur CSS au lieu
+          d'etre contrainte par l'image.
+[x] F4.2  Degrade de raccord en haut de la bande image.
+[x] F4.3  Badge honnete "Live on Solana devnet".
+[x] F4.4  H1 "Play Better. / Win Bigger." (choix user, maintenu apres
+          objection : "Win Bigger" est une promesse de gain que le
+          modele a somme nulle + rake 5,5% ne peut pas tenir. Acte).
+[x] F4.5  Sous-titre "Everything you eat is real SOL. Extract to cash out."
+[x] F4.6  Deux CTA : "Enter the Arena" (blanc plein) + "Try the free
+          demo" (contour).
+[ ] F4.7  (optionnel) Afficher les paliers de mise sous le CTA.
+[x] F4.8  next/image, `fill` + object-cover/object-bottom.
+          ⚠ NEXT 16 : `priority` est DEPRECIE -> utiliser `preload`.
+          ⚠ RECADRAGE : le conteneur a un ratio PLUS LARGE que l'image
+            (aspect-[3841/1650] contre 3841/2144) : ~23% de noir mort
+            est rogne PAR LE HAUT. Curseur = le second nombre.
+            Sous ~1600 on mange le sommet des flammes.
+            Mobile : aspect-[3/2] -> object-cover rogne les COTES et la
+            borne reste lisible.
+[x] F4.9  Grain applique sur toute la section.
+[ ] F4.10 Animation d'entree sobre + prefers-reduced-motion. Pas fait.
+[ ] F4.11 SUPPRIMER les composants orphelins : globe-analytics.tsx
+          (cobe), live-activity.tsx (donnees fabriquees),
+          sparkles-horizon.tsx, powered-by.tsx (a rejuger), et les
+          images cloud-cute/solana-coin-left/chest*/candy dans public/.
+          Ils ne s'affichent plus mais les fichiers existent.
 
 
 --------------------------------------------------------------
 F5  HEADER / NAV / FOOTER / IDENTITE
 --------------------------------------------------------------
-[ ] F5.1  Header a la charte sombre : fond translucide + blur, bordure
-          basse tres discrete.
-[ ] F5.2  Nav definitive : Arena (absolu, arena.nimboplay.dev) /
-          Leaderboard (F7) / Docs (F8) / Lotteries (/vaults).
-          Le lien "Leaderboard" pointe sur "#" aujourd'hui -> a brancher.
-[ ] F5.3  Bouton "Documentation" : aujourd'hui c'est un <a> SANS href
-          (mort). A brancher sur les docs (F8).
-[ ] F5.4  ConnectWalletButton restyle a la nouvelle palette.
-[ ] F5.5  LOGO : le nuage est VALIDE par la nouvelle direction (les
-          nuages violets de l'illustration SONT des nimbus — le nom de
-          marque est enfin dans l'image). Mais la version actuelle est
-          une icone iOS bleu clair "mignonne".
-          -> Redessiner la marque : nuage violet/indigo, volumetrique,
-             sur fond sombre, dans le style de l'illustration.
-          -> Decliner : favicon, apple-touch-icon, og-image, avatars
-             sociaux.
-[ ] F5.6  Footer a la charte. Reecrire les paragraphes legaux : ils
-          decrivent encore UNE LOTERIE EDUCATIVE, pas un jeu P2E
-          (cf F10).
-[ ] F5.7  Menu MOBILE (il n'y en a pas : la nav est simplement masquee
-          en dessous de md). (dep: F11)
+[x] F5.1  Header opaque sur --background, sans bordure : il se fond dans
+          le hero. Le backdrop-blur a ete RETIRE (inutile derriere une
+          surface opaque). Maintenant que --background est le noir de
+          l'illustration, une transparence redeviendrait possible.
+[x] F5.2  Nav : Arena / Leaderboard / Lotteries. "Docs" retire de la nav
+          (le bouton Documentation a droite fait doublon).
+          ⚠ Nav centree par une grille grid-cols-[1fr_auto_1fr], PAS par
+            justify-between : sinon elle derive des qu'un libelle change
+            de longueur. Flex sous md, grille a partir de md.
+[ ] F5.3  Bouton "Documentation" : href = "#" (attend F8).
+[x] F5.4  ConnectWalletButton : pilule blanche pleine. Libelle "Connect"
+          sous md via DEUX SPANS + CSS (jamais une largeur lue en JS :
+          ca hydraterait faux au premier rendu).
+[ ] F5.5  LOGO : toujours l'icone iOS bleu clair "mignonne". Elle jure
+          avec la nouvelle direction. Le nuage est VALIDE par le
+          redesign (les nuages violets de l'illustration SONT des
+          nimbus) mais il faut le REDESSINER : violet/indigo,
+          volumetrique, sur fond sombre. Puis decliner en favicon,
+          apple-touch-icon, og-image, avatars sociaux.
+[ ] F5.6  Footer : a la charte automatiquement (tokens), MAIS les
+          paragraphes legaux decrivent encore UNE LOTERIE EDUCATIVE.
+          -> cf F10.5.
+[x] F5.7  MENU MOBILE : mobile-nav.tsx, composant client FEUILLE (le
+          header reste Server Component). 4 entrees (les 3 de la nav +
+          Documentation), toutes dans la meme <ul>.
+          ⚠ C'est un DROPDOWN, pas une modale. Une 1re version gelait le
+            scroll derriere un voile opaque : trop lourd pour 4 liens, et
+            le VOILE LUI-MEME avalait les gestes tactiles. Le tap-dehors
+            passe maintenant par un listener document `pointerdown`.
+          Echap ferme, aria-expanded/aria-controls, cibles 44px, panneau
+          ancre en `top-full` (aucune hauteur de header en dur).
+          Surface : degrade secondary/95 -> background/95 + backdrop-blur
+          (le flou n'a de sens QUE parce que le scroll est libre).
 
 
 --------------------------------------------------------------
 F6  SECTIONS DE LA HOMEPAGE — contenu + habillage
 --------------------------------------------------------------
-  Ordre actuel : Ticker -> Header -> Hero -> HowItWorks -> WhySolvault
-  -> Faq -> Footer. Le contenu de la moitie de ces sections parle
-  encore de tickets et de tirages.
+  Ordre actuel : Header -> Hero -> HowItWorks -> WhySolvault -> Faq
+  -> Footer.
 
-[ ] F6.1  TICKER : donnees 100% inventees ("Round #248", "won 184 SOL").
-          Deux issues : le brancher sur de vraies donnees (dep: F7.1)
-          ou le SUPPRIMER. Reco : supprimer pour l'instant — un faux
-          ticker en haut d'une page qui demande un wallet, c'est le
-          pire endroit possible pour de la fiction.
-[ ] F6.2  HOW IT WORKS : le squelette 3 etapes est bon, la copy est
-          approximative ("wait for opponent", fautes). Reecrire autour
-          de la vraie boucle : miser -> grossir -> extraire.
-          Envisager une 4e etape : "Die and you lose it all" — c'est
-          l'argument le plus honnete et le plus vendeur.
-[ ] F6.3  WHY SOLVAULT -> renommer WhyNimbo (le fichier s'appelle
-          encore why-solvault.tsx, vestige du template). Reecrire les
-          3 arguments : ils parlent de tickets et de loterie.
-          Angles justes : reglement on-chain verifiable / le skill seul
-          decide / paiement en quelques secondes vers ton wallet.
-[ ] F6.4  CODE BLOCK (code-block.tsx) : montre un appel buy_ticket de
-          la LOTERIE. Soit le remplacer par un appel arena reel
-          (join / settle_extraction), soit le supprimer.
-[ ] F6.5  FAQ : integralement une FAQ de loterie (odds, tirage, ticket).
-          A REECRIRE pour l'arena : c'est quoi la mise, que se passe-t-il
-          si je meurs, comment j'extrais, qui detient mes fonds, c'est
-          quoi devnet, y a-t-il des bots (D78 : assumer publiquement la
-          doctrine, c'est un differenciateur, pas une honte), le rake.
-[ ] F6.6  NOUVELLE SECTION "l'economie en clair" (a evaluer) : rake 5,5%,
-          70/30 a la mort, part pellets. La transparence economique est
-          un argument fort et personne ne le fait. Peut aussi vivre
-          uniquement dans les docs (F8) — trancher pour ne pas alourdir
-          la home.
-[ ] F6.7  SECTION FINALE / CTA de bas de page avant le footer.
-[ ] F6.8  Verifier les ancres (#play, #how, #why, #faq) apres
-          renommage — le footer y renvoie.
-
+[x] F6.1  TICKER supprime de la home (donnees 100% inventees).
+          ⚠ Le composant ticker.tsx EXISTE ENCORE : /vaults le rend
+            toujours -> traite en F9.
+[x] F6.2  HOW IT WORKS refait (how-it-works.tsx) : 3 etapes
+          "Place your bet" / "Grow on the field" / "Extract, or lose it".
+          - "Connect your wallet" RETIRE : public crypto-natif, bouton
+            deja dans le header, et c'est la 1re etape de toute dApp.
+          - La phrase FAUSSE "we never hold your funds" est supprimee.
+            Le point de custody DOIT reapparaitre en F6.3.
+          - Section passee sur bg-background : dans la palette F3
+            --secondary (L 0.227) est PLUS CLAIR que --card (L 0.195),
+            donc les cartes s'enfoncaient au lieu de se detacher.
+          RESTE (petit) : l'etape 03 s'intitule "Extract, or lose it"
+          mais le texte ne parle plus de la perte, et il manque des
+          points finaux sur les etapes 01 et 03.
+          NOTE : le user a choisi "bet" plutot que "stake" (signale une
+          fois : D42 positionne le produit CONTRE le vocabulaire de
+          pari ; le programme dit `stake`). Acte, c'est son call.
+          NOTE : montants ecrits "0.1 SOL" et non "◎0.1" -> divergence
+          avec le jeu, qui affiche "◎0.0925 secured". A trancher avant
+          F7.5 (leaderboard), ou les montants sont partout.
+[ ] F6.3  WHY NIMBO — PROCHAINE TACHE. why-solvault.tsx est ENCORE
+          INTEGRALEMENT EN COPY DE LOTERIE (ticket / lottery / prize).
+          ⚠ Le bullet "Every lottery runs ENTIRELY ON-CHAIN" serait FAUX
+            transpose a l'arene : le gameplay est off-chain (D44), seul
+            l'escrow et le reglement sont on-chain.
+          PROPOSITION deja cadree avec le user (3 arguments vrais,
+          verifiables, et non copiables par un concurrent) :
+            1. "The house never plays" — Every SOL you take comes from
+               another player. We take 5.5% when you enter, and nothing
+               after that.  (D42/D62)
+            2. "Your stake never touches our wallet" — Deposits go into
+               a program-owned vault. Every entry and every payout is a
+               public Solana transaction you can check yourself.
+               (= le point de custody rapatrie depuis F6.2)
+            3. "Fast game, verifiable money" — The arena runs on our
+               servers so it stays smooth. The escrow, the anti-replay
+               guard and the payouts are enforced by a Solana program.
+               (D44/D45 : admettre ce qu'on controle est un signal de
+               confiance PLUS fort que pretendre le tout-on-chain)
+          Titre "Trust the Blockchain." conserve.
+          Renommage optionnel why-solvault.tsx -> why-nimbo.tsx
+          (+ export WhySolvault -> WhyNimbo, + 2 lignes dans page.tsx).
+[x] F6.4  CODE CARD (code-block.tsx) : montre le vrai appel arena `join`
+          (plus buy_ticket). Recoloree : balayage en var(--accent),
+          halos radiaux indigo + source de lumiere coral en bas.
+          Couleurs de syntaxe laissees bleutees VOLONTAIREMENT (les
+          mots-cles en bleu sont une convention de lecture).
+          ⚠ A GARDER EN SYNC avec programs/arena/src/lib.rs.
+[ ] F6.5  FAQ — integralement une FAQ de LOTERIE (cotes, achat de
+          ticket, tirage, VRF). Le plus gros morceau de F6.
+          A reecrire pour l'arene : c'est quoi la mise, que se passe-t-il
+          si je meurs (70/30), comment j'extrais (12s de canalisation),
+          qui detient mes fonds, c'est quoi devnet, y a-t-il des bots
+          (D78 : assumer la doctrine publiquement = differenciateur),
+          le rake 5,5%.
+[ ] F6.6  (a evaluer) Section "l'economie en clair" : rake, 70/30, part
+          pellets. Peut aussi ne vivre que dans les docs (F8).
+[ ] F6.7  Section CTA finale avant le footer.
+[ ] F6.8  Verifier les ancres (#play, #how, #why, #faq) apres renommage.
 
 --------------------------------------------------------------
 F7  PAGE LEADERBOARD  (nouvelle)
@@ -391,36 +450,58 @@ F10 VERACITE DU CONTENU  (= AF.2(g) / TODO 10.16 — DETTE OUVERTE)
   aujourd'hui. La refonte est le bon moment : autant ne pas porter le
   mensonge dans le nouveau design.
 
-[ ] F10.1 Chasser toute occurrence de "mainnet" (faux : devnet).
-[ ] F10.2 Chasser toute mention de "VRF" (faux : alea on-chain simple,
-          manipulable par un validateur — CLAUDE.md interdit de le
-          presenter comme sur).
-[ ] F10.3 Supprimer ou brancher tous les boutons/liens morts
-          (Documentation sans href, Leaderboard sur "#", Terms,
-          Privacy policy).
-[ ] F10.4 Supprimer toute donnee fabriquee presentee comme reelle
-          (ticker F6.1, live activity F4.11).
+[~] F10.1 "mainnet" : elimine du hero et de how-it-works. RESTE dans la
+          FAQ et le footer (cf F6.5 / F10.5).
+[~] F10.2 "VRF" : idem — reste dans la FAQ (question "How do I know this
+          is fair?") et dans why-solvault.
+[ ] F10.3 Liens morts encore en place : "Documentation" (header + menu
+          mobile) et "Leaderboard" pointent sur "#", plus Terms et
+          Privacy policy dans le footer.
+[~] F10.4 Donnees fabriquees : le TICKER et le FEED D'ACTIVITE ne
+          s'affichent plus sur la home. MAIS ticker.tsx tourne encore
+          sur /vaults (F9), et globe-analytics.tsx (compteurs de
+          joueurs EPINGLES : Lagos 271, Mumbai 599, Paris 233) existe
+          toujours dans le repo — a supprimer en F4.11.
 [ ] F10.5 Reecrire les paragraphes legaux du footer : ils decrivent un
           projet educatif de LOTERIE. Le produit est un jeu P2E ou l'on
           mise. (Rappel F0 : le juridique est parke, on ne demande pas
           d'avis — on cesse juste de decrire le mauvais produit.)
-[ ] F10.6 Mettre a jour le <title> et la meta description (layout.tsx)
-          + og-image.
+[x] F10.6 <title> et meta description (layout.tsx) : deja a jour et
+          honnetes ("Live on devnet"). RESTE l'og-image (cf F13.2).
 [ ] F10.7 Relecture finale de TOUTE la copy du site contre F0.
+
+  CORRIGE EN COURS DE ROUTE (2026-08/09) :
+   - "we never hold your funds" (how-it-works) : FAUX — les mises vont
+     dans un Vault PDA et NOTRE autorite signe les payouts (D54/D45).
+     Supprime. Le point de custody honnete revient en F6.3.
+   - Le badge hero annoncait "Solana mainnet · Round #248" : les deux
+     moities etaient fausses. Remplace par "Live on Solana devnet".
 
 
 --------------------------------------------------------------
 F11 RESPONSIVE & MOBILE
 --------------------------------------------------------------
-[ ] F11.1 Hero mobile : une illustration 16:9 sur un ecran portrait
-          devient une bande fine. Trancher entre recadrage
-          (object-position) et asset vertical dedie (dep: F1.8).
-[ ] F11.2 Menu mobile (F5.7).
-[ ] F11.3 Passer toutes les sections aux breakpoints sm/md/lg.
-[ ] F11.4 Tableau du leaderboard sur mobile (scroll horizontal
-          contenu, jamais de scroll horizontal de page).
+[~] F11.1 Hero mobile : pansement en place (aspect-[3/2] sous md ->
+          object-cover rogne les COTES au lieu du haut, la borne reste
+          lisible). Un asset cadre en portrait resterait meilleur.
+[x] F11.2 Menu mobile — fait, cf F5.7.
+[~] F11.3 Breakpoints : home OK (header, hero, how-it-works).
+          Pas verifie : why-solvault, faq, footer, /vaults.
+[ ] F11.4 Tableau du leaderboard sur mobile (dep: F7).
 [ ] F11.5 Tester en vrai sur telephone, pas seulement au devtools.
 
+  ⚠ PIEGE RESOLU, A RETENIR — DEBORDEMENT HORIZONTAL :
+    le <pre> de la carte de code avait bien `overflow-x-auto`, mais ses
+    parents flex/grid ont `min-width: auto` par DEFAUT et se laissaient
+    elargir par la ligne de code la plus longue -> le scroll interne ne
+    se declenchait jamais et c'est la PAGE ENTIERE qui partait en scroll
+    lateral. Remede : `min-w-0` a chaque niveau.
+    C'est la cause n°1 des debordements horizontaux en CSS moderne.
+    A re-appliquer des qu'un tableau / bloc de code / longue URL vit
+    dans une grille -> notamment le leaderboard (F7.5).
+    Symptome associe : une bande BLANCHE a droite = c'est <body>, qui
+    gardait la palette claire tant que `dark` etait sur une div interne
+    au lieu de <html>.
 
 --------------------------------------------------------------
 F12 PERFORMANCE & ACCESSIBILITE

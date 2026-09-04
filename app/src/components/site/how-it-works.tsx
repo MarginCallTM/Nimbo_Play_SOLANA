@@ -1,36 +1,53 @@
-// "How it works" — three-step explainer, ported from the reference maquette.
-// No interactivity: this is a Server Component (no "use client"), rendered
-// on the server with zero JS shipped to the browser.
-// Copy is adapted to OUR program: one round at a time, draw settled on-chain
-// (simple randomness for the MVP — Switchboard VRF is the phase-2 upgrade).
-
+// "How it works" — the three-beat game loop (F6.2).
+// No interactivity: Server Component (no "use client"), zero JS shipped.
+//
+// The loop is stake -> grow -> extract OR die. The old set ended on "try to
+// extract the biggest SOL amount possible", which reads like any other
+// play-to-earn page and hid the one thing that makes this game tense: you can
+// lose everything. That beat now has its own card.
+//
+// "Connect your wallet" was dropped on purpose. The audience is crypto-native,
+// the header already carries a Connect button, and it is the first step of
+// every dapp on earth — spending one of three cards on a generic gesture
+// diluted the two that are actually ours. The trust point it used to carry
+// (your signature authorises every move) belongs in the WhyNimbo section,
+// which is the trust section, and lands there in F6.3.
+//
+// Copy is checked against the locked design decisions rather than written from
+// memory: D46 (stake sizes your snake), D47 (70/30 on death), D86 (extraction
+// is the only exit — a round ending never pays anyone out).
 const steps = [
   {
     n: "01",
-    title: "Connect your wallet",
-    desc: "Connect your Solana wallet. Your keys stay yours we never hold your funds.",
+    title: "Place your bet",
+    // D46 — the mechanic nobody else has, and it was nowhere on the site.
+    // Wording is the founder's call. Noted once for whoever reads this later:
+    // "bet" is wagering language, and D42 positions this product against
+    // exactly that ("human vs human, not player vs casino, skill decides").
+    // The program itself calls the amount a `stake` (STAKE_TIERS_SOL), so
+    // switching back is a one-word edit here and in the title.
+    desc: "From 0.1 SOL to 1 SOL. The more you bet, the bigger you spawn more power, and a much larger target.",
   },
   {
     n: "02",
-    title: "Join the ARENA",
-    desc: "Select your amount, join the matchmaking, wait for opponent",
+    title: "Grow on the field",
+    // D47 — nothing on screen is decorative; every pellet is backed by lamports.
+    desc: "Eat pellets and the loot dead players drop. Everything on the floor is real SOL.",
   },
   {
     n: "03",
-    title: "Use your skills",
-    desc: "Try to extract the biggest SOL amount possible.",
+    title: "Extract, or lose it",
+    // D47 again for the 70%, D86 for "the only way out".
+    desc: "Reach an extract point and hold it. Get out and take the SOL",
   },
 ];
 
 export function HowItWorks() {
   return (
-    <section id="how" className="relative overflow-hidden bg-secondary/50 pb-14 pt-14">
-      {/* Seam bridge with the Hero: white -> transparent gradient so the
-          Hero's white background melts into this section's bg-secondary
-          instead of switching hard. */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-background to-transparent" />
-      {/* Same trick at the bottom: fade back to white before WhySolvault. */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-background to-transparent" />
+    // bg-background, not bg-secondary. In the F3 palette --secondary (L 0.227)
+    // is LIGHTER than --card (L 0.195), so a secondary section made the cards
+    // sink into their own background instead of rising above it.
+    <section id="how" className="relative overflow-hidden bg-background pb-14 pt-14">
       <div className="relative mx-auto max-w-7xl px-6">
         {/* Section heading: kicker -> title -> supporting line */}
         <div className="max-w-2xl">
@@ -39,11 +56,11 @@ export function HowItWorks() {
             Play Off-Chain. Paid On-Chain.
           </h2>
           <p className="mt-4 text-muted-foreground">
-          Real-time multiplayer gameplay. Every stake and every payout handled by a Solana program.
+            Real-time multiplayer gameplay. Every stake and every payout is
+            settled by a Solana program.
           </p>
         </div>
 
-        {/* Step cards: stacked on mobile, three columns from md */}
         <div className="mt-12 grid gap-5 md:grid-cols-3">
           {steps.map((s) => (
             <div
@@ -51,7 +68,7 @@ export function HowItWorks() {
               className="card-soft rounded-2xl border border-border bg-card p-5"
             >
               <div className="flex items-center gap-3">
-                <span className="grid size-8 place-items-center rounded-lg bg-secondary font-display text-sm text-primary">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-secondary font-display text-sm text-primary">
                   {s.n}
                 </span>
                 <h3 className="font-display text-lg font-semibold">{s.title}</h3>
