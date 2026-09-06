@@ -47,25 +47,34 @@
     - la commande CLI exacte (mintlify dev vs mint dev)
     - les enregistrements DNS exacts pour docs.nimboplay.dev
 
-  IL RESTE UNE SEULE DETTE OUVERTE SUR LE SOCLE : **F2.4**.
-  Retirer les 6 deps npm mortes (cobe, react-jazzicon,
-  @tsparticles/{engine,react,shape-circle,slim} = 22 Mo). Elles
-  n'ont AUCUNE reference restante dans app/src/ mais sont toujours
-  dans app/package.json — verifie le 2026-09-06.
-  POURQUOI ELLE N'A PAS SUIVI LE MERGE : elle touche
-  package-lock.json, le seul fichier que `npm ci` lit au build
-  Docker. On l'a volontairement sortie du lot pour ne changer
-  QU'UNE variable a la fois dans la chaine de deploiement. Cette
-  raison a EXPIRE : le deploiement est fait et vert, donc plus rien
-  ne la retient — c'est maintenant un simple nettoyage suivi d'un
-  rebuild de l'image `web`.
-       ✅ VERIFIE (test sur copie jetable, npm 11.6.1) : un
-       `npm uninstall` depuis macOS PRESERVE les 47 entrees musl du
-       lockfile (47 avant / 47 apres, seule la taille baisse de
-       27 Ko). Donc pas besoin du conteneur Alpine pour CETTE
-       operation. La commande de regeneration F14.3 reste valable
-       si un jour le lockfile est reconstruit de zero.
-  ORDRE : F2.4 (10 min + rebuild), puis F8.
+  F2.4 EST FAITE (2026-09-06, commit 58f18e8) — le socle n'a plus
+  de dette ouverte. Detail et lecon en F2.4.
+  ⚠⚠ LA NOTE QUI ETAIT ICI ETAIT FAUSSE, ET DANGEREUSE. Elle
+  affirmait : « un `npm uninstall` depuis macOS PRESERVE les 47
+  entrees musl (47 avant / 47 apres), donc pas besoin du conteneur
+  Alpine pour CETTE operation ». Le comptage etait exact, la
+  CONCLUSION etait fausse : le `npm uninstall` a bien laisse 47
+  entrees musl ET a silencieusement supprime @emnapi/core et
+  @emnapi/runtime, alors que @tailwindcss/oxide-wasm32-wasi les
+  declare toujours — c'est-a-dire EXACTEMENT la panne P1
+  (« missing from lock file ») deja payee une fois et reparee par
+  b659a7f. Le compteur musl ne pouvait structurellement pas voir
+  cette regression : les entrees cassees ne portent pas « musl »
+  dans leur nom.
+  -> LECON GENERALE, a appliquer bien au-dela de npm : un
+     indicateur de non-regression doit etre choisi pour COUVRIR le
+     mode de panne redoute, pas pour etre facile a mesurer. Un
+     chiffre stable ne prouve rien si le bug ne peut pas le faire
+     bouger.
+  -> INDICATEUR CORRECT, retenu desormais : « toute dependance
+     DURE declaree est-elle resolvable dans le lockfile ? »
+     (les peerDependencies marquees optional ne comptent pas).
+     Mesure : 0 arete cassee avant, 7 apres le uninstall macOS,
+     0 apres regeneration dans Alpine.
+  -> REGLE : package-lock.json se regenere TOUJOURS dans le
+     conteneur cible. Sans exception, meme pour « juste » retirer
+     une dependance.
+  ORDRE : F8 (Mintlify) est maintenant la prochaine tache.
 
   FICHIERS DE REFERENCE :
    - promptnano.md ............. brief produit complet (pour toute IA
@@ -167,19 +176,56 @@ F2  BRANCHE & SOCLE
 [x] F2.2  master reste deployable (le VPS se met a jour a la main :
           merger != deployer).
 [x] F2.3  Mode de travail : refonte IN PLACE, sauf le Hero reecrit de zero.
-[ ] F2.4  A FAIRE — SEULE DETTE OUVERTE DU SOCLE, et plus rien ne la
-          retient (le deploiement qu'on attendait est fait, cf bandeau).
-          Retirer : cobe, react-jazzicon,
-          @tsparticles/{engine,react,shape-circle,slim} = 22 Mo.
-          RE-VERIFIE 2026-09-06 : toujours les 6 dans app/package.json,
-          toujours zero reference dans app/src/.
-            cd app && npm uninstall cobe react-jazzicon \
-              @tsparticles/engine @tsparticles/react \
-              @tsparticles/shape-circle @tsparticles/slim
-          Puis `npm run build` (doit rester vert, 4 routes), commit
-          package.json + package-lock.json, et REBUILD de l'image `web`
-          sur le VPS — c'est le lockfile qui change, donc `npm ci` du
-          Dockerfile voit la difference.
+[x] F2.4  FAIT 2026-09-06 (commit 58f18e8). Retires : cobe,
+          react-jazzicon, @tsparticles/{engine,react,shape-circle,slim}.
+          Effet sur le lockfile : 890 -> 850 paquets (-40, dont 37 pour
+          le seul sous-arbre tsparticles) ; node_modules passe de 752 Mo
+          a nettement moins ; l'etape `deps` de l'image n'installe plus
+          que 478 paquets.
+
+          COMMENT ON A VERIFIE QU'ON POUVAIT LES RETIRER (a refaire tel
+          quel la prochaine fois) :
+            1. grep sur TOUT app/ (pas seulement src/) : 1 seul hit hors
+               package.json, un commentaire historique dans hero.tsx.
+            2. Test d'ACCESSIBILITE sur le lockfile, pas un simple grep :
+               en partant des deps racine PRIVEES des 6 cibles, plus
+               aucun @tsparticles/* n'est atteignable. Necessaire parce
+               que le grep naif renvoyait 33 « dependants » de
+               @tsparticles/engine — tous des freres du meme sous-arbre
+               condamne, pas des dependants exterieurs.
+
+          ⚠⚠ LE PIEGE, PAYE UNE 2e FOIS ICI (cf bandeau et P1/TODO.txt).
+          `npm uninstall` lance depuis macOS a :
+            - correctement nettoye package.json (c'est du texte, aucune
+              notion de plateforme) ;
+            - CASSE package-lock.json en supprimant @emnapi/core et
+              @emnapi/runtime, que @tailwindcss/oxide-wasm32-wasi
+              declare toujours. Mesure : 0 arete dure non resolvable
+              avant, 7 apres.
+          La note qui vivait ici disait que le compteur d'entrees musl
+          (47 avant / 47 apres) prouvait l'innocuite de l'operation.
+          FAUX : les entrees cassees ne contiennent pas « musl », ce
+          compteur ne pouvait pas les voir. Un lockfile commite dans cet
+          etat aurait fait echouer `npm ci` au prochain build VPS.
+
+          PROCEDURE CORRECTE, celle qui a ete appliquee :
+            cd app
+            npm uninstall cobe react-jazzicon @tsparticles/engine \
+              @tsparticles/react @tsparticles/shape-circle @tsparticles/slim
+            # puis JETER le lockfile que macOS vient de produire et le
+            # refaire dans la plateforme cible :
+            docker run --rm --platform linux/amd64 -v "$PWD":/app \
+              -w /app node:22-alpine npm install --package-lock-only
+          Controles apres regeneration : 0 arete dure cassee, 0 version
+          de paquet modifiee (une regeneration peut sinon monter des
+          versions dans les bornes semver et transformer un nettoyage en
+          mise a jour subie), variantes musl presentes pour arm64 ET x64.
+
+          VALIDE POUR DE VRAI par un build d'image, pas seulement par
+          analyse : `RUN npm ci` passe sur Alpine, `npm run build` sort
+          ses 4 routes, et l'inspection de l'etape `deps` confirme
+          l'absence des 6 et la presence de @emnapi/runtime.
+          RESTE : rebuild + redeploiement de `web` sur le VPS (F14.5).
 
   ETAT GIT (2026-09-06) :
     - TOUT EST SUR MASTER. front-redesign et master pointent sur le
@@ -697,9 +743,13 @@ F14 RECETTE & MISE EN LIGNE
           `npm ci` casse sur Alpine :
             docker run --rm --platform linux/amd64 -v "$PWD":/app \
               -w /app node:22-alpine npm install --package-lock-only
-          -> a ressortir si F2.4 devait un jour reconstruire le lockfile
-             de zero (le simple `npm uninstall` ne le necessite PAS,
-             mesure : 47 entrees musl avant / 47 apres).
+          -> CETTE COMMANDE EST OBLIGATOIRE APRES **TOUTE** MODIFICATION
+             DES DEPENDANCES, y compris un simple `npm uninstall`.
+             La note qui disait le contraire (« le uninstall ne le
+             necessite PAS, mesure : 47 entrees musl avant / 47 apres »)
+             a ete DEMENTIE par F2.4 le 2026-09-06 : le uninstall macOS
+             a bel et bien casse la branche @emnapi du lockfile sans
+             faire bouger ce compteur. Detail complet en F2.4.
 [x] F14.4 FAIT — merge dans master. Verifie 2026-09-06 : `git log
           master..front-redesign` ET `front-redesign..master` sont tous
           les deux VIDES, les deux refs sont sur 8fc43c8. Le
