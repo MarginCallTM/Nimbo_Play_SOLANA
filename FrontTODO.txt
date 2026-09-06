@@ -10,14 +10,19 @@
 ##############################################################
 
 ==============================================================
-  ETAT AU 2026-09-04 (soir)  — A LIRE EN PREMIER
+  ETAT AU 2026-09-06  — A LIRE EN PREMIER
 ==============================================================
-  LA HOMEPAGE EST FINIE. Toute la copy de loterie a disparu du
-  portail : WhyNimbo (F6.3), FAQ (F6.5), footer (F10.5) reecrits,
-  section CTA finale ajoutee (F6.7), composants orphelins purges
-  (F4.11 + F3.9). `npm run build` passe, 4 routes statiques.
-  -> la branche est PRETE A MERGER (fast-forward, aucun conflit
-     possible : master n'a pas bouge depuis 5c114a2).
+  LA REFONTE EST EN LIGNE. La homepage etait finie le 2026-09-04
+  (WhyNimbo F6.3, FAQ F6.5, footer F10.5 reecrits, CTA finale
+  F6.7, orphelins purges F4.11 + F3.9) ; depuis, la branche a ete
+  MERGEE et DEPLOYEE.
+   - Merge : master et front-redesign pointent sur le MEME commit
+     (8fc43c8), `git log` ne montre aucun delta dans les deux sens
+     -> le fast-forward annonce a bien eu lieu. F14.4 clos.
+   - Deploiement : image Docker `web` construite et front en ligne
+     sur le VPS (confirme par le user 2026-09-06). F14.3 + F14.5
+     clos, F14.6 partiellement (docs.nimboplay.dev n'existe pas
+     encore, c'est justement F8).
 
   >>> PROCHAINE TACHE : F8 (docs Mintlify) <<<
   F8.1 EST TRANCHE (2026-09-04) : Mintlify, plan STARTER GRATUIT.
@@ -42,20 +47,25 @@
     - la commande CLI exacte (mintlify dev vs mint dev)
     - les enregistrements DNS exacts pour docs.nimboplay.dev
 
-  APRES LE MERGE, dans l'ordre :
-    1. F2.4 — retirer les 6 deps npm mortes (cobe, react-jazzicon,
-       @tsparticles/*4 = 22 Mo). PRETES, non faites EXPRES : elles
-       touchent package-lock.json, le seul fichier que `npm ci` lit
-       au build Docker. Separees du merge pour ne changer QU'UNE
-       variable a la fois dans la chaine de deploiement.
+  IL RESTE UNE SEULE DETTE OUVERTE SUR LE SOCLE : **F2.4**.
+  Retirer les 6 deps npm mortes (cobe, react-jazzicon,
+  @tsparticles/{engine,react,shape-circle,slim} = 22 Mo). Elles
+  n'ont AUCUNE reference restante dans app/src/ mais sont toujours
+  dans app/package.json — verifie le 2026-09-06.
+  POURQUOI ELLE N'A PAS SUIVI LE MERGE : elle touche
+  package-lock.json, le seul fichier que `npm ci` lit au build
+  Docker. On l'a volontairement sortie du lot pour ne changer
+  QU'UNE variable a la fois dans la chaine de deploiement. Cette
+  raison a EXPIRE : le deploiement est fait et vert, donc plus rien
+  ne la retient — c'est maintenant un simple nettoyage suivi d'un
+  rebuild de l'image `web`.
        ✅ VERIFIE (test sur copie jetable, npm 11.6.1) : un
        `npm uninstall` depuis macOS PRESERVE les 47 entrees musl du
        lockfile (47 avant / 47 apres, seule la taille baisse de
        27 Ko). Donc pas besoin du conteneur Alpine pour CETTE
        operation. La commande de regeneration F14.3 reste valable
        si un jour le lockfile est reconstruit de zero.
-    2. F14.3/F14.5 — build Docker + deploiement VPS.
-    3. F8 — Mintlify.
+  ORDRE : F2.4 (10 min + rebuild), puis F8.
 
   FICHIERS DE REFERENCE :
    - promptnano.md ............. brief produit complet (pour toute IA
@@ -84,7 +94,22 @@ F0  GARDE-FOUS — a relire avant CHAQUE session sur ce fichier
   - VERITE DU CONTENU (non negociable, CLAUDE.md) : le produit tourne
     sur DEVNET. Interdit d'ecrire "mainnet", d'annoncer "VRF", de
     promettre un rendement, d'afficher une statistique inventee comme
-    reelle. Le front actuel viole les trois -> corrige en F10.
+    reelle.
+    ETAT 2026-09-06 : le PORTAIL est propre. Un grep de "mainnet" et
+    "VRF" sur app/src ne rend plus que 3 lignes, toutes des COMMENTAIRES
+    qui documentent la correction — zero occurrence en copy visible.
+    MAIS /vaults est en ligne avec deux mensonges residuels : le bloc
+    <LotteryDebug /> (F9.2) et le <Ticker /> de donnees fabriquees
+    (F10.4). Ils sont PUBLICS depuis le deploiement. Voir F9.
+    Cette regle vaut desormais surtout pour les DOCS (F8) : c'est le
+    prochain endroit ou un chiffre invente peut entrer.
+    ⚠ CLAUDE.md est EN RETARD SUR SON PROPRE CODE (verifie 2026-09-06) :
+      il annonce une canalisation d'extraction de 4 s et une part pellet
+      de ~2 %. Le code dit 12 s (EXTRACT_CHANNEL_FRAMES = 720,
+      arena/shared/src/index.ts) et 10 % (PELLET_CUT_BPS = 1000,
+      arena/shared/src/arena-chain.ts, D75). Le rake 5,5 % est confirme
+      (RAKE_BPS=550, settlement/src/main.rs). POUR LES DOCS : la source
+      de verite est LE CODE, jamais CLAUDE.md.
   - PAS UN CASINO : PvP de skill, jamais joueur contre la maison.
     Le STYLE de la reference est casino ; le DISCOURS ne doit jamais
     l'etre. Aucune imagerie jeton/des/roulette/jackpot.
@@ -142,16 +167,29 @@ F2  BRANCHE & SOCLE
 [x] F2.2  master reste deployable (le VPS se met a jour a la main :
           merger != deployer).
 [x] F2.3  Mode de travail : refonte IN PLACE, sauf le Hero reecrit de zero.
-[~] F2.4  Nettoyer les dependances devenues inutiles. IDENTIFIEES,
-          pas encore retirees (volontaire, cf bandeau) : cobe,
-          react-jazzicon, @tsparticles/{engine,react,shape-circle,slim}
-          = 22 Mo, aucune reference restante dans src/.
+[ ] F2.4  A FAIRE — SEULE DETTE OUVERTE DU SOCLE, et plus rien ne la
+          retient (le deploiement qu'on attendait est fait, cf bandeau).
+          Retirer : cobe, react-jazzicon,
+          @tsparticles/{engine,react,shape-circle,slim} = 22 Mo.
+          RE-VERIFIE 2026-09-06 : toujours les 6 dans app/package.json,
+          toujours zero reference dans app/src/.
+            cd app && npm uninstall cobe react-jazzicon \
+              @tsparticles/engine @tsparticles/react \
+              @tsparticles/shape-circle @tsparticles/slim
+          Puis `npm run build` (doit rester vert, 4 routes), commit
+          package.json + package-lock.json, et REBUILD de l'image `web`
+          sur le VPS — c'est le lockfile qui change, donc `npm ci` du
+          Dockerfile voit la difference.
 
-  ETAT GIT (2026-09-04) :
-    - 2 commits sur la branche : cf4a724 "rebuild front",
-      a0316ef "Second slice of the front redesign (F3, F5.7, F11)".
-    - NON COMMITE : app/src/components/site/how-it-works.tsx
-      (retouches de copy faites a la main par le user).
+  ETAT GIT (2026-09-06) :
+    - TOUT EST SUR MASTER. front-redesign et master pointent sur le
+      meme commit 8fc43c8 ; l'arbre de travail est propre.
+    - Les 4 commits de la refonte : cf4a724 "rebuild front",
+      a0316ef "Second slice (F3, F5.7, F11)", 4242608 "Update how it
+      works page" (= les retouches manuelles du user, finalement
+      commitees), 8fc43c8 "Finish the homepage redesign".
+    - La branche front-redesign peut etre supprimee (locale + origin)
+      une fois F2.4 passee ; la garder n'apporte plus rien.
     - ⚠ Le commit 5c114a2 "docs:" sur MASTER a embarque par accident
       5 composants front (le `git restore --staged` avait ete saute).
       Non reparé : l'historique est pousse, et la branche reecrit ces
@@ -650,19 +688,39 @@ F14 RECETTE & MISE EN LIGNE
           derivation de PDA). Le scope module = il s'executait a chaque
           import : pendant le build ET dans le navigateur de chaque
           visiteur chargeant ce module. Supprime.
-[ ] F14.3 Verifier la construction de l'image Docker `web`.
-          ⚠ PIEGE CONNU (documente dans af-phase-state) : le lockfile
-          npm doit etre genere DANS la plateforme cible, sinon `npm ci`
-          casse sur Alpine :
+[x] F14.3 FAIT — l'image Docker `web` se construit. Le doute de
+          l'AF.2(c) ("docker build jamais lance, demon eteint") est donc
+          leve : le Dockerfile 3 etages et le `npm ci` sur Alpine
+          passent pour de vrai.
+          ⚠ PIEGE TOUJOURS VALABLE POUR LA SUITE (af-phase-state) : le
+          lockfile npm doit etre genere DANS la plateforme cible, sinon
+          `npm ci` casse sur Alpine :
             docker run --rm --platform linux/amd64 -v "$PWD":/app \
               -w /app node:22-alpine npm install --package-lock-only
-[ ] F14.4 Merge dans master.
-[ ] F14.5 Deployer sur le VPS. ⚠ `restart` NE RELIT PAS le .env
-          (variables figees a la creation du conteneur) — utiliser
+          -> a ressortir si F2.4 devait un jour reconstruire le lockfile
+             de zero (le simple `npm uninstall` ne le necessite PAS,
+             mesure : 47 entrees musl avant / 47 apres).
+[x] F14.4 FAIT — merge dans master. Verifie 2026-09-06 : `git log
+          master..front-redesign` ET `front-redesign..master` sont tous
+          les deux VIDES, les deux refs sont sur 8fc43c8. Le
+          fast-forward annonce (master n'avait pas bouge depuis
+          5c114a2) s'est bien passe sans conflit.
+[x] F14.5 FAIT — deploye sur le VPS, front en ligne et operationnel
+          (confirme par le user 2026-09-06).
+          ⚠ REFLEXE A GARDER pour le prochain deploiement (F2.4 en
+          demandera un) : `restart` NE RELIT PAS le .env (les variables
+          sont figees a la CREATION du conteneur) — utiliser
           `up -d --build`, et `--force-recreate` si une variable a
           change. Procedure complete : DEPLOY.md §4bis.
-[ ] F14.6 Verifier en prod : https://nimboplay.dev, le lien vers
-          arena.nimboplay.dev, docs.nimboplay.dev, le leaderboard.
+[~] F14.6 EN PARTIE. Verifie en prod : https://nimboplay.dev sert le
+          nouveau front, le lien vers arena.nimboplay.dev fonctionne.
+          RESTE, et pour cause — les deux pages n'existent pas encore :
+          docs.nimboplay.dev (F8) et le leaderboard (F7). A re-passer
+          quand elles seront livrees.
+          ⚠ A REGARDER AU PASSAGE : /vaults est desormais PUBLIQUE avec
+          son bloc <LotteryDebug /> et son <Ticker /> de donnees
+          inventees (F9.2 / F10.4). C'est le seul contenu trompeur qu'il
+          reste en ligne.
 [ ] F14.7 Reporter dans TODO.txt : cocher AF.5 (front) et AF.2(g)
           (veracite), et referencer ce fichier.
 
