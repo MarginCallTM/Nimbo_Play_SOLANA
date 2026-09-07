@@ -773,8 +773,62 @@ F8  DOCUMENTATION AVEC MINTLIFY  (nouvelle)
           devra etre solde et que TOUS les chiffres devront etre
           re-verifies contre le code — ce sont des curseurs
           d'equilibrage qui bougent (D75, D82, D83, cf F8.8).
-[ ] F8.7  Brancher les liens : header (F5.3), footer, FAQ de la home
-          ("en savoir plus" -> docs).
+[~] F8.7  CABLE 2026-09-07, PAS ENCORE ALLUME. Les liens existent dans
+          le code et s'affichent SEULEMENT si l'URL des docs est
+          renseignee — sinon ils ne sont pas rendus du tout.
+          MECANISME (meme patron qu'ARENA_URL, une seule difference) :
+            constants.ts  DOCS_URL = process.env.NEXT_PUBLIC_DOCS_URL || ""
+          Le repli est la CHAINE VIDE, pas une URL. Vide = "les docs ne
+          sont pas publiees" -> header.tsx, mobile-nav.tsx et faq.tsx
+          rendent `null`. Un repli sur https://docs.nimboplay.dev aurait
+          expedie trois 404 le jour du deploiement, soit exactement la
+          dette F10.3 qu'on vient de solder — et faq.tsx avait DEJA
+          refuse ce lien une fois, en le gardant en commentaire avec la
+          note "it would 404 today". On respecte cette politique.
+          FICHIERS TOUCHES :
+            constants.ts        + DOCS_URL
+            header.tsx          bouton conditionnel (le `#` mort DISPARAIT)
+            mobile-nav.tsx      ligne conditionnelle (spread d'un tableau vide)
+            faq.tsx             lien "Read the documentation" RESTAURE, gate
+            .env.example        variable documentee + avertissement
+            app/Dockerfile      ARG + ENV
+            docker-compose.yml  build arg
+          ⚠ LES DEUX DERNIERS NE SONT PAS OPTIONNELS : un ARG non
+          declare dans le Dockerfile est INVISIBLE pour `npm run build`.
+          Sans eux le mecanisme est INERTE sur le VPS — la variable
+          aurait beau etre dans le .env, DOCS_URL resterait vide.
+          NB decouvert au passage : NEXT_PUBLIC_ARENA_URL n'a JAMAIS ete
+          transmise en build arg non plus. Le front deploye tourne donc
+          sur le REPLI code de constants.ts. Sans consequence
+          aujourd'hui (le repli est la bonne valeur), mais c'est un
+          piege arme : modifier ARENA_URL dans le .env du VPS et
+          rebuilder ne changerait RIEN. Non corrige ici, hors perimetre
+          — a solder quand on retouchera le deploiement.
+          VERIFIE PAR BUILD, LES DEUX ETATS :
+            variable absente  -> 0 occurrence de "Documentation" et de
+                                 "Read the documentation" dans le HTML
+                                 prerendu ;
+            variable definie  -> les deux reapparaissent, URL gravee.
+          ALLUME LE 2026-09-07 : le site Mintlify est en ligne (F8.10),
+          donc l'URL existe et les 3 liens sont RENDUS.
+            NEXT_PUBLIC_DOCS_URL=https://nimbo-9ed30387.mintlify.site
+          Pose dans app/.env.local (dev). Verifie apres rebuild : les
+          deux libelles reviennent dans le HTML prerendu et l'URL est
+          bien gravee.
+          POURQUOI L'ADRESSE MINTLIFY ET PAS docs.nimboplay.dev : elle
+          repond DEJA, alors que le domaine custom demande une emission
+          de certificat (quelques heures, cf F8.3). Le mecanisme a ete
+          concu pour que la bascule coute UNE LIGNE — autant avoir des
+          liens qui marchent aujourd'hui plutot que rien pendant une
+          journee.
+          RESTE : (1) poser la meme variable dans le .env du VPS +
+          `up -d --build web` ; (2) rebasculer sur docs.nimboplay.dev
+          apres F8.3 ; (3) le FOOTER n'a toujours aucun lien vers les
+          docs — a decider (le user n'a demande que le header).
+          ⚠ IL RESTE UN LIEN MORT DANS LE HEADER : "Leaderboard"
+          (header.tsx:23, href="#"). C'est F7, bloque sur l'API REST
+          F7.1. Mesure apres rebuild : un seul href="#" subsiste dans
+          toute la home, c'est celui-la.
 [ ] F8.8  Prevoir la MISE A JOUR : les constantes economiques sont des
           curseurs d'equilibrage (D75, D82, D83). Noter dans les docs
           la date de derniere revision, ou pointer vers le code.
@@ -793,8 +847,29 @@ F8  DOCUMENTATION AVEC MINTLIFY  (nouvelle)
           l'encadre par l'adresse. Verifier au passage que le portail a
           bien un contact a offrir — sinon cette porte de sortie est
           fausse elle aussi.
-[ ] F8.10 CREER LE COMPTE MINTLIFY (le user n'en a pas au 2026-09-07)
-          puis publier. Sequence, dans l'ordre :
+[x] F8.10 FAIT 2026-09-07. Compte cree, organisation `nimbo`, depot
+          connecte, site EN LIGNE et servant nos pages :
+            https://nimbo-9ed30387.mintlify.site
+          Verifie par lecture du site : les 5 pages repondent, le
+          contenu est bien le notre, les avertissements devnet sont la,
+          aucun reste de template.
+          CE QUI COMPTE POUR REFAIRE L'OPERATION : la liaison d'un
+          dossier existant se fait DANS LE DASHBOARD, pas en CLI —
+          verifie, il n'existe AUCUNE commande `mint` pour relier un
+          dossier local a un projet (le CLI sait creer un projet neuf
+          ou previsualiser, c'est tout). Sequence dashboard :
+            1. GitHub comme fournisseur -> Continue setup -> autoriser
+               -> organisation MarginCallTM, depot Nimbo_Play_SOLANA,
+               branche master.
+            2. Git Settings -> interrupteur "Set up as monorepo" ->
+               chemin relatif `/docs` (SANS barre oblique finale).
+               ETAPE INDISPENSABLE ICI : sans elle Mintlify cherche
+               docs.json a la RACINE du depot et ne trouve rien.
+            3. Installer la GitHub App (redeploie a chaque push).
+          ⚠ `mint status` n'affiche PAS de sous-domaine tant que le
+          depot n'est pas connecte — il ne montre que version, e-mail
+          et organisation. Ne pas en conclure que le compte est casse.
+          ANCIENNE PROCEDURE ENVISAGEE (conservee pour memoire) :
             npm i -g mint
             mint login        (ou `mint signup`)
             cd docs && mint dev        -> preview locale

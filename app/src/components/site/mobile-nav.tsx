@@ -123,7 +123,14 @@ export function MobileNav({
               in the action group; inside this panel it is just another
               destination, so it should look and be marked up like one. */}
           <ul className="flex flex-col">
-            {[...links, { label: "Documentation", href: docsHref }].map((l) => (
+            {[
+              ...links,
+              // F8.7 — spread of an empty array when docsHref is "", so the row
+              // disappears entirely rather than linking nowhere. Same rule as
+              // the desktop button, driven by the same constant, so the two
+              // cannot disagree about whether the docs exist.
+              ...(docsHref ? [{ label: "Documentation", href: docsHref }] : []),
+            ].map((l) => (
               <li key={l.label}>
                 <a
                   href={l.href}

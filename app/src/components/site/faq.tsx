@@ -33,6 +33,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { DOCS_URL } from "@/lib/constants";
 
 const faqs = [
   {
@@ -90,17 +91,21 @@ export function Faq() {
           <p className="mt-4 max-w-sm text-muted-foreground">
             The rules, the money, and what we do and do not control.
           </p>
-          {/* A "Read the documentation" link belongs here and is written, ready
-              to be restored the moment the docs site exists (F8, Mintlify on
-              docs.nimboplay.dev). It is held back for one reason: it would 404
-              today. That is exactly the debt F10.3 records against the current
-              site — Documentation, Leaderboard, Terms and Privacy all pointing
-              nowhere — and shipping a fresh dead link in the same release that
-              removes the old ones would be self-defeating. Restore as:
-                <a href="https://docs.nimboplay.dev" className="mt-6 inline-flex
-                   items-center gap-2 text-sm font-medium text-primary
-                   hover:underline">Read the documentation <span aria-hidden>
-                   →</span></a> */}
+          {/* F8.7 — restored, but GATED. This link was written and then held
+              back in comment form because it would have 404'd: the docs site
+              did not exist, and shipping a fresh dead link in the very release
+              that removed the old ones (F10.3) would have been self-defeating.
+              The condition is what makes it safe to keep in the tree — DOCS_URL
+              is an empty string until NEXT_PUBLIC_DOCS_URL is set at build
+              time, so this renders nothing until the site is actually live. */}
+          {DOCS_URL && (
+            <a
+              href={DOCS_URL}
+              className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline"
+            >
+              Read the documentation <span aria-hidden>→</span>
+            </a>
+          )}
 
           {/* Decorative only -> alt="" + aria-hidden, so a screen reader skips
               it instead of announcing a filename.

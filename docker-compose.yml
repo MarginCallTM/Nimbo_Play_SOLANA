@@ -92,6 +92,9 @@ services:
         NEXT_PUBLIC_PROGRAM_ID: ${NEXT_PUBLIC_PROGRAM_ID}
         NEXT_PUBLIC_RPC_ENDPOINT: ${NEXT_PUBLIC_RPC_ENDPOINT}
         NEXT_PUBLIC_ROUND_ID: ${NEXT_PUBLIC_ROUND_ID}
+        # F8.7 — the docs-link switch. Empty (or absent) hides every link to
+        # the documentation; a URL publishes them. Rebuild to apply.
+        NEXT_PUBLIC_DOCS_URL: ${NEXT_PUBLIC_DOCS_URL:-}
     container_name: nimbo_web
     restart: unless-stopped
     ports:

@@ -10,10 +10,7 @@
 import Image from "next/image";
 import { ConnectWalletButton } from "@/components/site/connect-wallet-button";
 import { MobileNav } from "@/components/site/mobile-nav";
-import { ARENA_URL } from "@/lib/constants";
-
-// TODO F8 — points at the docs site once it exists.
-const DOCS_HREF = "#";
+import { ARENA_URL, DOCS_URL } from "@/lib/constants";
 
 // Arena comes first: since the 2026-07-10 pivot it is the flagship and the
 // lottery is the side-feature. It is an absolute URL because the game is a
@@ -74,16 +71,23 @@ export function Header() {
           {/* Outline pill = secondary, solid white = primary. Same pairing as
               the reference, and the same pairing as the hero's two CTAs, so
               the page teaches the hierarchy once. */}
-          <a
-            href={DOCS_HREF}
-            className="hidden rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/5 sm:inline-flex"
-          >
-            Documentation
-          </a>
+          {/* F8.7 — this button EXISTS ONLY WHEN THE DOCS DO. DOCS_URL is an
+              empty string until NEXT_PUBLIC_DOCS_URL is set at build time, and
+              an absent button beats one that 404s: a dead link reads as a
+              broken site, which is precisely the debt F10.3 opened and that
+              faq.tsx already declined to add back. */}
+          {DOCS_URL && (
+            <a
+              href={DOCS_URL}
+              className="hidden rounded-full border border-white/20 px-4 py-2 text-sm font-medium text-white/80 transition-colors hover:bg-white/5 sm:inline-flex"
+            >
+              Documentation
+            </a>
+          )}
           <ConnectWalletButton />
           {/* Below md only. Gets the same links as the desktop nav so the two
               can never drift out of sync. */}
-          <MobileNav links={navLinks} docsHref={DOCS_HREF} />
+          <MobileNav links={navLinks} docsHref={DOCS_URL} />
         </div>
       </div>
     </header>

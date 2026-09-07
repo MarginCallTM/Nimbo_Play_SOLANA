@@ -26,9 +26,15 @@ COPY . .
 ARG NEXT_PUBLIC_PROGRAM_ID
 ARG NEXT_PUBLIC_RPC_ENDPOINT
 ARG NEXT_PUBLIC_ROUND_ID
+# F8.7 — must be declared here or the docs-link switch is INERT: an undeclared
+# ARG is invisible to `npm run build`, so DOCS_URL would stay "" whatever the
+# VPS .env says. Empty is the intended default (no docs site -> no links);
+# giving it a value is what publishes the header, mobile-menu and FAQ links.
+ARG NEXT_PUBLIC_DOCS_URL
 ENV NEXT_PUBLIC_PROGRAM_ID=$NEXT_PUBLIC_PROGRAM_ID
 ENV NEXT_PUBLIC_RPC_ENDPOINT=$NEXT_PUBLIC_RPC_ENDPOINT
 ENV NEXT_PUBLIC_ROUND_ID=$NEXT_PUBLIC_ROUND_ID
+ENV NEXT_PUBLIC_DOCS_URL=$NEXT_PUBLIC_DOCS_URL
 # Telemetry off: a build server phoning home is noise we did not ask for.
 ENV NEXT_TELEMETRY_DISABLED=1
 
