@@ -23,21 +23,27 @@ export function Hero() {
     // `bg-background` is now the artwork's own black, sampled from the file
     // itself (F3), so section, header and illustration share one value.
     <section id="play" className="grain relative overflow-hidden bg-background">
-      <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center px-6 pb-6 pt-20 text-center md:pt-24">
-        {/* Honest status badge (F4.3 / F0): the arena settles real transactions,
-            but on devnet SOL. The old badge claimed "Solana mainnet · Round #248"
-            and both halves were false. */}
-        <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs font-medium text-white/70 backdrop-blur">
-          <span className="size-1.5 rounded-full bg-success" />
-          Live on Solana devnet
-        </span>
+      {/* pb-0: the text block no longer pads itself away from the artwork. The
+          gradient at the top of the band already melts the junction, so the
+          padding was buying nothing but height. */}
+      <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center px-6 pb-0 pt-20 text-center md:pt-24">
+        {/* The "Live on Solana devnet" status pill used to open this block. It
+            was removed on purpose (2026-09-07, user's call) to raise the
+            artwork: the headline now starts the page and the illustration
+            arrives sooner. Devnet status is still stated on the homepage, in
+            the closing CTA and the footer, and in the page metadata.
+            IF A BADGE EVER COMES BACK HERE, it states devnet. The one this
+            replaced claimed "Solana mainnet · Round #248" and both halves were
+            false (F0 / F10.1). */}
 
         {/* One <h1> only. The previous markup opened an h1 and then left an
             unstyled <h2> dangling underneath, which broke both the visual
             rhythm and the document outline. Two short parallel lines, forced by
             <br>, leading pulled under 1 — the reference sets its headline the
-            same way (~76px type on ~70px lines). */}
-        <h1 className="mt-8 font-display text-[clamp(2.75rem,7vw,4.75rem)] font-semibold leading-[0.92] tracking-tight text-white">
+            same way (~76px type on ~70px lines).
+            No top margin: it carried the gap under the status pill, and with
+            the pill gone it would just re-add the height we set out to save. */}
+        <h1 className="font-display text-[clamp(2.75rem,7vw,4.75rem)] font-semibold leading-[0.92] tracking-tight text-white">
           Play Better.
           <br />
           Win Bigger.
@@ -82,10 +88,15 @@ export function Hero() {
           `object-cover` scales the art to the full width and `object-bottom`
           anchors it low, so the surplus is trimmed off the TOP. About 23% goes,
           leaving only a thin strip of black for the glow to rise into.
-          Calibrated against the reference, which keeps ~55px between the CTA
-          row and the first artwork; at 1700 some 60px of dead black survived on
-          top of the text block's own padding and the gap came out twice as
-          wide. Retune by moving the second number only: lower = tighter crop.
+          Retune by moving the second number only: lower = tighter crop.
+          MEASURED HEADROOM (2026-09-07). The source is pure black down to
+          25.8% of its height; the first real content is the right cloud's edge
+          at 26.5%. So the crop can go to ~25.8% and no further — past that it
+          eats the clouds. History of this number:
+            1700 -> 21.2% crop, ~60px of dead black survived
+            1650 -> 23.04%
+            1620 -> 24.44%  (current) leaves ~1.4% of black for the glow
+            1591 -> 25.8%   ABSOLUTE FLOOR, clouds touch the top edge
           `relative` (not absolute) so the band takes real height and pushes the
           page down on its own — no magic offsets to keep in sync. */}
       {/* Mobile uses a TALLER ratio (3/2) on purpose. At 425px the desktop crop
@@ -93,7 +104,7 @@ export function Hero() {
           makes object-cover scale up and trim the SIDES instead, which costs
           only empty cloud and keeps the subject readable. Provisional answer to
           F1.8/F11.1 — a purpose-framed portrait asset would still be better. */}
-      <div className="relative aspect-[3/2] w-full md:aspect-[3841/1650]">
+      <div className="relative aspect-[3/2] w-full md:aspect-[3841/1620]">
         <Image
           src="/Official_bg_webp.webp"
           alt=""

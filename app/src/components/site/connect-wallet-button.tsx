@@ -28,9 +28,9 @@ export function ConnectWalletButton() {
     // width read in JS keeps the server and client markup identical — a
     // JS-chosen label would hydrate wrong on the first paint.
     const idleLabel = (
-        <>
+        <span>
             Connect<span className="hidden md:inline">&nbsp;wallet</span>
-        </>
+        </span>
     );
 
     const label = !mounted

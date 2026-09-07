@@ -42,17 +42,29 @@ export function Header() {
           once the nav is visible; on a phone its equal 1fr columns just crush
           the wordmark onto two lines. */}
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 md:grid md:grid-cols-[1fr_auto_1fr]">
-        <a href="/" className="flex items-center gap-2 justify-self-start">
+        {/* Logo lockup (2026-09-07 trial). This asset already CONTAINS the
+            wordmark, so the text span that used to sit beside the mark is gone
+            — keeping it would print "Nimbo Play" twice.
+            Source is 760x235 (cropped from a 1672x941 export whose content
+            occupied barely half the canvas, and downscaled: at h-10 even a 3x
+            display needs ~120px, so anything larger is dead weight next/image
+            would have to resize on every request anyway).
+            `h-10 w-auto` rather than a fixed width: the height is what has to
+            agree with the rest of the bar, the width follows the artwork.
+            SIZE IS THE ONE KNOB HERE. h-9 was the first pass and read small;
+            h-10 (40px) is +11%. The row's own height only starts moving past
+            h-11, because the wallet pill next to it is the taller element
+            until then.
+            To revert: swap back to /logo-mark.png at size-7 and restore the
+            span. Both files are kept. */}
+        <a href="/" className="flex items-center justify-self-start">
           <Image
-            src="/logo-mark.png"
-            alt="Nimbo Play logo"
-            width={64}
-            height={64}
-            className="size-7 object-contain"
+            src="/logo-lockup.png"
+            alt="Nimbo Play"
+            width={760}
+            height={235}
+            className="h-10 w-auto object-contain"
           />
-          <span className="whitespace-nowrap font-brand text-lg font-semibold text-white">
-            Nimbo Play
-          </span>
         </a>
 
         <nav className="hidden items-center gap-8 md:flex">
