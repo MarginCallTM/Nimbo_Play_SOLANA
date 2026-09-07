@@ -1,0 +1,165 @@
+---
+title: "Game rules"
+description: "Stakes, growth, death, extraction, disconnects and rounds — the complete mechanics of Nimbo Arena."
+---
+
+<Warning>
+  Nimbo Arena runs on **Solana devnet**. Every amount below is denominated in
+  devnet SOL, a free test token with no monetary value.
+</Warning>
+
+## The loop
+
+You stake to spawn. You grow by eating. You only keep anything if you survive
+long enough to complete an extraction. Everything else — every pellet, every
+corpse, every point of value on the map — came out of a player's stake.
+
+No value is ever created out of nothing. That constraint drives every rule below.
+
+## Entering
+
+Stakes are fixed tiers: **0.1, 0.25, 0.5 and 1 SOL**. The floor exists on
+purpose. A one-lamport snake would be the smallest and fastest-turning body in
+the game — a free kamikaze against someone who staked real size.
+
+Your stake splits three ways the moment your deposit confirms:
+
+| Share | Where it goes |
+| --- | --- |
+| **5.5 %** | House fee, sent to the treasury on-chain |
+| **10 %** | Converted immediately into pellets scattered on the map |
+| **84.5 %** | Your spawn value — the size and worth you start with |
+
+The pellet share is the part most people misread. It is not a pool that trickles
+out over time: it becomes **your** pellets, on the map, at the moment you join.
+One player alone on a map sees only the food their own stake paid for. A sparse
+map at low population is the intended behaviour, not a bug — food density follows
+deposits, and there is no free ambient respawn.
+
+### Score and SOL are the same thing
+
+Internally the game runs on **score**, at a fixed rate of **1000 score per SOL**,
+and it uses the same rate in both directions — SOL to score when you join, score
+to SOL when you extract. That symmetry is what makes the arena conserve value
+exactly.
+
+So a 0.1 SOL entry gives you 84.5 score to start with, and one pellet is worth
+one score point. On the way out, amounts round **down** to the lamport: the dust
+stays in the vault rather than being owed to anyone.
+
+## Growing
+
+You grow by eating, and there are only three things to eat:
+
+<CardGroup cols={3}>
+  <Card title="Pellets" icon="circle">
+    Worth 1 score each. They exist because someone staked.
+  </Card>
+  <Card title="Corpse orbs" icon="skull">
+    Worth 5 score each. Someone died where you are standing.
+  </Card>
+  <Card title="Boost trails" icon="bolt">
+    Worth 1.5 score. Dropped by players who are burning score to go fast.
+  </Card>
+</CardGroup>
+
+Boosting doubles your speed and **costs score continuously**, shedding it as orbs
+behind you. Running away is never free, and a panicked chase feeds whoever is
+behind you.
+
+Size is not a pure upgrade. As your score climbs, your body gets longer and
+wider, and **your turning gets slower**. Past roughly 1 SOL of accumulated value
+a brake kicks in and length growth flattens, capped so that no snake can ever be
+long enough to wall off the map. A large snake is a slower, more valuable, more
+obvious target.
+
+## Dying
+
+The arena is a disc, and its **border is lethal**. Beyond that, you die by
+running your head into another snake's body. Head-to-head, both die.
+
+When you die, your value does not vanish and it does not all go to your killer:
+
+- **70 %** stays on the ground as a corpse, exactly where you fell, for anyone
+  to eat;
+- **30 %** is recycled as ordinary pellets scattered across the whole map.
+
+That 30 % is a deliberate brake on snowballing. A kill is worth taking, but a
+third of it escapes your killer and goes back to the commons. It is also what
+keeps the map fed: player traffic, not a faucet, is the arena's food supply.
+
+<Note>
+  Freshly spawned snakes are briefly protected. While that grace lasts they
+  cannot be killed — and they also cannot pick anything up or make progress on an
+  extraction. It buys you a moment to orient, not a moment to farm.
+</Note>
+
+### Disconnecting is dying
+
+If you close the tab, lose your connection, or quit mid-run, **your snake dies
+immediately** and drops its corpse like any other death.
+
+This is intentional and the cost is accepted. An earlier rule froze disconnected
+snakes and left them killable, but a frozen body behaves like temporary
+invulnerability, and pulling the plug became a way to dodge a fight. The price of
+closing that hole is that a genuine network drop costs you the run.
+
+## Extracting — the only way out
+
+Growing is not winning. The **only** way to convert what you are carrying back
+into SOL is to complete an extraction.
+
+<Steps>
+  <Step title="A point appears">
+    Roughly every 10 seconds of downtime, a single extraction zone opens
+    somewhere on the map. It never spawns hard against the lethal border, but
+    that is the only promise about its position — you may be nowhere near it.
+  </Step>
+  <Step title="You stand in it for 12 seconds">
+    The zone is a circle you must stay inside. Leave it, even for an instant, and
+    your progress resets to zero. Twelve seconds is a long time to stand still
+    in the open, and that exposure is the entire point of the mechanic.
+  </Step>
+  <Step title="One player wins it">
+    The first to complete the channel extracts — and the zone **closes**
+    immediately. Everyone else's progress is wiped and the cooldown restarts.
+    An extraction point is not a queue; it is a contest with one winner.
+  </Step>
+  <Step title="Your value leaves the arena">
+    Your score converts to lamports at the same 1000-per-SOL rate, becomes a
+    payout claim, and your snake despawns. There is no corpse — this is the one
+    exit where value crosses out of the game. Playing again means staking again.
+  </Step>
+</Steps>
+
+<Warning>
+  **The zone detonates.** An extraction point has a lifetime of about 40 seconds.
+  When it runs out, anyone still standing inside dies on the spot and leaves a
+  corpse. Camping the circle hoping to outlast the competition is a losing
+  strategy — if nobody completes the channel in time, the zone kills whoever is
+  left in it.
+</Warning>
+
+## Rounds
+
+The world is persistent. Behind the scenes it is divided into **rounds** of 24
+hours, but you should never notice one: joining routes you to whichever round is
+currently open, and nobody is ever ejected from a run in progress.
+
+A round is an accounting boundary for the escrow, not a match. This matters
+because of one non-negotiable rule: **the end of a round is never a payout.**
+Paying surviving players when a round closes would be risk-free money, which is
+farmable by anyone willing to sit still. Extraction stays the only exit,
+always.
+
+## Latency
+
+Paid play has a ping ceiling, measured by the server rather than reported by your
+client. Above it you are kept out of staked arenas.
+
+The reason is fairness, not gatekeeping: other players are rendered to you
+slightly in the past, and once that gap grows wider than a snake's own radius,
+collisions start killing people who genuinely believed they had room. The
+threshold is currently set generously — deliberately, so that high-latency
+players can tell us whether deaths feel unfair at that distance. It is a
+measurement in progress, not a settled number.

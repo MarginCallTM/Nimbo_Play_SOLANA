@@ -1,0 +1,62 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Nimbo Play",
+  "colors": {
+    "primary": "#7C6BF0",
+    "light": "#A8A3FF",
+    "dark": "#634CD4"
+  },
+  "appearance": {
+    "default": "dark"
+  },
+  "fonts": {
+    "family": "Geist"
+  },
+  "favicon": "/favicon.png",
+  "logo": {
+    "light": "/logo/mark.png",
+    "dark": "/logo/mark.png",
+    "href": "https://nimboplay.dev"
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting started",
+        "pages": ["index", "quickstart"]
+      },
+      {
+        "group": "How the game works",
+        "pages": ["game-rules"]
+      },
+      {
+        "group": "Trust and security",
+        "pages": ["trust-model", "security"]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Portal",
+        "href": "https://nimboplay.dev"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Play Arena",
+      "href": "https://arena.nimboplay.dev"
+    }
+  },
+  "footer": {
+    "links": [
+      {
+        "header": "Nimbo Play",
+        "items": [
+          { "label": "Portal", "href": "https://nimboplay.dev" },
+          { "label": "Nimbo Arena", "href": "https://arena.nimboplay.dev" }
+        ]
+      }
+    ]
+  }
+}

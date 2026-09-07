@@ -1,0 +1,81 @@
+---
+title: "What Nimbo Play is"
+description: "A skill-based, player-versus-player arcade arena where the stakes are held in a Solana escrow. Currently running on devnet."
+---
+
+<Warning>
+  **Nimbo Play runs on Solana devnet.** Devnet SOL is a free test token with no
+  monetary value. Nothing you win here can be sold or exchanged, and nothing you
+  lose costs you money. Treat every number on this site as a test number.
+</Warning>
+
+## The short version
+
+**Nimbo Arena** is a real-time arcade game in the spirit of slither.io. You stake
+SOL to enter, your snake spawns with a size proportional to what you staked, and
+you grow by eating — pellets, boost trails, and the corpses of players who died.
+
+The catch is the exit. Growing is not winning. The only way to turn what you are
+carrying back into SOL is to reach an **extraction point** and hold it for 12
+seconds, fully visible and fully vulnerable. Die before that, and everything you
+carried drops to the floor for someone else.
+
+Nimbo Play is the umbrella; **Nimbo Arena** is the first game on it.
+
+## What this is not
+
+<CardGroup cols={2}>
+  <Card title="Not a casino" icon="user-group">
+    You never play against the house. Every lamport you can win came from another
+    player's stake. There is no random draw, no dealer, and no house edge on the
+    outcome — only a flat fee on entry.
+  </Card>
+  <Card title="Not pay-to-win" icon="palette">
+    Cosmetic skins are planned. They will stay cosmetic. Staking more makes you
+    bigger, which is as much a liability as an advantage — a large snake is
+    slower to turn and worth more to whoever kills it.
+  </Card>
+  <Card title="Not an investment" icon="triangle-exclamation">
+    There is no yield, no return, and no promise of profit. The arena is
+    zero-sum before the entry fee, and negative-sum after it. Most players
+    should expect to lose their stake.
+  </Card>
+  <Card title="Not fully on-chain" icon="server">
+    The gameplay runs on our servers, not on Solana. This is a deliberate
+    trade-off and it has consequences you should understand before staking —
+    see [Trust model](/trust-model).
+  </Card>
+</CardGroup>
+
+## Where the money actually lives
+
+Your stake is not held by us in a company wallet. It goes into a **Vault**, a
+program-derived account on Solana that has no private key. Nobody — including us
+— can move funds out of it except through the arena program's own rules.
+
+What the program will not let us do, even if our servers were fully compromised:
+
+- pay out more than the vault actually holds;
+- pay the same extraction twice;
+- close a round early to freeze extractions that are still pending.
+
+What it does let us do is decide *how much* you extracted, because the game
+itself is off-chain. That is the honest limit of the design, and
+[Trust model](/trust-model) explains it in full rather than burying it.
+
+## Start here
+
+<CardGroup cols={2}>
+  <Card title="Play your first round" icon="play" href="/quickstart">
+    Wallet, devnet SOL, the free demo, then your first staked run.
+  </Card>
+  <Card title="Game rules" icon="book-open" href="/game-rules">
+    Stakes, growth, death, extraction, disconnects, rounds.
+  </Card>
+  <Card title="Trust model" icon="scale-balanced" href="/trust-model">
+    What the chain guarantees, and what it does not.
+  </Card>
+  <Card title="Security" icon="shield" href="/security">
+    Current posture and what happens before mainnet.
+  </Card>
+</CardGroup>

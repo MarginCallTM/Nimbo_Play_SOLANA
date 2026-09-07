@@ -225,7 +225,19 @@ F2  BRANCHE & SOCLE
           analyse : `RUN npm ci` passe sur Alpine, `npm run build` sort
           ses 4 routes, et l'inspection de l'etape `deps` confirme
           l'absence des 6 et la presence de @emnapi/runtime.
-          RESTE : rebuild + redeploiement de `web` sur le VPS (F14.5).
+          DEPLOYE LE MEME JOUR : `git pull` + `docker compose up -d
+          --build web` sur le VPS, site a 200. Seul `web` a ete
+          reconstruit — donc AUCUNE deconnexion de joueur (recreer
+          `server` = mort instantanee = mise perdue, cf DEPLOY.md 4bis).
+          Le site est visuellement IDENTIQUE, c'est le resultat attendu :
+          F2.4 ne retire que du code que personne n'importait.
+          ⚠ PIEGE D'INFRA RENCONTRE AU PASSAGE : le depot GitHub a ete
+          renomme `Nimbo_play` -> `Nimbo_Play_SOLANA`. La redirection ne
+          joue pas et `git push/pull` echoue sur un trompeur
+          « Repository not found » (GitHub renvoie 404 au lieu de 403
+          pour ne pas divulguer l'existence d'un depot). Corrige ici ET
+          sur le VPS via `git remote set-url`. A ressortir si un autre
+          clone (poste secondaire, CI) traine quelque part.
 
   ETAT GIT (2026-09-06) :
     - TOUT EST SUR MASTER. front-redesign et master pointent sur le
@@ -548,19 +560,100 @@ F7  PAGE LEADERBOARD  (nouvelle)
 --------------------------------------------------------------
 F8  DOCUMENTATION AVEC MINTLIFY  (nouvelle)
 --------------------------------------------------------------
-  ⚠ A VERIFIER AVANT DE COMMENCER (evolue vite, ne pas coder de
-  memoire) : le nom exact du fichier de configuration (mint.json a ete
-  remplace par docs.json dans les versions recentes), la CLI, le plan
-  gratuit et ses limites, et la procedure de domaine personnalise.
-  -> Lire docs.mintlify.com avant F8.2.
+  ✅ VERIFIE SUR mintlify.com LE 2026-09-06 (les 4 inconnues sont
+  levees ; a re-verifier si on reprend F8 dans plusieurs mois, ce
+  fournisseur bouge vite) :
 
-[ ] F8.1  Trancher l'HEBERGEMENT : Mintlify hebergé (rapide, dependance
-          externe, limites du plan gratuit a verifier) VS docs dans le
-          repo. Trancher aussi le sous-domaine : docs.nimboplay.dev.
-[ ] F8.2  Init du projet docs + docs.json (nom exact a verifier) :
-          navigation, couleurs de la NOUVELLE charte, logo, favicon.
-          Le theme doit matcher F3 — des docs blanches a cote d'un site
-          noir refont exactement l'erreur qu'on est en train de corriger.
+  - FICHIER DE CONFIG = **docs.json** (mint.json est bien mort).
+    Champs OBLIGATOIRES : name, theme, colors.primary, navigation.
+    Schema : "$schema": "https://mintlify.com/docs.json"
+  - CLI = paquet **`mint`** (et non `mintlify`) :
+      npm i -g mint        installation
+      mint update          mise a jour
+      mint login | signup  authentification
+      mint new <dir> --name <nom> --theme <theme>
+      mint dev [--no-open] preview locale, DEPUIS le dossier du docs.json
+      mint validate        controle de la config
+      mint broken-links    liens morts (utile pour F8.7)
+      mint status          etat + sous-domaine publie
+    Deploiement = **git push** (pas de commande de deploy).
+    URL par defaut avant domaine custom : <sous-domaine>.mintlifysite.com
+  - PLAN STARTER GRATUIT confirme : 5 sieges d'edition, editeur web,
+    authentification, serveur MCP, API playground, ET LE DOMAINE
+    PERSONNALISE. Pro = 450 $/mois (agent, assistant, automatisations,
+    API developpeur, multi-repo, white-label). Rien de necessaire
+    pour publier -> F8.1 tient.
+  - THEMES disponibles : mint, maple, palm, willow, linden, almond,
+    aspen, sequoia, luma.
+  - APPARENCE (pour matcher F3) :
+      "appearance": { "default": "dark" }   force le mode sombre
+      "colors": { "primary", "light", "dark" }
+        ⚠ semantique CONTRE-INTUITIVE : `light` = couleur d'emphase EN
+        MODE SOMBRE, `dark` = couleur des boutons et etats de survol.
+        Ce ne sont PAS "la version claire" et "la version sombre".
+      "logo": { "light": ..., "dark": ..., "href": ... }
+      "favicon", "fonts": { "family": ... }  (Google Fonts supportees
+        -> Geist, cf F3.6)
+
+  - DNS DU DOMAINE PERSONNALISE (F8.3) — TROIS enregistrements, et
+    L'ORDRE EST IMPOSE :
+      1. TXT  _acme-challenge        -> valeur donnee par le dashboard
+      2. TXT  _cf-custom-hostname    -> valeur donnee par le dashboard
+      3. CNAME docs                  -> cname.mintlify.builders
+    ⚠ NE PAS poser le CNAME tant que les DEUX TXT ne sont pas
+      "verified" dans le dashboard. Les valeurs des TXT sont generees
+      par Mintlify : impossible de les preparer a l'avance.
+    Certificat Let's Encrypt emis automatiquement, quelques heures
+    apres propagation (jusqu'a 24h dans de rares cas).
+    NB : `_cf-custom-hostname` revele que Mintlify passe par le
+    Custom Hostnames de Cloudflare. Notre zone est DEJA chez
+    Cloudflare -> garder le CNAME en **DNS SEUL (nuage GRIS)**, comme
+    tout le reste du projet (AF.2 D-b) : deux couches de proxy
+    Cloudflare l'une derriere l'autre ne s'empilent pas proprement, et
+    le nuage orange a deja casse une emission de certificat ici.
+    On est sur un sous-domaine (docs.nimboplay.dev), donc le probleme
+    du CNAME a l'apex (flattening/ALIAS) ne se pose pas.
+
+[x] F8.1  TRANCHE 2026-09-04, CONFIRME 2026-09-06 : Mintlify heberge,
+          plan Starter GRATUIT, sur docs.nimboplay.dev. Le point
+          bloquant (domaine personnalise payant chez beaucoup de
+          concurrents) est bien inclus dans le gratuit.
+          CONTRE-MESURE A LA DEPENDANCE EXTERNE : les .mdx vivent DANS
+          le depot, jamais seulement dans l'editeur web. Si le gratuit
+          se ferme, on demenage vers Docusaurus/Starlight/Nextra en une
+          apres-midi. Le contenu est la valeur, l'hebergeur non.
+[x] F8.2  FAIT 2026-09-07 — `docs/` cree A LA MAIN (pas via `mint new`,
+          qui exige un compte ; le dossier est de toute facon un simple
+          docs.json + des .mdx, donc rien ne manque).
+          docs/
+            docs.json          config validee (JSON + schema officiel)
+            favicon.png        <- app/src/app/icon.png
+            logo/mark.png      <- app/public/logo-mark.png
+            index.mdx  quickstart.mdx  game-rules.mdx
+            trust-model.mdx  security.mdx
+          THEME : "maple", `appearance.default = "dark"` (mode sombre
+          FORCE — des docs blanches a cote d'un site noir referaient
+          exactement l'erreur qu'on corrige), police Geist via Google
+          Fonts (meme famille que F3.6).
+          COULEURS : converties des tokens oklch de globals.css en hex
+          par la formule exacte d'Ottosson, pas a l'oeil. Le
+          convertisseur s'auto-valide : il retombe sur #FF7664 (accent)
+          et #09080D (background), les deux hex deja ecrits en
+          commentaire dans globals.css.
+            --primary  oklch(0.612 0.192 285)  -> #7C6BF0
+            --accent   oklch(0.725 0.171 29.5) -> #FF7664
+            --gold     oklch(0.834 0.126 76.5) -> #F7BD63
+            --violet   oklch(0.596 0.164 316)  -> #A45BC0
+          ⚠ PIEGE DE NOMMAGE MINTLIFY, contre-intuitif : dans
+          `colors`, `light` = couleur d'EMPHASE EN MODE SOMBRE et
+          `dark` = couleur des BOUTONS ET DU SURVOL. Ce ne sont PAS
+          "la variante claire" et "la variante sombre". Un mapping
+          naif depuis nos tokens aurait donne un theme faux. Retenu :
+          primary #7C6BF0, light #A8A3FF (indigo eclairci, meme
+          teinte 285), dark #634CD4.
+          `navbar` et `footer` : cles VERIFIEES dans le schema officiel
+          (mintlify.com/docs.json) avant usage — la page "settings" ne
+          les documentait pas, il a fallu lire le schema.
 [ ] F8.3  DNS : CNAME docs.nimboplay.dev chez Cloudflare Registrar.
           ⚠ Rappel AF.2 : les enregistrements du projet sont en DNS SEUL
           (nuage GRIS) — le proxy orange a deja casse l'emission de
@@ -585,18 +678,137 @@ F8  DOCUMENTATION AVEC MINTLIFY  (nouvelle)
             feuille de route de durcissement (APROD.2 custody/multisig,
             modele B). Le dire nous-memes, clairement, vaut infiniment
             mieux que se le faire sortir par un joueur.
+          - Security (AJOUTE PAR LE USER 2026-09-07, ECRITE) : posture
+            actuelle, ce que le serveur autoritatif arrete (triches
+            MECANIQUES) et ce qu'il n'arrete pas (bots qui jouent BIEN,
+            multi-comptes, signataire unique), puis le durcissement
+            pre-mainnet. Le user veut y annoncer l'AUDIT ADVERSE par
+            les modeles Fable (= AF.6) : une passe dont le but explicite
+            est de CASSER le systeme, portee = tout le stack, pas
+            seulement le contrat. Argument a garder : sur devnet une
+            trouvaille coute un correctif, sur mainnet elle coute
+            l'argent des joueurs.
+            ⚠ REGLE D'ECRITURE DE CETTE PAGE : decrire des CATEGORIES de
+            defense et la feuille de route, jamais un mode operatoire.
+            Une page Security honnete ne doit pas devenir une liste
+            d'attaques exploitables — et celle-ci survivra jusqu'au
+            mainnet, ou l'enjeu ne sera plus nul.
           - Bots policy : D78/D79 assumes publiquement.
           - Roadmap : skins, gacha, portail multi-jeux, mainnet.
           - FAQ / troubleshooting : wallet non detecte, tx refusee,
             payout non recu, plancher de mise, cooldown deserteur (D84).
-[ ] F8.5  Rediger les pages (anglais).
-[ ] F8.6  Relire chaque page contre F0 : aucune promesse de rendement,
-          statut devnet partout, aucun chiffre invente.
+[~] F8.5  EN COURS. PERIMETRE TRANCHE PAR LE USER (2026-09-07) : socle
+          + les 3 pages qui portent le message + **Security** (ajout
+          explicite du user). ECRITES ET COMPLETES :
+            index.mdx        ce qu'est Nimbo Play, ce que ce n'est PAS
+                             (casino / pay-to-win / placement / on-chain)
+            quickstart.mdx   wallet, devnet, faucet, demo, 1re run payante
+            game-rules.mdx   entree, croissance, mort, extraction, rounds
+            trust-model.mdx  LE chapitre : oracle de confiance assume
+            security.mdx     posture, limites, durcissement pre-mainnet
+          PAS DE PAGES BOUCHONS : les 5 sections restantes de F8.4
+          (Economy, On-chain, Bots policy, Roadmap, FAQ) ne sont PAS
+          dans la navigation. Choix assume : 5 pages completes se lisent
+          comme un site fini, 5 completes + 5 vides se lisent comme un
+          site abandonne. Elles entreront quand elles seront ecrites.
+
+          ⚠ TOUS LES CHIFFRES VIENNENT DU CODE, RELEVES UN PAR UN LE
+          2026-09-07 — jamais de CLAUDE.md, qui est en retard (il
+          annonce 4 s et ~2 %). Ce qui a ete trouve EN LISANT le code
+          et qui ne figurait dans AUCUN document :
+            - La zone d'extraction DETONE en fin de vie (~40 s) : tous
+              ceux encore dedans meurent (`kind: "bomb"`, cadavre sur
+              place). Camper la zone est perdant.
+            - UNE SEULE extraction par zone : le premier a finir la
+              canalisation gagne, `closeZone()` ferme aussitot et remet
+              TOUS les canaux a zero. C'est un duel, pas une file.
+            - La zone spawn dans 75 % du rayon monde (jamais collee a
+              la bordure letale).
+            - Le CLIENT DU JEU NE SUPPORTE QUE PHANTOM (provider
+              injecte, wallet.ts). Le portail accepte tout wallet
+              standard, mais ce n'est pas la qu'on mise.
+            - C'est PHANTOM qui diffuse le depot
+              (`signAndSendTransaction`), donc SUR LE RESEAU CHOISI DANS
+              LE WALLET, alors que notre code confirme sur devnet ->
+              un joueur reste sur mainnet voit son join expirer sans
+              message utile. Etape critique du quickstart.
+            - Split reel d'une mise : 5,5 % rake + 10 % pellets +
+              84,5 % valeur de spawn (verifie dans chain.ts, pas
+              deduit). Le commentaire "~92,5 net score" de
+              arena-chain.ts:168 est PERIME (anterieur a D75).
+            - Taux fixe 1000 score / SOL, MEME taux a l'entree et a la
+              sortie (conservation stricte), arrondi a l'inferieur en
+              sortie (la poussiere reste au vault).
+[~] F8.6  PASSE le 2026-09-07 sur les 5 pages ecrites (a refaire sur les
+          suivantes). Audit automatise, resultats :
+          - "devnet" present sur les 5 pages (2 a 11 occurrences).
+          - Vocabulaire interdit : 3 occurrences, TOUTES des NEGATIONS
+            ou des emplois corrects — "no yield, no return, no promise
+            of profit" (denegation), "risk-free money" (ce qu'on REFUSE
+            de faire en fin de round), "provably fair" (pour dire que
+            l'arene ne le revendique PAS, contrairement a la loterie).
+          - "mainnet" : 9 occurrences, toutes au FUTUR ou dans
+            l'avertissement Phantom. Aucune ne pretend qu'on y est.
+          - Chiffres affirmes : 14 valeurs distinctes, chacune tracee a
+            une constante du code (voir F8.5).
+
+          STATUT VALIDE PAR LE USER (2026-09-07) — LIRE AVANT DE
+          REPRENDRE CES PAGES.
+          Ce qui est ACCEPTE : la STRUCTURE et la CONCEPTION GENERALE
+          (decoupage des pages, navigation, angle de chaque chapitre).
+          Ce qui ne l'est PAS : le CONTENU, qui reste PROVISOIRE.
+          Le user demande une REFONTE et une RELECTURE COMPLETE avant le
+          passage mainnet. A l'etat de MVP, c'est "convenable" — pas
+          fini.
+          CONSEQUENCE PRATIQUE : aucune formulation de ces 5 pages n'est
+          figee. Ne pas traiter un paragraphe comme tranche sous
+          pretexte qu'il a ete relu une fois ; la passe de refonte
+          reouvre tout. (Exemple deja repere pendant la redaction :
+          index.mdx porte DEUX FOIS le point "le jeu est hors-chaine" —
+          la carte "Not fully on-chain" puis la phrase de fin de section
+          — et la formule "rather than burying it" est un commentaire
+          sur notre propre conduite. Signale, laisse en l'etat pour le
+          MVP, a retrancher lors de la refonte.)
+          C'est aussi a ce moment-la que F8.9 (adresse de divulgation)
+          devra etre solde et que TOUS les chiffres devront etre
+          re-verifies contre le code — ce sont des curseurs
+          d'equilibrage qui bougent (D75, D82, D83, cf F8.8).
 [ ] F8.7  Brancher les liens : header (F5.3), footer, FAQ de la home
           ("en savoir plus" -> docs).
 [ ] F8.8  Prevoir la MISE A JOUR : les constantes economiques sont des
           curseurs d'equilibrage (D75, D82, D83). Noter dans les docs
           la date de derniere revision, ou pointer vers le code.
+[!] F8.9  BLOQUANT DE PUBLICATION — ADRESSE DE DIVULGATION.
+          security.mdx invite a signaler une faille mais ne donne AUCUNE
+          adresse : je me refuse a ecrire `security@nimboplay.dev` tant
+          que la boite n'existe pas. Publier un canal de contact qui ne
+          repond pas est exactement le type d'allegation que F0 interdit
+          — et sur une page Security c'est pire qu'ailleurs : un
+          chercheur de bonne foi qui ecrit dans le vide finit par
+          publier sa trouvaille.
+          ETAT ACTUEL DU TEXTE : un encadre dit que l'adresse "est en
+          cours de mise en place" et renvoie au contact du portail. Vrai
+          aujourd'hui, mais a solder AVANT que la doc soit annoncee.
+          A FAIRE : creer la boite (alias suffit), puis remplacer
+          l'encadre par l'adresse. Verifier au passage que le portail a
+          bien un contact a offrir — sinon cette porte de sortie est
+          fausse elle aussi.
+[ ] F8.10 CREER LE COMPTE MINTLIFY (le user n'en a pas au 2026-09-07)
+          puis publier. Sequence, dans l'ordre :
+            npm i -g mint
+            mint login        (ou `mint signup`)
+            cd docs && mint dev        -> preview locale
+            mint validate              -> config
+            mint broken-links          -> liens morts (recoupe F8.7)
+          Connecter le DEPOT a Mintlify en pointant le sous-dossier
+          `docs/` (le multi-DEPOT est payant, un sous-dossier d'un seul
+          depot ne l'est pas). Deploiement = `git push`, il n'y a pas de
+          commande de deploy.
+          ⚠ Le depot est PUBLIC : connecter leur app GitHub n'expose
+          rien de plus que ce qui l'est deja. Rien de sensible n'est
+          suivi (verifie 2026-09-06 : seul .env.example l'est).
+          Ensuite seulement F8.3 (DNS), dont les valeurs TXT sont
+          generees par leur dashboard et ne peuvent pas etre preparees.
 
 
 --------------------------------------------------------------

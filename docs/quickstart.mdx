@@ -1,0 +1,114 @@
+---
+title: "Play your first round"
+description: "Install a wallet, switch it to devnet, get free test SOL, and go from the demo to your first staked run."
+---
+
+<Warning>
+  Everything below happens on **Solana devnet**. The SOL you use is a free test
+  token with no monetary value.
+</Warning>
+
+## 1. Install Phantom
+
+The arena client currently supports **Phantom only**. It talks to Phantom's
+injected provider directly; multi-wallet discovery through the wallet-standard
+registry is not wired into the game yet.
+
+The portal at [nimboplay.dev](https://nimboplay.dev) is more permissive and works
+with any wallet-standard wallet, but the portal is not where you stake. If you
+want to play, you need Phantom.
+
+## 2. Switch Phantom to devnet
+
+<Warning>
+  **Do not skip this.** Phantom is what actually broadcasts your deposit, and it
+  broadcasts to whichever network it is currently set to. If Phantom is on
+  mainnet, your transaction goes to mainnet, the arena never sees it, and your
+  join times out with no useful error.
+</Warning>
+
+In Phantom: **Settings → Developer Settings → Testnet Mode**, then select
+**Solana Devnet**.
+
+## 3. Get devnet SOL
+
+Devnet SOL is free and handed out by a faucet.
+
+<Tabs>
+  <Tab title="Web faucet">
+    Go to [faucet.solana.com](https://faucet.solana.com), paste your Phantom
+    address, and request an airdrop on **devnet**.
+  </Tab>
+  <Tab title="Solana CLI">
+    ```bash
+    solana airdrop 2 <YOUR_WALLET_ADDRESS> --url devnet
+    ```
+  </Tab>
+</Tabs>
+
+The lowest staked tier is **0.1 SOL**, and you need a little extra for
+transaction fees. Two devnet SOL is plenty to learn on.
+
+## 4. Learn in the demo first
+
+The free demo is a **separate, fully off-chain arena**. It needs no wallet, holds
+no value, and you will never meet a staking player in it — it is populated by
+bots only. Nothing you eat there can be extracted, because there is nothing real
+to extract.
+
+Use it to get the controls and the feel of the map into your hands. The one thing
+it cannot teach you is what it feels like to hold an extraction for 12 seconds
+with something to lose.
+
+## 5. Your first staked run
+
+Go to [arena.nimboplay.dev](https://arena.nimboplay.dev).
+
+<Steps>
+  <Step title="Sign in with your wallet">
+    You will be asked to sign a **Sign In With Solana** message. This is a
+    signature, not a transaction: it costs nothing, moves nothing, and never
+    touches the chain. Phantom will refuse to sign it if the domain in the
+    message does not match the page you are on — that check is the point.
+  </Step>
+  <Step title="Pick a stake">
+    The tiers are **0.1, 0.25, 0.5 and 1 SOL**. Your stake sets your spawn size:
+    stake more and you start bigger, which means more presence on the map and
+    more to lose. It is not a difficulty setting, it is a risk setting.
+  </Step>
+  <Step title="Wait for a partner">
+    A run needs **at least two players** to start. You are placed in a queue
+    first, and queuing is free — no money moves while you wait. When a match is
+    found you get a short window to accept, then a window to sign and confirm
+    your deposit. Both players spawn together.
+  </Step>
+  <Step title="Approve the deposit">
+    This one **is** a real transaction. It sends your stake to the round's Vault
+    on devnet. Phantom may warn that it cannot simulate the transaction reliably
+    — that is a known devnet quirk, not a sign that something is wrong.
+  </Step>
+  <Step title="Play, then get out">
+    Eat, grow, avoid heads. When an extraction point appears, decide whether you
+    can hold it for 12 seconds. Everything you are carrying is only yours once
+    that channel completes.
+  </Step>
+</Steps>
+
+<Note>
+  If you accept a match and then never deposit, you leave the other player
+  hanging after they have already paid their entry fee. The first time is free —
+  a dropped connection and bad faith look identical once. After that, repeated
+  desertions earn a short cooldown before you can queue again. It is tied to your
+  wallet, it decays on its own, and playing an actual run clears it.
+</Note>
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Game rules" icon="book-open" href="/game-rules">
+    The full mechanics: growth, death, extraction, disconnects, rounds.
+  </Card>
+  <Card title="Trust model" icon="scale-balanced" href="/trust-model">
+    Read this before you stake anything you would miss.
+  </Card>
+</CardGroup>

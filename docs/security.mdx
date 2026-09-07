@@ -1,0 +1,121 @@
+---
+title: "Security"
+description: "Current security posture, what the design does and does not defend against, and the hardening that has to happen before mainnet."
+---
+
+<Warning>
+  Nimbo Arena is deployed on **Solana devnet**. Devnet SOL has no monetary value,
+  so nothing currently at stake is worth stealing. This page describes the
+  posture we are building toward, and is deliberately explicit about what is not
+  in place yet.
+</Warning>
+
+## Where security actually lives here
+
+This product has two very different halves, and they fail in different ways.
+
+The **escrow** is a Solana program. Its guarantees are enforced by the chain and
+hold even against an attacker who controls our infrastructure: bounded payouts,
+no double settlement, no early round closure, and a vault with no private key.
+Those are covered in detail in [Trust model](/trust-model).
+
+The **game** is an authoritative server, and that is where the real attack
+surface is. Everything the chain cannot see — who died, who ate what, what a
+score is worth — is decided there.
+
+## What the authoritative server does defend against
+
+Because the server owns the simulation and never trusts the client's version of
+events, the classic client-side cheats do not work. A modified client can ask for
+anything it likes; it does not get to assert its own position, speed, or score.
+Inputs are validated, not applied on faith.
+
+The entry path is hardened separately from the game: sign-in is domain-bound, so
+a signature harvested on a lookalike site does not authenticate against ours, and
+deposit signatures are consumed permanently and durably — a restart does not
+reopen a window for reusing one.
+
+There is also a minimum stake. It exists for balance reasons rather than
+security ones, but it closes the door on the cheapest form of griefing.
+
+## What it does not defend against
+
+<Warning>
+  **Bots that genuinely play well are not a solved problem, and we do not claim
+  they are.** An authoritative server stops *mechanical* cheating. It cannot tell
+  a very good player from a very good program, because at the network level there
+  is nothing to tell apart: both sign in properly, both stake real value, both
+  send plausible inputs.
+</Warning>
+
+Our position is that a bot which actually plays the game — risks its stake,
+hunts, dodges, and dies — is a legitimate participant. It pays the same fee as
+everyone else and its mistakes feed the map like anyone else's.
+
+What is not tolerated is abuse of the mechanics rather than skill at them:
+exploiting the rules to become effectively untouchable, coordinating multiple
+accounts against a single human, or feeding one account information it should not
+have. These are handled as market abuse would be — policed as behaviour, not
+banned as a category.
+
+Beyond that, the honest list of what remains open:
+
+- **Multi-account identity.** Nothing today makes one person one player. Wallets
+  are cheap to create.
+- **The server's word is final.** See [Trust model](/trust-model) — this is the
+  structural limitation of the whole design, not a bug to be patched.
+- **Single-signer settlement.** One key currently authorises payouts.
+
+## Before mainnet
+
+The devnet deployment is a testbed. Moving to real money requires work that has
+not started, and we would rather publish the list than imply it is already done.
+
+<Steps>
+  <Step title="Adversarial audit of the entire stack">
+    A dedicated red-team pass whose explicit goal is to **break this system**,
+    not to review it politely. Scope is deliberately everything, not just the
+    contract: the escrow program, the authoritative game server as a trusted
+    oracle, the full money path from deposit through settlement to payout, key
+    custody, replay protection, and the front end.
+
+    We are planning to run this as an adversarial evaluation using frontier
+    models, tasked with finding server-side exploits before anyone with worse
+    intentions does. The point of scheduling it *before* mainnet is that on
+    devnet a finding costs a fix, and on mainnet it costs players' money.
+  </Step>
+  <Step title="Key custody and multi-signature settlement">
+    Move the authority key out of a single machine into managed custody, and
+    require multiple signers for settlement, so that compromising one host is no
+    longer enough to redirect payouts.
+  </Step>
+  <Step title="On-chain verification of game outcomes">
+    Have the server attest to its results with a signature the program itself
+    verifies, so the escrow stops accepting any well-formed amount from a trusted
+    caller. This is the change that structurally reduces how much trust the
+    server holds.
+  </Step>
+</Steps>
+
+Mainnet is gated on this work, not on a date.
+
+## Reporting a vulnerability
+
+If you find a way to take value you are not owed, to make the server report a
+result it should not, or to reach anything on our infrastructure you should not
+be able to reach, we want to hear about it before anyone else does.
+
+<Note>
+  **A disclosure address is being set up and will be published here.** Until it
+  is, please do not post working exploit details publicly — reach out through the
+  contact channel listed on [nimboplay.dev](https://nimboplay.dev) and we will
+  take the conversation somewhere private.
+</Note>
+
+What we ask: give us a reasonable window to fix an issue before disclosing it,
+and do not test against other players' funds. What you can expect in return:
+we will not pursue anyone acting in good faith under those terms, and we will
+credit you if you want the credit.
+
+There is no bug bounty programme yet. Saying otherwise would be an easy promise
+to make and a bad one to break.

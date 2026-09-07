@@ -1,0 +1,152 @@
+---
+title: "Trust model"
+description: "The gameplay is off-chain and our server is a trusted oracle over real balances. Here is exactly what the Solana program guarantees anyway, and what it does not."
+---
+
+<Warning>
+  Nimbo Arena runs on **Solana devnet**, where SOL has no monetary value. This
+  page describes the design as it stands, so that the trade-off is understood
+  before it ever holds anything worth losing.
+</Warning>
+
+## Start with the uncomfortable part
+
+**The game does not run on Solana. It runs on our servers.**
+
+A real-time arcade game needs to resolve collisions dozens of times a second for
+every player at once. No blockchain can do that, so the arena is an authoritative
+game server: it owns the simulation, decides who died, decides what you ate, and
+decides what your score is worth when you extract.
+
+That makes our server a **trusted oracle over real balances**. It is the single
+most important thing to understand about this product, and we would rather state
+it plainly than let you discover it later.
+
+This is a genuine departure from how our lottery side-feature works. That one is
+*provably fair* — the critical state lives on-chain and anyone can verify the
+draw. The arena cannot make that claim, and does not.
+
+## What the chain guarantees regardless
+
+The Solana program never sees the game. It handles escrow, authorised settlement
+and replay protection — nothing else. But within that narrow scope its guarantees
+hold **even if our servers were completely compromised**, because they are
+enforced by the runtime rather than by our good behaviour.
+
+<AccordionGroup>
+  <Accordion title="We cannot pay out more than the vault holds" icon="scale-balanced">
+    Every settlement checks the amount against the vault's actual balance, minus
+    the rent-exempt floor, and fails if it exceeds it. An attacker holding our
+    keys could not drain more than players deposited, and could not manufacture
+    value that was never staked.
+
+    Each round has its **own** vault, and rooms are pinned to a single round for
+    their whole life. Value can move between players inside one vault, never
+    across two — so one round can never be made insolvent to pay another.
+  </Accordion>
+
+  <Accordion title="We cannot pay the same extraction twice" icon="copy">
+    Every settlement creates an `ExtractReceipt` account whose address is derived
+    from the round id and a nonce. Creation is an initialisation, so a second
+    attempt at the same nonce hits an account that already exists and the whole
+    transaction fails.
+
+    Replay protection is therefore a property of Solana's account model, not of
+    our bookkeeping. Our server cannot forget, and cannot be tricked into
+    double-paying by being restarted or run twice.
+  </Accordion>
+
+  <Accordion title="We cannot close a round early to freeze your payout" icon="lock">
+    Closing a round is refused until its end timestamp has actually passed. Not
+    even the authority key can bring that forward. A compromised server cannot
+    slam the door on extractions that are still owed.
+
+    In the other direction, settlements stay payable while a round is draining —
+    a legitimate extraction that lands just after the deadline still gets paid.
+  </Accordion>
+
+  <Accordion title="Nobody holds the vault's keys, because it has none" icon="key">
+    The vault is a program-derived address owned by the System Program. It has no
+    private key that could be stolen, and we are not its owner, so we cannot
+    debit it directly. Lamports leave it only through the arena program's own
+    instructions, with the program itself signing for the address.
+  </Accordion>
+
+  <Accordion title="The fee destination is fixed when the round opens" icon="receipt">
+    The treasury address and the fee rate are written into the round account at
+    creation and are read from it on every entry. They cannot be quietly changed
+    for a round that is already running and already holding player money.
+  </Accordion>
+</AccordionGroup>
+
+## What it does not guarantee
+
+Everything above bounds *how much* can leave the vault and *who* can be paid
+twice. None of it bounds **whether the number was right in the first place.**
+
+- **The server decides your score.** If it reported that you extracted less than
+  you had earned, or that you died when you did not, the chain would have no way
+  to know. Any amount within the vault's balance is a valid settlement as far as
+  the program is concerned.
+- **One key signs the payouts.** In the current design the game server *is* the
+  authority that signs settlements. Compromise that key and you compromise who
+  gets paid — bounded by the guarantees above, but real.
+- **Uptime and honesty are operational, not cryptographic.** You are trusting our
+  operations, not only our code.
+
+We are not aware of this being exploited, and the devnet deployment holds nothing
+of value. That is not the same as a proof, and we are not going to dress it up as
+one.
+
+## How to check us
+
+The program is deployed and every entry, settlement and round closure emits an
+event. You do not have to take our word for the numbers.
+
+| | |
+| --- | --- |
+| **Program** | `8qGdXYu3prvvvhCEfMnatdv5BAQyVL5NWsh7v5esEF2d` |
+| **Cluster** | Solana devnet |
+| **Round account** | seeds `["round", round_id]` |
+| **Vault** | seeds `["vault", round_id]` |
+| **Extraction receipt** | seeds `["extract", round_id, nonce]` |
+| **Food reserve** | seeds `["food_reserve"]` |
+
+Events emitted: `Joined` (round, player, stake, spawn value), `Extracted` (round,
+player, amount, nonce) and `RoundEnded` (round, amount swept).
+
+Useful things to verify yourself, on any explorer:
+
+- your own deposit and payout transactions, by wallet address;
+- that a round's vault balance is consistent with what went in and what was paid
+  out;
+- that when a round ends, whatever is left is swept into the food reserve rather
+  than to us — unclaimed value is recycled into future rounds' pellets, not
+  pocketed.
+
+## Where this is going
+
+The current arrangement is the honest MVP, not the destination. Before this
+system is ever pointed at real money, the trust concentrated in our server has to
+be broken up:
+
+<Steps>
+  <Step title="Adversarial audit">
+    A full red-team pass over the whole stack — escrow program, authoritative
+    server, the deposit and settlement path, key custody — before mainnet.
+    See [Security](/security).
+  </Step>
+  <Step title="Key custody and multisig">
+    Move the authority key into managed custody and put multiple signers behind
+    settlement, so that a single compromised machine is no longer sufficient.
+  </Step>
+  <Step title="Signed game outcomes">
+    Have the server sign its results and verify those signatures on-chain, so the
+    program stops accepting any well-formed amount and starts checking an
+    attestation instead. This is the change that would genuinely reduce how much
+    you have to trust us.
+  </Step>
+</Steps>
+
+None of these are done. They are listed here so that the gap between what exists
+today and what mainnet would require is visible rather than implied.
