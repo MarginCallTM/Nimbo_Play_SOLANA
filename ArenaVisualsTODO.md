@@ -426,22 +426,36 @@ et ils suffisent chez slither.io — ce ticket est **abandonné**, pas reporté.
 
 # ORDRE D'EXÉCUTION
 
-| Ordre | Ticket | Effet ressenti | Effort | Dépendance nouvelle |
-|---|---|---|---|---|
-| 1 | AV.0 instrumentation | — | très faible | non |
-| 2 | AV.1 fond hexagonal | énorme | faible | non |
-| 3 | AV.2 halos additifs | énorme | faible | non |
-| 4 | AV.3 segment ombré | fort | faible | non |
-| 5 | AV.4 yeux | fort | faible | non |
-| 6 | AV.5 peaux à bandes | moyen | très faible | non |
-| 7 | AV.6 vignette | moyen | faible | non |
-| 8 | AV.7 glow de boost | fort | moyen | non |
-| 9 | AV.8 emphase de la mort | moyen | faible | non |
-| — | AV.9 HUD/menu | ? | ? | **à cadrer** |
-| — | AV.10 bloom | raffinement | moyen | **oui — conditionnel** |
+**Révisé le 2026-09-08**, après la suppression du glow (AV.3h) : AV.7 et
+AV.8 s'appuyaient sur la texture de halo qui n'existe plus, et AV.10 perd
+son objet.
 
-AV.1 → AV.3 sont **indépendants les uns des autres** et peuvent être
-commités séparément. AV.7 et AV.8 dépendent de la texture de halo d'AV.2.
+| Ordre | Ticket | Effet ressenti | Effort | Statut |
+|---|---|---|---|---|
+| ✅ | AV.0 instrumentation | — | — | livré `a54b438` (⚠ les 3 chiffres FPS de référence ne sont TOUJOURS pas relevés) |
+| ✅ | AV.1 fond hexagonal | énorme | — | livré, puis refondu AV.3c/3e |
+| ⛔ | AV.2 halos additifs | — | — | livré `0ed9fdf`, **RETIRÉ** `24e8b7c` — voir AV.3h |
+| ✅ | AV.3 segment ombré | fort | — | livré, corrigé en cylindre AV.3b |
+| **1** | **AV.4 yeux** | **fort** | faible | **PROCHAIN** |
+| 2 | AV.5 peaux à bandes | moyen | très faible | ouvre le format des skins NFT |
+| 3 | AV.3h bouton B → vraie préférence | moyen | faible | bloqué : choix du 3ᵉ style par le user |
+| 4 | AV.6 vignette | moyen | faible | ⚠ effet plein écran — même prudence qu'AV.2 |
+| 5 | AV.8 emphase de la mort | moyen | faible | **à repenser sans halo** (pop d'échelle + onde de choc) |
+| 6 | AV.7 emphase du boost | fort | moyen | **à recalculer** — voir ci-dessous |
+| — | AV.9 HUD/menu | ? | ? | **bloqué : arbitrage user sur le périmètre** |
+| ⛔ | AV.10 bloom | — | — | **ABANDONNÉ**, pas reporté |
+
+**AV.7 n'est pas mort, il est à re-chiffrer.** La leçon d'AV.3h est que
+c'est la **couverture totale** (nombre × aire) qui décide, pas l'aspect
+d'un effet isolé. Or un glow de boost concerne 1 à 3 serpents à la fois,
+contre 300 pastilles : l'arithmétique est sans commune mesure et l'effet
+est probablement parfaitement viable. **Calculer la couverture AVANT
+d'écrire une ligne** — c'est exactement l'étape qui a manqué la première
+fois.
+
+**AV.10 est abandonné, et c'est une conclusion, pas un renoncement.** Le
+bloom ajoute de la lumière sur tout l'écran. On vient de mesurer que c'est
+précisément ce que ce jeu ne supporte pas.
 
 ---
 
@@ -711,6 +725,71 @@ différence du champ de vision, AF.3bis).
    fatiguent) — les trois gardent la référence de mouvement.
 4. À terme : un menu de réglages. Une touche globale à une lettre est une
    ressource rare quand le jeu grandit.
+
+## AV.4 — les yeux (livré 2026-09-08)
+
+Quatre sprites par serpent, enfants de `root` : ils héritent donc de
+l'alpha (fondu graced/offline) et meurent avec lui, sans code de plus.
+
+**Texture PLATE et non celle du corps** : le dégradé cylindrique d'AV.3b
+aurait posé une bande claire horizontale en travers de chaque œil — un
+reflet mensonger sur une sphère. La référence n'a aucun ombrage sur ses
+yeux. Même taille logique que `circleTexture`, donc
+`scale = r / SNAKE_RADIUS` continue de marcher partout.
+
+**Proportions, toutes en fractions du rayon du serpent** (donc elles
+suivent la croissance gratuitement), et vérifiées numériquement :
+- centre de l'œil à `0.581 r` du centre de la tête, bord extérieur à
+  `1.001 r` → les yeux affleurent exactement la silhouette, comme dans la
+  référence ;
+- pupille : rayon `0.193 r`, débattement `0.168 r` → bord au plus loin
+  `0.361 r` contre un œil de `0.420 r`, soit **14 % de marge : la pupille
+  ne peut jamais déborder de l'œil**, à aucune taille.
+
+**RÈGLE D'INFORMATION — la seule vraie décision du ticket.** Seul le
+joueur local transmet `lookAngle` (= `input.angle`, la valeur même envoyée
+au serveur : les yeux ne peuvent donc pas raconter une intention
+différente de celle qui est jouée). **Les adversaires n'en reçoivent
+jamais** : afficher leur curseur annoncerait leur virage AVANT qu'ils le
+prennent, soit une information que le joueur ne pouvait pas obtenir —
+exactement ce qu'A1.8 et AF.3bis interdisent. Leurs pupilles suivent leur
+**cap visible**, qui ne révèle rien de neuf.
+
+Effet de bord recherché : chez le joueur local, visée et cap diffèrent
+pendant un virage (la visée précède le corps), et c'est ce décalage qui
+rend les yeux expressifs — ils regardent où tu braques avant que le
+serpent y arrive.
+
+## AV.4b — le cap instable (corrigé 2026-09-08)
+
+Rapporté par le user comme « les yeux des adversaires buggent », attribué
+aux bots qui n'ont pas de souris. **Hypothèse fausse, et la corriger
+changeait la priorité** : la souris ne concerne que le joueur local ; pour
+tout le monde le regard venait de `atan2(tête − body[0])`. Le défaut
+frappait donc **aussi un adversaire humain**, en partie payante.
+
+**Deux modes de panne, tous deux fréquents en jeu réel :**
+1. `updateBody` (`session.ts:422`) sème le corps **au point de la tête**.
+   Un serpent qui entre dans l'AoI a donc `body[0] === tête` →
+   `atan2(0,0) = 0` → yeux plein Est pendant quelques frames.
+2. Quand la position d'un distant **stagne** (paquet en retard,
+   dead reckoning à sec), `body[0]` reconverge **sur** la tête. Le vecteur
+   tend vers zéro et son angle n'est plus que du bruit → pupilles en
+   vrille.
+
+**Correctif :** parcourir le corps jusqu'au premier tracer situé à plus de
+`SNAKE_SPACING * 0.25` de la tête (c'est l'espacement, pas le rayon, qui
+gouverne la séparation), sinon **conserver le dernier cap valide** stocké
+dans le `SnakeView`. Les yeux restent **masqués** tant qu'aucun cap n'est
+digne de confiance : deux frames sans yeux ne se voient pas, deux frames
+d'yeux tournés dans la mauvaise direction se lisent comme un bug — c'est
+d'ailleurs exactement ainsi que ça a été rapporté. Le joueur local a un
+repli utile (`lookAngle`), donc son serpent ne spawn jamais sans yeux.
+
+**Bénéfice secondaire :** `head.rotation` souffrait du même calcul depuis
+AV.3b. Invisible jusqu'ici — un dégradé sur un disque ne trahit pas une
+rotation instable — mais deux yeux le hurlent. Leçon générale : **ajouter
+un repère visuel révèle les défauts de tout ce à quoi il est attaché.**
 
 ## AV.1 — la note à ne pas redécouvrir
 

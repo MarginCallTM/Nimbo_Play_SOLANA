@@ -21,6 +21,7 @@ import {
     FOOD_RADIUS,
     FOOD_VALUE,
     SNAKE_RADIUS,
+    SNAKE_SPACING,
     REFERENCE_VIEW_CORNER,
     REFERENCE_VIEW_H,
     REFERENCE_VIEW_W,
@@ -252,6 +253,42 @@ function makeSegmentTexture(): Texture {
     });
 }
 
+// --- AV.4 — the eyes --------------------------------------------------
+//
+// The cheapest character in the whole file. Four sprites turn a circle
+// into a creature, and it is the first thing anyone noticed on the
+// reference captures.
+//
+// Proportions read off those captures, all as fractions of the snake's
+// own radius, so they scale with growth for free.
+const EYE_RADIUS = 0.42;   // sclera radius
+const EYE_SPREAD = 0.52;   // sideways offset from the heading axis
+const EYE_FORWARD = 0.26;  // pushed towards the snout
+const PUPIL_RADIUS = 0.46; // as a fraction of the sclera
+const PUPIL_TRAVEL = 0.40; // how far the pupil rides off centre
+const EYE_WHITE = 0xf4f7fb;
+const EYE_PUPIL = 0x10131a; // the floor's near-black, not pure black
+
+// A FLAT disc, unlike the body's shaded one: the reference's eyes carry
+// no shading at all, and the cylinder gradient would have laid a
+// horizontal bright band across them — a lying highlight on a sphere.
+// Same logical size as circleTexture, so `scale = r / SNAKE_RADIUS`
+// keeps working unchanged everywhere.
+function makeDiscTexture(): Texture {
+    const r = SNAKE_RADIUS * SEGMENT_SUPERSAMPLE;
+    const canvas = document.createElement("canvas");
+    canvas.width = r * 2;
+    canvas.height = r * 2;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(r, r, r, 0, Math.PI * 2);
+    ctx.fill();
+    return new Texture({
+        source: new CanvasSource({ resource: canvas, resolution: SEGMENT_SUPERSAMPLE }),
+    });
+}
+
 // Vertices of one flat-top hexagon, as a flat [x0,y0,x1,y1,...] list.
 // Angle 0 puts a vertex at the right, which lands flat edges on the top
 // and the bottom — the reference's orientation.
@@ -397,6 +434,15 @@ interface SnakeView {
     root: Container;
     body: Container;
     head: Sprite;
+    // AV.4 — index 0 is the left eye, 1 the right. Children of `root`, so
+    // they inherit the snake's alpha (graced/offline fade) and die with it.
+    sclerae: [Sprite, Sprite];
+    pupils: [Sprite, Sprite];
+    // AV.4b — last heading that could be trusted, and whether one ever
+    // was. Held across frames so a stalled or freshly-seeded body cannot
+    // spin the eyes; see the derivation in drawSnake.
+    heading: number;
+    headingValid: boolean;
     label: Text;
     colors: SnakeColors;
 }
@@ -411,6 +457,7 @@ export class GameView {
     private extractGfx = new Graphics(); // the zone, redrawn per frame
     private extractLabel!: Text;
     private circleTexture!: Texture;   // shared by every segment & pellet
+    private discTexture!: Texture;     // flat disc: sclerae and pupils
     private foodSprites = new Map<string, Sprite>();
     private snakes = new Map<string, SnakeView>();
 
@@ -601,6 +648,7 @@ export class GameView {
         // segments, heads AND pellets, which now read as glossy beads for
         // free (the reference's food is lit the same way)
         view.circleTexture = makeSegmentTexture();
+        view.discTexture = makeDiscTexture();
 
         app.stage.addChild(view.minimap);
         return view;
@@ -662,9 +710,6 @@ export class GameView {
 
     // --- food: driven by the Colyseus add/remove callbacks ---------
     addFood(id: string, x: number, y: number, value: number) {
-        // Radius and tint are decided ONCE, then serve both the pellet
-        // and its halo. Computing them twice is how a halo ends up
-        // lighting a pellet of a different colour or size.
         const isOrb = value > FOOD_VALUE;
         // dropped orb: golden, area proportional to value — an orb worth
         // 5 pellets visibly IS 5 pellets
@@ -701,6 +746,17 @@ export class GameView {
         radius: number,
         alpha: number,
         labelText: string,
+        // AV.4 — where THIS snake's pupils look, in radians. Passed only
+        // for the local player, whose aim we legitimately know: it is
+        // `input.angle`, the very value sent to the server, so the eyes
+        // cannot tell a different story from the one being played.
+        //
+        // Left undefined for everyone else, and that is a RULE, not an
+        // omission. An opponent's cursor would announce their turn before
+        // they take it — information the player could not otherwise have,
+        // which is exactly what A1.8 and AF.3bis exist to prevent. Their
+        // pupils follow their VISIBLE heading, which reveals nothing new.
+        lookAngle?: number,
     ) {
         let view = this.snakes.get(id);
         if (!view) {
@@ -710,6 +766,16 @@ export class GameView {
             head.anchor.set(0.5);
             root.addChild(bodyC);
             root.addChild(head); // added last -> drawn on top of the body
+            const mkEye = (tint: number) => {
+                const s = new Sprite(this.discTexture);
+                s.anchor.set(0.5);
+                s.tint = tint;
+                root.addChild(s);
+                return s;
+            };
+            // sclerae first, then pupils, so a pupil always sits on top
+            const sclerae: [Sprite, Sprite] = [mkEye(EYE_WHITE), mkEye(EYE_WHITE)];
+            const pupils: [Sprite, Sprite] = [mkEye(EYE_PUPIL), mkEye(EYE_PUPIL)];
             const label = new Text({
                 text: "",
                 style: { fill: "#e2e8f0", fontSize: 13, fontFamily: "monospace" },
@@ -717,7 +783,11 @@ export class GameView {
             label.anchor.set(0.5, 1);
             root.addChild(label);
             this.snakeLayer.addChild(root);
-            view = { root, body: bodyC, head, label, colors: { ...colors } };
+            view = {
+                root, body: bodyC, head, sclerae, pupils, label,
+                heading: 0, headingValid: false,
+                colors: { ...colors },
+            };
             this.snakes.set(id, view);
         }
         // re-tint only when colors actually change (offline toggle)
@@ -757,10 +827,77 @@ export class GameView {
         }
         view.head.position.set(headX, headY);
         view.head.scale.set(scale);
-        if (body.length > 0) {
-            view.head.rotation = Math.atan2(headY - body[0].y, headX - body[0].x);
+
+        // AV.4b — a STABLE heading. Reading it off body[0] alone breaks in
+        // two situations that both happen constantly in a real game:
+        //
+        //   1. A snake entering the AoI has its whole body seeded AT the
+        //      head (session.ts updateBody), so body[0] IS the head and
+        //      atan2(0, 0) returns 0 — every newcomer's eyes snapped due
+        //      East for a few frames.
+        //   2. A remote snake whose position stalls (a late packet, dead
+        //      reckoning out of samples) has body[0] converge back ONTO
+        //      the head. The vector shrinks to nothing and its angle
+        //      becomes pure noise, so the pupils spin.
+        //
+        // Neither is about bots: a HUMAN opponent with a late packet shows
+        // exactly the same thing, in a paid round.
+        //
+        // Fix: walk back along the body for the first tracer far enough to
+        // carry a meaningful direction, and if none qualifies, KEEP THE
+        // LAST GOOD HEADING rather than recompute noise. Threshold is a
+        // fraction of SNAKE_SPACING because that — not the radius — is
+        // what governs how far apart tracers settle.
+        const minSep = SNAKE_SPACING * 0.25;
+        for (const t of body) {
+            const dx = headX - t.x;
+            const dy = headY - t.y;
+            if (dx * dx + dy * dy >= minSep * minSep) {
+                view.heading = Math.atan2(dy, dx);
+                view.headingValid = true;
+                break;
+            }
         }
+        // The local player is the one case with a meaningful fallback: an
+        // aim exists before the body has unfolded, so our own snake never
+        // spawns eyeless.
+        if (!view.headingValid && lookAngle !== undefined) {
+            view.heading = lookAngle;
+            view.headingValid = true;
+        }
+        const heading = view.heading;
+        view.head.rotation = heading;
         view.head.tint = colors.head;
+
+        // AV.4 — the eyes are anchored to the BODY's heading; only the
+        // pupils swivel, towards `lookAngle` when we have it. For the
+        // local player the two differ mid-turn — the aim leads the
+        // snake — and that gap is exactly what makes them expressive:
+        // the eyes look where you are steering before the body arrives.
+        const cos = Math.cos(heading);
+        const sin = Math.sin(heading);
+        const gaze = lookAngle ?? heading;
+        const gx = Math.cos(gaze);
+        const gy = Math.sin(gaze);
+        const eyeR = radius * EYE_RADIUS;
+        for (let i = 0; i < 2; i++) {
+            const side = i === 0 ? -1 : 1;
+            // Hidden until a heading is trustworthy. A two-frame absence
+            // reads as nothing at all; eyes pointing the wrong way read as
+            // a bug — which is precisely how this was reported.
+            view.sclerae[i].visible = view.headingValid;
+            view.pupils[i].visible = view.headingValid;
+            // forward along the heading, then sideways along its normal
+            const ex = headX + cos * radius * EYE_FORWARD - sin * side * radius * EYE_SPREAD;
+            const ey = headY + sin * radius * EYE_FORWARD + cos * side * radius * EYE_SPREAD;
+            const sclera = view.sclerae[i];
+            sclera.position.set(ex, ey);
+            sclera.scale.set(eyeR / SNAKE_RADIUS);
+            const pupil = view.pupils[i];
+            pupil.position.set(ex + gx * eyeR * PUPIL_TRAVEL, ey + gy * eyeR * PUPIL_TRAVEL);
+            pupil.scale.set((eyeR * PUPIL_RADIUS) / SNAKE_RADIUS);
+        }
+
         view.root.alpha = alpha;
         view.label.position.set(headX, headY - radius - 8);
         if (view.label.text !== labelText) view.label.text = labelText;

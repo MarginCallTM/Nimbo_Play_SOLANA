@@ -742,7 +742,22 @@ export async function startGameSession(
             const alpha = p.graced || offline ? 0.4 : 1;
             const label =
                 `${p.name} ◎${(p.score / SCORE_PER_SOL).toFixed(4)}${offline ? " (offline)" : ""}`;
-            view.drawSnake(id, drawn, px, py, body, dims.radius, alpha, label);
+            // AV.4 — the aim goes to the renderer ONLY for our own snake.
+            // `input.angle` is the same value we send the server, so the
+            // pupils cannot show an intent different from the one played.
+            // Opponents get nothing: their cursor would betray a turn
+            // before they took it (A1.8).
+            view.drawSnake(
+                id,
+                drawn,
+                px,
+                py,
+                body,
+                dims.radius,
+                alpha,
+                label,
+                id === myId ? input.angle : undefined,
+            );
 
             if (isMe) {
                 const rate = Math.min(CAMERA_RATE * dtFrames, 1);
