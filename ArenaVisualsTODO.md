@@ -490,9 +490,227 @@ et surtout ce qui a coûté du temps et ne doit pas être redécouvert)*
 |---|---|---|---|---|
 | 2026-09-08 | AV.0 | `a54b438` | — | `ticker.FPS` de Pixi ne rapporte QUE la dernière frame (`1000/elapsedMS`) : le lire une fois par seconde échantillonne une frame arbitraire et affiche du bruit. On compte les frames sur une fenêtre de 500 ms. |
 | 2026-09-08 | AV.1 | `a54b438` | — | Voir la note ci-dessous sur la période de tuile — c'est le seul vrai piège du ticket. |
+| 2026-09-08 | AV.3 | *(non commité)* | à relever | Texture de segment ombrée. **`resolution` est la clé du ticket** : la source porte 4× les pixels tout en DÉCLARANT la même taille logique (24×24), donc `scale = radius / SNAKE_RADIUS` reste vrai partout et aucun site d'appel ne change (R1 respecté sans effort). Suréchantillonner était nécessaire : le rayon monte à ×3 à score 10 000 et ×5,5 à 50 000 — un aplat survivait à ça, un dégradé non. **Dégradé radial à DEUX cercles, cœur décalé en haut-à-gauche** : c'est le décalage qui fait le volume, un dégradé centré lit comme un anneau plat. Niveaux en **gris** parce que `tint` MULTIPLIE — 1.0 laisse la couleur intacte, rien ne peut décaler une teinte. ⚠ Effet de bord attendu : niveau moyen ~0,75 donc serpents et pastilles ~25 % plus sombres qu'avant. |
 | 2026-09-08 | AV.2b | *(non commité)* | à relever | Clignotement des halos + orbes de cadavre 30 % plus lumineux (demande user). **Phase ET vitesse randomisées par pastille** : sur une horloge partagée sans décalage, tous les halos respirent à l'unisson — ça se lit comme un bug de stroboscope, pas comme un champ vivant. Désynchronisé, le même effet devient du scintillement d'ambiance. **Seul le halo respire, jamais la pastille** (R1 : la vérité lisible du jeu ne s'anime pas pour décorer). Horloge murale (`performance.now()`) et non accumulateur : rien ne dérive, et un onglet en arrière-plan reprend à la bonne phase au lieu de rejouer son absence. Le rapport 30 % tient au creux comme au sommet du cycle (les deux alphas oscillent proportionnellement). |
 | 2026-09-08 | AV.2 | *(non commité)* | à relever | Halo = sprite **frère** de la pastille dans un calque dédié, jamais son enfant : dans `foodLayer` la séquence deviendrait pastille/halo/pastille/halo, et le batcher ne fusionne que des sprites **consécutifs** partageant texture ET mode de fusion. Un calque chacun = 2 appels de dessin quel que soit le nombre de pastilles. — Texture fabriquée sur un **canvas 2D** (`CanvasSource`) et non avec `FillGradient` : contrôle exact de l'alpha à chaque palier. La **courbe** est le sujet : une rampe linéaire 1→0 lit comme un cône plat, pas comme de la lumière ; il faut une décroissance de type inverse-carré (cœur vif, chute rapide, longue jupe faible). |
 | 2026-09-08 | AV.1b | `a54b438` | — | Overlays de debug (fantôme serveur vert + bulle AoI) **éteints pour les joueurs** (décision user : le fantôme vert donne une impression de latence). **Mis derrière `?debug` dans l'URL, PAS supprimés** — c'est l'instrument de diagnostic d'A4.14. Retirer la mesure pour masquer le symptôme transforme un bug connu en bug inconnu. Param d'URL et non drapeau de build : activable sur le site EN LIGNE sans rebuild. Aucun risque d'avantage (A1.8) : n'affiche que notre propre position serveur et notre propre rayon d'AoI, jamais un adversaire. |
+
+## AV.3b — LA COMPARAISON MESURÉE (2026-09-08) — à ne pas refaire
+
+Le user a trouvé notre rendu « pas propre » sans savoir pourquoi, et a
+supposé une histoire de couleurs pâles. Plutôt que de trancher à l'œil, les
+deux captures (la nôtre + slither) ont été **échantillonnées pixel par
+pixel** (`sips -s format bmp` puis parsing BMP en Python pur — la machine
+n'a ni PIL ni ImageMagick, cf. [[front-redesign]]).
+
+| | Nous | slither.io |
+|---|---|---|
+| Saturation du corps (médiane) | **0,79** | **0,50** |
+| Saturation, étendue | 0,38 → 0,80 | **0,49 → 0,51** |
+| Valeur du corps (médiane) | 0,52 | 0,63 |
+| Valeur, pic | 0,74 | 0,87 |
+| Saturation du fond | **0,39** | **0,21** |
+| Valeur du fond | 0,200 | 0,165 |
+| Contraste corps/fond | ×2,6 | ×3,8 |
+| Période du motif hexagonal | 288 px | 183 px |
+
+**Les trois enseignements, par ordre d'importance :**
+
+1. **Le « chapelet de perles » ne venait PAS de la silhouette.** Calculé :
+   avec `r = 12` et `SNAKE_SPACING = 10`, la bosse du contour vaut
+   `12 − √(144−25) = 1,09 px` sur 24 de large, soit **4,5 %** — invisible.
+   Le coupable était le **dégradé RADIAL d'AV.3** (bord à 0,46) : chaque
+   disque peignait son liseré sombre par-dessus le cœur clair du précédent,
+   soit une arche sombre tous les 10 px. **Corrigé en changeant la NATURE
+   du dégradé, pas son intensité** : linéaire, perpendiculaire à la marche
+   (rotation du sprite sur le cap local). Le long du corps la valeur devient
+   constante → aucun arc interne possible ; en travers le contraste reste
+   fort → un vrai cylindre. Signature confirmée par la mesure : chez slither
+   H et S sont **verrouillés** pendant que V double.
+2. **Notre fond était BLEU** (S = 0,39), le leur est une ardoise neutre
+   (S = 0,21). Un bleu saturé sous un serpent bleu saturé s'empâte. Passer
+   au neutre fait monter le contraste corps/fond de ×2,6 à ×3,8 **sans rien
+   éclaircir**. Différence invisible tant qu'on ne la mesure pas.
+3. **La dispersion de saturation trahit un défaut de forme.** `tint` étant
+   une multiplication, S devrait être CONSTANT sur le corps. Nos 0,38 → 0,80
+   étaient des pixels de bord : trop de périmètre, donc trop de contour —
+   confirmation indépendante du point 1.
+
+⚠ Mesure non appliquée, laissée au user : nos hexagones sont **57 % plus
+grands** que la référence (`HEX_R_WORLD = 48`, il faudrait ~31). Contredit
+son réglage du même jour (+20 %), donc c'est son arbitrage, pas le nôtre.
+
+## AV.3d — LE FLOU : deux défauts Pixi jamais réglés
+
+Symptôme rapporté par le user : « un effet de blur produit par le sol
+lorsqu'on joue », **invisible sur un arrêt sur image**. Ce dernier détail
+est le diagnostic : un flou constant se voit sur une image fixe ; un flou
+qui n'apparaît qu'en mouvement est du **crénelage de minification**.
+
+**Cause 1 — `resolution` n'était jamais fixé.**
+`AbstractRenderer.defaultOptions.resolution = 1`. Sur tout écran HiDPI
+(n'importe quel Mac récent, `devicePixelRatio = 2`), on rend à la moitié
+des pixels réels et le compositeur agrandit ×2. **Toute l'image est
+ramollie, uniformément.** Correctif : `resolution: window.devicePixelRatio`
++ **`autoDensity: true`** (obligatoire : sans lui la taille CSS du canvas
+suit le backing store et le jeu s'affiche ×2 trop grand).
+
+**Cause 2 — la tuile était minifiée sans mipmap.**
+362 texels pour 144 unités monde = 2,51 texels/unité, contre 1,3 pixel
+écran/unité → **minification ×1,93**. Or `TextureSource.defaultOptions`
+porte `mipLevelCount: 1` : aucun mipmap, donc un texel sur quatre est
+échantillonné. Immobile ça tient, en mouvement ça rampe.
+
+**Les deux se corrigent d'un coup** : rendre à la résolution du device
+supprime l'agrandissement ET ramène la tuile à ~1 texel par pixel device,
+où il n'y a plus rien à créneler.
+
+⚠ **Vérifié, pas supposé** : `app.screen` est documenté **en pixels CSS**,
+indépendant de `resolution` → `viewScale()` et le champ de vision sont
+inchangés au bit près. C'était la condition bloquante : le FOV est un
+invariant d'ÉQUITÉ (AF.3bis), pas un réglage cosmétique.
+
+⚠ **Coût** : ×4 de travail fragment sur un écran ×2. Si le compteur AV.0
+décroche des 60 fps, plafonner à 1.5 — **jamais revenir à 1**.
+
+**Cause 3 (mineure, mon erreur)** : `shadowBlur` était à `0.28r`, soit
+~15 px écran de dégradé doux autour de CHAQUE cellule — le sol n'avait
+plus d'arêtes du tout. Ramené à `0.09r`. L'ombre de la référence est une
+lèvre sombre fine, pas un halo : elle dit « en relief », pas « flou ».
+
+## AV.3e — LE SOL N'A PAS CRÉÉ LE PROBLÈME, IL L'A RÉVÉLÉ
+
+Le user rapporte, après AV.3d, un flou résiduel **et une sensation de
+nausée**. Ce second mot déplace le diagnostic : une nausée en jeu vient du
+**mouvement de caméra**, pas d'une texture molle.
+
+**Deux causes distinctes, à ne pas confondre.**
+
+**(a) Le flou résiduel — rééchantillonnage sous-pixel.** `camera()` posait
+`world.position` à une valeur FRACTIONNAIRE. Le monde tombe donc sur une
+phase sous-pixel différente à chaque frame et toutes les textures sont
+rééchantillonnées 60 fois par seconde. Immobile : net. En mouvement : ça
+NAGE. Ce n'est pas un réglage de filtrage, c'est l'offset qui ne tient
+jamais en place. **Correctif : arrondir la translation aux pixels DEVICE**
+(pas CSS — après AV.3d on rend à `devicePixelRatio`, arrondir en CSS
+laisserait un demi-pixel device de tremblement). Coût : un demi-pixel CSS
+de placement caméra, imperceptible.
+
+**(b) LA VRAIE CAUSE DE FOND — la caméra dérive toute seule. NON CORRIGÉE.**
+`CAMERA_RATE = 0.15` (`session.ts:117`) = lissage exponentiel, constante de
+temps ~110 ms : la caméra traîne en permanence derrière la tête. Et
+`session.ts:362` **resynchronise `predicted.x/y` sur la vérité serveur** —
+or **A4.14 est OUVERT** : divergence médiane 25 px, max mesuré 218 px. À
+chaque correction la cible saute, puis la caméra glisse ~110 ms. **Le décor
+défile sans que le joueur ait rien demandé** : flux visuel découplé de
+l'input = nausée, par définition.
+
+**Pourquoi ça n'existait pas avant AV.1 :** le sol était un aplat + 900
+points épars. Une glissade de caméra y était **invisible**. Sur une trame
+régulière et contrastée, chaque micro-glissade devient lisible. Le motif
+n'a rien cassé — il a rendu visible un défaut déjà là.
+
+**Pourquoi slither ne l'a pas :** pas de réconciliation qui saute comme la
+nôtre, et une caméra bien plus serrée.
+
+**Atténuation appliquée (demande user)** : contraste du sol −20 %
+(amplitude TOP↔GAP 17,8 → 14,2 en luminance, milieu ancré). Ça ne supprime
+pas le mouvement, ça baisse le volume auquel le sol le rapporte.
+**Mitigation, pas remède.**
+
+**À TESTER ENSUITE, dans cet ordre :**
+1. `CAMERA_RATE` 0.15 → 0.35 (caméra plus serrée, moins de glissade).
+   Une ligne, réversible. ⚠ Change le FEELING de jeu → D85, essai à
+   valider par le user, jamais imposé.
+2. Si ça suffit, **le vrai correctif reste A4.14** (supprimer la
+   divergence à la source). Régler la caméra ne fait que masquer un
+   netcode qui saute.
+
+## AV.3g — LA CAUSE RÉELLE : voile lumineux, pas flou. RÉSOLU.
+
+**Trouvée par le user**, avec les interrupteurs B/G/P d'AV.3f : couper le
+calque de halos (`G`) rend l'écran sain ; rien d'autre n'y change quoi que
+ce soit. Ni le sol, ni la caméra.
+
+**Ce n'était donc PAS du flou. C'était du VEILING GLARE.** La surface d'un
+halo va comme le **carré** du rayon, et à `GLOW_SPREAD = 8` l'arithmétique
+est accablante :
+
+| réglage | 300 pastilles | 450 pastilles |
+|---|---|---|
+| spread 8 | **123 % de l'écran** | **184 %** |
+| spread 4 | 31 % | 46 % |
+| **spread 3** | **17 %** | 26 % |
+
+L'écran entier était tapissé de lumière additive, plus d'une fois. La
+lumière additive relève le niveau de noir **partout**, le contraste
+s'effondre, et l'œil lit ça comme une image hors focus. AV.2b a ensuite
+fait **respirer** ce tapis : c'est ce qui a transformé une image laide en
+image nauséeuse.
+
+**Le 3 est MESURÉ.** Profils radiaux de pastilles isolées dans la
+référence — excès de luminance 100 / 91 / 71 / 48 / 22 / 1 % à 0, 2, 4, 6,
+8, 10 px, sur un cœur de 2-4 px : leur halo meurt à **2 à 3 fois** le rayon
+de la pastille. Les larges nappes colorées de leurs captures ne sont pas de
+gros halos, ce sont **beaucoup de petits qui s'additionnent** là où les
+pastilles s'agglutinent — comportement offert par le blending additif.
+
+**Trois leçons de méthode, à ne pas perdre :**
+1. **Mes trois diagnostics précédents étaient faux** (tuile trop molle,
+   `resolution`, dérive caméra). Ils ont produit de vraies améliorations —
+   `resolution: devicePixelRatio` et le snapping pixel restent des
+   correctifs justes — mais **aucun n'était la cause**. Empiler des
+   correctifs plausibles n'est pas un diagnostic.
+2. **L'interrupteur a tranché en une minute** ce que trois cycles de
+   raisonnement n'avaient pas trouvé. Face à un symptôme visuel diffus,
+   construire l'A/B AVANT de corriger.
+3. Le détail qui aurait dû mettre sur la voie dès le début : « ce n'est pas
+   flagrant sur un arrêt sur image ». Un voile additif est *constant*, mais
+   son caractère insupportable vient de la **pulsation** — donc invisible
+   sur une image fixe. J'ai lu ce mot comme « crénelage de minification »
+   et je m'y suis tenu trop longtemps.
+
+## AV.3h — GLOW SUPPRIMÉ, et ce qu'il reste à faire du bouton B
+
+**Décision user (2026-09-08), après tests et avis extérieurs d'amis : le
+glow des pastilles est RETIRÉ**, pas seulement réduit. Réduit à 3 il était
+tolérable ; sans lui le confort est meilleur, et c'est le critère qui prime
+(D85 : l'expérience de jeu est le standard — « ça ressemble à la
+référence » ne bat pas « on peut y jouer une heure »).
+
+Tout le code du glow est supprimé : `makeGlowTexture`, `GlowView`,
+`glowLayer`, `glowTexture`, `glowSprites`, `pulseGlows`, les constantes
+`GLOW_*` et `PULSE_*`, les bascules `G` et `P`, et les entrées glow de
+`addFood` / `removeFood` / `clear()` / `stats()`. **Une pierre tombale est
+laissée dans `render.ts`** (section AV.2) avec la raison chiffrée : l'idée
+est assez séduisante pour que quelqu'un veuille la reprendre, et la
+contrainte à respecter alors est la **COUVERTURE TOTALE** (nombre × aire),
+jamais l'aspect d'un halo isolé — c'est ce chiffre-là qui rendait le jeu
+injouable, et il est invisible quand on inspecte un halo à la fois.
+
+Fond conservé tel quel (`tiles`). Bascule `B` conservée.
+
+### Le bouton B doit devenir une VRAIE préférence — pas encore fait
+
+Avis donné au user, qu'il a suivi sur le principe :
+
+**Pour :** l'épisode prouve que le confort visuel varie d'une personne à
+l'autre ; le sol est purement décoratif ; **aucun enjeu d'équité** (à la
+différence du champ de vision, AF.3bis).
+
+**Ce qui manque avant que ce soit une fonctionnalité :**
+1. **Persistance `localStorage`** — sinon le choix est perdu au rechargement
+   et c'est une nuisance, pas un réglage.
+2. **Retirer le bandeau de debug**, le remplacer par un retour discret.
+3. **NE PAS garder `none` dans les trois choix proposés au joueur.** Tout
+   AV.1 repose sur le constat qu'une trame RÉGULIÈRE est ce qui rend la
+   vitesse lisible (les 900 points aléatoires n'y arrivaient pas).
+   Proposer « aucun motif » laisse un joueur dégrader sa propre perception
+   de vitesse sans le savoir. **Triplet proposé : `relief` / `plat` /
+   `discret`** (même trame, contraste très réduit, pour ceux que les motifs
+   fatiguent) — les trois gardent la référence de mouvement.
+4. À terme : un menu de réglages. Une touche globale à une lettre est une
+   ressource rare quand le jeu grandit.
 
 ## AV.1 — la note à ne pas redécouvrir
 
