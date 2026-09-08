@@ -37,18 +37,18 @@ export function Footer() {
   return (
     <footer className="border-t border-border bg-background pb-10 pt-16">
       <div className="mx-auto max-w-7xl px-6">
-        {/* Brand — same official logo mark as the header. */}
-        <div className="flex items-center gap-2">
+        {/* Brand — the same lockup as the header, at the same h-10, so the top
+            and bottom of the page close on an identical mark. The text span
+            that used to sit beside the old icon is gone: this asset already
+            contains the wordmark. */}
+        <div className="flex items-center">
           <Image
-            src="/logo-mark.png"
-            alt="Nimbo Play logo"
-            width={64}
-            height={64}
-            className="size-8 object-contain"
+            src="/logo-lockup.png"
+            alt="Nimbo Play"
+            width={760}
+            height={235}
+            className="h-10 w-auto object-contain"
           />
-          <span className="font-brand text-lg font-semibold text-foreground">
-            Nimbo Play
-          </span>
         </div>
 
         {/* Nav row */}
@@ -67,13 +67,22 @@ export function Footer() {
         {/* Separator */}
         <div className="mt-8 border-t border-border" />
 
-        {/* Description block */}
-        <div className="mt-8 space-y-3 text-xs leading-relaxed text-muted-foreground">
-          {legalParagraphs.map((p, i) => (
-            <p key={i}>{p}</p>
-          ))}
-          <p className="font-medium text-foreground/70">Built on Solana.</p>
-        </div>
+        {/* Fine print. Rendered as ONE dense block rather than five spaced
+            paragraphs: this is the footer's small print, and a compact slab
+            reads as such at a glance, where stacked paragraphs demanded the
+            same attention as real content.
+            The source stays an ARRAY so each statement can be edited, reordered
+            or removed on its own — only the rendering joins them. Editing a
+            single 900-character string is how sentences get lost.
+            11px with 1.5 leading: smaller than the 12px/1.625 it replaces, but
+            muted-foreground sits at 7.2:1 on this background, comfortably past
+            AA even at this size. */}
+        <p className="mt-8 max-w-none text-[11px] leading-[1.5] text-muted-foreground">
+          {legalParagraphs.join(" ")}
+        </p>
+        <p className="mt-3 text-[11px] font-medium leading-[1.5] text-foreground/70">
+          Built on Solana.
+        </p>
 
         {/* Bottom row. The "Terms" and "Privacy policy" links that used to sit
             here both pointed at "#" (F10.3): two dead links promising documents
