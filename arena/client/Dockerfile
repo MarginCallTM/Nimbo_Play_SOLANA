@@ -24,5 +24,9 @@ RUN npm run build --workspace client
 
 # --- serve stage: just static files -----------------------------------
 FROM nginx:alpine
+# Cache headers, and they are not cosmetic: with the stock config a deploy
+# lands correctly and players still get the previous build, because
+# index.html is the one file Vite does not fingerprint. See nginx.conf.
+COPY client/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/client/dist /usr/share/nginx/html
 EXPOSE 80
