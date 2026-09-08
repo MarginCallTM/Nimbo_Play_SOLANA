@@ -9,10 +9,13 @@
 
 ## ÉTAT AU 2026-09-08 — À LIRE EN PREMIER
 
-**AV.0 et AV.1 sont ÉCRITS, typecheck vert, EN ATTENTE DE VALIDATION
-VISUELLE PAR LE USER.** Rien n'est commité tant que la couture n'a pas été
-cherchée à l'écran (voir le journal en bas). Les trois chiffres de
-référence FPS d'AV.0 restent à relever.
+**AV.0, AV.1 et AV.1b sont LIVRÉS** (commit `a54b438`, poussé) : fond
+hexagonal, compteur de FPS, overlays de netcode éteints pour les joueurs.
+
+**AV.2 est ÉCRIT, typecheck vert, EN ATTENTE DE VALIDATION VISUELLE.**
+Les trois chiffres de référence FPS d'AV.0 restent à relever — et AV.2 est
+précisément le premier ticket qui les fait bouger (chaque pastille coûte
+désormais 2 sprites au lieu d'1).
 
 Le socle technique est en place et il est bon :
 
@@ -26,7 +29,7 @@ Le socle technique est en place et il est bon :
 - La séparation simulation / rendu est nette : `session.ts` calcule toutes
   les positions, `render.ts` ne fait que dessiner.
 
-**>>> PROCHAIN TICKET : AV.0 puis AV.1 <<<**
+**>>> PROCHAIN TICKET : AV.3 (texture de segment ombrée) <<<**
 
 ---
 
@@ -485,9 +488,11 @@ et surtout ce qui a coûté du temps et ne doit pas être redécouvert)*
 
 | Date | Ticket | Commit | FPS avant → après | Leçon |
 |---|---|---|---|---|
-| 2026-09-08 | AV.0 | *(non commité)* | — | `ticker.FPS` de Pixi ne rapporte QUE la dernière frame (`1000/elapsedMS`) : le lire une fois par seconde échantillonne une frame arbitraire et affiche du bruit. On compte les frames sur une fenêtre de 500 ms. |
-| 2026-09-08 | AV.1 | *(non commité)* | — | Voir la note ci-dessous sur la période de tuile — c'est le seul vrai piège du ticket. |
-| 2026-09-08 | AV.1b | *(non commité)* | — | Overlays de debug (fantôme serveur vert + bulle AoI) **éteints pour les joueurs** (décision user : le fantôme vert donne une impression de latence). **Mis derrière `?debug` dans l'URL, PAS supprimés** — c'est l'instrument de diagnostic d'A4.14. Retirer la mesure pour masquer le symptôme transforme un bug connu en bug inconnu. Param d'URL et non drapeau de build : activable sur le site EN LIGNE sans rebuild. Aucun risque d'avantage (A1.8) : n'affiche que notre propre position serveur et notre propre rayon d'AoI, jamais un adversaire. |
+| 2026-09-08 | AV.0 | `a54b438` | — | `ticker.FPS` de Pixi ne rapporte QUE la dernière frame (`1000/elapsedMS`) : le lire une fois par seconde échantillonne une frame arbitraire et affiche du bruit. On compte les frames sur une fenêtre de 500 ms. |
+| 2026-09-08 | AV.1 | `a54b438` | — | Voir la note ci-dessous sur la période de tuile — c'est le seul vrai piège du ticket. |
+| 2026-09-08 | AV.2b | *(non commité)* | à relever | Clignotement des halos + orbes de cadavre 30 % plus lumineux (demande user). **Phase ET vitesse randomisées par pastille** : sur une horloge partagée sans décalage, tous les halos respirent à l'unisson — ça se lit comme un bug de stroboscope, pas comme un champ vivant. Désynchronisé, le même effet devient du scintillement d'ambiance. **Seul le halo respire, jamais la pastille** (R1 : la vérité lisible du jeu ne s'anime pas pour décorer). Horloge murale (`performance.now()`) et non accumulateur : rien ne dérive, et un onglet en arrière-plan reprend à la bonne phase au lieu de rejouer son absence. Le rapport 30 % tient au creux comme au sommet du cycle (les deux alphas oscillent proportionnellement). |
+| 2026-09-08 | AV.2 | *(non commité)* | à relever | Halo = sprite **frère** de la pastille dans un calque dédié, jamais son enfant : dans `foodLayer` la séquence deviendrait pastille/halo/pastille/halo, et le batcher ne fusionne que des sprites **consécutifs** partageant texture ET mode de fusion. Un calque chacun = 2 appels de dessin quel que soit le nombre de pastilles. — Texture fabriquée sur un **canvas 2D** (`CanvasSource`) et non avec `FillGradient` : contrôle exact de l'alpha à chaque palier. La **courbe** est le sujet : une rampe linéaire 1→0 lit comme un cône plat, pas comme de la lumière ; il faut une décroissance de type inverse-carré (cœur vif, chute rapide, longue jupe faible). |
+| 2026-09-08 | AV.1b | `a54b438` | — | Overlays de debug (fantôme serveur vert + bulle AoI) **éteints pour les joueurs** (décision user : le fantôme vert donne une impression de latence). **Mis derrière `?debug` dans l'URL, PAS supprimés** — c'est l'instrument de diagnostic d'A4.14. Retirer la mesure pour masquer le symptôme transforme un bug connu en bug inconnu. Param d'URL et non drapeau de build : activable sur le site EN LIGNE sans rebuild. Aucun risque d'avantage (A1.8) : n'affiche que notre propre position serveur et notre propre rayon d'AoI, jamais un adversaire. |
 
 ## AV.1 — la note à ne pas redécouvrir
 

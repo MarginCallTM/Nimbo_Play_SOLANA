@@ -3,8 +3,17 @@
 // predicted self, interpolated others, locally regrown bodies — and
 // hands them over. Same sim/render split as the proto's Snake vs
 // SnakeView, now applied across the network boundary.
-import { Application, Container, Graphics, Rectangle, Sprite, Text, TilingSprite } from "pixi.js";
-import type { Texture } from "pixi.js";
+import {
+    Application,
+    CanvasSource,
+    Container,
+    Graphics,
+    Rectangle,
+    Sprite,
+    Text,
+    Texture,
+    TilingSprite,
+} from "pixi.js";
 import {
     AOI_RADIUS,
     EXTRACT_CHANNEL_FRAMES,
@@ -81,6 +90,76 @@ const HEX_GAP = 0x070a14;    // the seam between cells: darkest tone
 const HEX_FILL = 0x0d1326;   // the cell face
 const HEX_TOP = 0x1a2242;    // upper edges catch the light
 const HEX_BOTTOM = 0x05070e; // lower edges fall into shadow
+
+// --- AV.2 — the glow -------------------------------------------------
+//
+// How the reference actually gets this look. slither.io runs in Canvas
+// 2D and has NO post-processing whatsoever: every halo is a pre-rendered
+// radial gradient drawn in ADDITIVE blending. That is the whole trick,
+// and it is why light appears to pool where pellets cluster — ten
+// overlapping halos ADD and clip towards white, which normal blending
+// physically cannot imitate (it would sit there as a flat wash).
+//
+// Same approach here: one texture, one draw call, against a full-screen
+// bloom pass every frame. D85 makes that an easy trade.
+const GLOW_TEX_PX = 128; // blurry by nature — more resolution buys nothing
+const GLOW_SPREAD = 8;   // halo radius, as a multiple of the pellet radius
+
+// Ambient pellets against corpse loot (user call, 2026-09-08). Orbs burn
+// 30% brighter, and the ratio is written as a ratio so the intent stays
+// legible when either number is retuned.
+//
+// This is not decoration: an orb IS the value a player just lost, and it
+// is what the next kill is worth. Making loot read differently from
+// ambient food at a glance is a gameplay signal (D71 — the screen tells
+// the truth about what is on the ground), not a flourish.
+const GLOW_ALPHA_PELLET = 0.22;
+const GLOW_ALPHA_ORB = GLOW_ALPHA_PELLET * 1.3;
+
+// AV.2b — the twinkle (user call, 2026-09-08).
+//
+// Phase and speed are randomised PER PELLET. Driven off a shared clock
+// with no offset, every halo would breathe in unison — which reads as a
+// strobing bug, not as a living field. Desynchronised, the very same
+// effect reads as ambient shimmer.
+//
+// Only the HALO breathes; the pellet's own sprite is never touched. The
+// pellet is what the player has to see and aim at, and R1 keeps the
+// game's readable truth out of decorative animation.
+const PULSE_DEPTH = 0.35;   // trough sits at 65% of the base alpha
+const PULSE_PERIOD_S = 2.2; // one full breath at the reference speed
+const PULSE_JITTER = 0.35;  // per-pellet spread around that period
+
+// Built on a 2D canvas rather than with Graphics + FillGradient, for one
+// reason: exact control over ALPHA at every stop, with no dependence on
+// how a gradient fill is premultiplied on its way to a texture.
+//
+// The CURVE is what matters. A straight ramp from 1 to 0 reads as a flat
+// cone, not as light. These stops approximate an inverse-square falloff:
+// bright core, fast decay, long faint skirt — the profile that makes the
+// hexagons look LIT rather than merely tinted.
+function makeGlowTexture(): Texture {
+    const canvas = document.createElement("canvas");
+    canvas.width = GLOW_TEX_PX;
+    canvas.height = GLOW_TEX_PX;
+    const ctx = canvas.getContext("2d")!;
+    const c = GLOW_TEX_PX / 2;
+    const gradient = ctx.createRadialGradient(c, c, 0, c, c, c);
+    const stops: [number, number][] = [
+        [0.0, 1.0],
+        [0.1, 0.72],
+        [0.25, 0.38],
+        [0.45, 0.15],
+        [0.7, 0.04],
+        [1.0, 0.0],
+    ];
+    for (const [offset, alpha] of stops) {
+        gradient.addColorStop(offset, `rgba(255,255,255,${alpha})`);
+    }
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, GLOW_TEX_PX, GLOW_TEX_PX);
+    return new Texture({ source: new CanvasSource({ resource: canvas }) });
+}
 
 // Vertices of one flat-top hexagon, as a flat [x0,y0,x1,y1,...] list.
 // Angle 0 puts a vertex at the right, which lands flat edges on the top
@@ -161,9 +240,25 @@ interface SnakeView {
     colors: SnakeColors;
 }
 
+// One pellet's halo. `baseAlpha` is the value the pulse oscillates
+// AROUND, kept here because the sprite's own alpha is overwritten every
+// frame and can no longer be read back as the reference.
+interface GlowView {
+    sprite: Sprite;
+    baseAlpha: number;
+    phase: number; // radians, random per pellet
+    speed: number; // radians per second
+}
+
 export class GameView {
     readonly app: Application;
     private world = new Container();
+    // AV.2 — halos live in their OWN layer, below the food. Kept as
+    // siblings of the pellets rather than children: inside foodLayer they
+    // would interleave pellet/halo/pellet/halo, and the batcher can only
+    // merge CONSECUTIVE sprites sharing a texture and a blend mode. One
+    // layer each = two draw calls total, whatever the pellet count.
+    private glowLayer = new Container();
     private foodLayer = new Container();
     private snakeLayer = new Container();
     private debugGfx = new Graphics(); // AoI circle + server ghost
@@ -171,7 +266,9 @@ export class GameView {
     private extractGfx = new Graphics(); // the zone, redrawn per frame
     private extractLabel!: Text;
     private circleTexture!: Texture;   // shared by every segment & pellet
+    private glowTexture!: Texture;     // shared by every halo
     private foodSprites = new Map<string, Sprite>();
+    private glowSprites = new Map<string, GlowView>(); // same keys as foodSprites
     private snakes = new Map<string, SnakeView>();
 
     // AV.0 — the number every visual effect from here on is judged by.
@@ -198,7 +295,7 @@ export class GameView {
     // the GPU — food, body segments and heads — which is the figure that
     // moves when an effect is added, where FPS only says whether it hurt.
     stats(): { fps: number; sprites: number } {
-        let sprites = this.foodSprites.size;
+        let sprites = this.foodSprites.size + this.glowSprites.size;
         for (const view of this.snakes.values()) {
             sprites += view.body.children.length + 1; // + the head
         }
@@ -218,13 +315,18 @@ export class GameView {
         // are exactly where a heavy effect would go unnoticed otherwise.
         view.fpsSampledAt = performance.now();
         app.ticker.add(() => {
+            const now = performance.now();
             view.frames++;
-            const elapsed = performance.now() - view.fpsSampledAt;
+            const elapsed = now - view.fpsSampledAt;
             if (elapsed >= 500) {
                 view.fps = (view.frames * 1000) / elapsed;
                 view.frames = 0;
                 view.fpsSampledAt += elapsed;
             }
+            // AV.2b — a wall clock, not an accumulator: nothing to drift,
+            // and a paused tab resumes on the right phase instead of
+            // replaying the time it was away.
+            view.pulseGlows(now / 1000);
         });
 
         // z-order = insertion order: decor < food < debug < snakes
@@ -257,6 +359,8 @@ export class GameView {
         const decor = new Graphics();
         decor.circle(0, 0, WORLD_RADIUS).stroke({ width: 8, color: "#4a5578" });
         view.world.addChild(decor);
+        view.glowTexture = makeGlowTexture();
+        view.world.addChild(view.glowLayer); // light UNDER the pellets
         view.world.addChild(view.foodLayer);
         view.world.addChild(view.debugGfx);
         view.world.addChild(view.extractGfx); // zone under the snakes
@@ -317,28 +421,77 @@ export class GameView {
 
     // --- food: driven by the Colyseus add/remove callbacks ---------
     addFood(id: string, x: number, y: number, value: number) {
+        // Radius and tint are decided ONCE, then serve both the pellet
+        // and its halo. Computing them twice is how a halo ends up
+        // lighting a pellet of a different colour or size.
+        const isOrb = value > FOOD_VALUE;
+        // dropped orb: golden, area proportional to value — an orb worth
+        // 5 pellets visibly IS 5 pellets
+        const radius = isOrb
+            ? FOOD_RADIUS * Math.sqrt(value / FOOD_VALUE)
+            : FOOD_RADIUS * (0.7 + Math.random() * 0.6);
+        const tint = isOrb
+            ? ORB_TINT
+            : PELLET_TINTS[Math.floor(Math.random() * PELLET_TINTS.length)];
+
         const sprite = new Sprite(this.circleTexture);
         sprite.anchor.set(0.5);
         sprite.position.set(x, y);
-        const base = FOOD_RADIUS / SNAKE_RADIUS; // texture is snake-sized
-        if (value > FOOD_VALUE) {
-            // dropped orb: golden, area proportional to value — an orb
-            // worth 5 pellets visibly IS 5 pellets
-            sprite.tint = ORB_TINT;
-            sprite.scale.set(base * Math.sqrt(value / FOOD_VALUE));
-        } else {
-            sprite.tint = PELLET_TINTS[Math.floor(Math.random() * PELLET_TINTS.length)];
-            sprite.scale.set(base * (0.7 + Math.random() * 0.6));
-        }
+        sprite.tint = tint;
+        sprite.scale.set(radius / SNAKE_RADIUS); // texture is snake-sized
         this.foodLayer.addChild(sprite);
         this.foodSprites.set(id, sprite);
+
+        // AV.2 — the halo. Additive, so overlapping ones sum towards
+        // white exactly as they do in the reference.
+        //
+        // Its spread follows the pellet's radius, so an orb worth more
+        // glows wider: the screen keeps telling the truth about value
+        // (D71 — a visible pellet is real money), instead of decorating
+        // every pellet identically.
+        const glow = new Sprite(this.glowTexture);
+        glow.anchor.set(0.5);
+        glow.position.set(x, y);
+        glow.tint = tint;
+        glow.blendMode = "add";
+        glow.scale.set((radius * GLOW_SPREAD) / (GLOW_TEX_PX / 2));
+        this.glowLayer.addChild(glow);
+
+        const baseAlpha = isOrb ? GLOW_ALPHA_ORB : GLOW_ALPHA_PELLET;
+        glow.alpha = baseAlpha; // first frame, before the pulse runs
+        this.glowSprites.set(id, {
+            sprite: glow,
+            baseAlpha,
+            phase: Math.random() * Math.PI * 2,
+            speed: (Math.PI * 2) / (PULSE_PERIOD_S * (1 + (Math.random() * 2 - 1) * PULSE_JITTER)),
+        });
     }
 
+    // AV.2b — one pass over the halos per frame. Deliberately the plain
+    // version: a write per halo, no grouping tricks. Whether that costs
+    // anything is a question for the FPS counter (AV.0), not for a guess
+    // — and the answer decides whether it ever needs to be cleverer.
+    private pulseGlows(timeS: number) {
+        for (const glow of this.glowSprites.values()) {
+            const wave = 0.5 + 0.5 * Math.sin(timeS * glow.speed + glow.phase);
+            glow.sprite.alpha = glow.baseAlpha * (1 - PULSE_DEPTH + PULSE_DEPTH * wave);
+        }
+    }
+
+    // Both sprites are released independently: a halo outliving its
+    // pellet would light empty ground, and the two maps must not be able
+    // to drift apart on a partial failure.
     removeFood(id: string) {
         const sprite = this.foodSprites.get(id);
-        if (!sprite) return;
-        this.foodSprites.delete(id);
-        sprite.destroy(); // sprite only — the shared texture survives
+        if (sprite) {
+            this.foodSprites.delete(id);
+            sprite.destroy(); // sprite only — the shared texture survives
+        }
+        const glow = this.glowSprites.get(id);
+        if (glow) {
+            this.glowSprites.delete(id);
+            glow.sprite.destroy();
+        }
     }
 
     // --- snakes: fully re-positioned every frame by main.ts --------
@@ -414,7 +567,11 @@ export class GameView {
     // not per-room.
     clear() {
         for (const id of [...this.snakes.keys()]) this.removeSnake(id);
-        for (const id of [...this.foodSprites.keys()]) this.removeFood(id);
+        // union of both maps, and removeFood is idempotent: a halo can
+        // never be stranded in the next session by a drift between them
+        for (const id of [...this.foodSprites.keys(), ...this.glowSprites.keys()]) {
+            this.removeFood(id);
+        }
         this.debugGfx.clear();
         this.minimap.clear();
         this.extractGfx.clear();
