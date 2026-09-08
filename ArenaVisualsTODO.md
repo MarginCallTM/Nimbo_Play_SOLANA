@@ -1,467 +1,314 @@
-# ArenaVisualsTODO.md — RENDU & IMMERSION DE NIMBO ARENA
+# ArenaVisualsTODO.md — NIMBO ARENA RENDERING & IMMERSION
 
-> Ouvert le 2026-09-08. Branche dédiée : `arena-visuals` (partie de `master` @ `d85cf3b`).
-> Déclencheur : le jeu est *fun* (validé à l'alpha-test, D85) mais il **ne donne pas envie**.
-> Référence visuelle : captures de slither.io fournies par le user le 2026-09-08.
-> Périmètre : `arena/client/` uniquement. **Aucune ligne de serveur, aucune ligne on-chain.**
-
----
-
-## ÉTAT AU 2026-09-08 — À LIRE EN PREMIER
-
-**AV.0, AV.1 et AV.1b sont LIVRÉS** (commit `a54b438`, poussé) : fond
-hexagonal, compteur de FPS, overlays de netcode éteints pour les joueurs.
-
-**AV.2 est ÉCRIT, typecheck vert, EN ATTENTE DE VALIDATION VISUELLE.**
-Les trois chiffres de référence FPS d'AV.0 restent à relever — et AV.2 est
-précisément le premier ticket qui les fait bouger (chaque pastille coûte
-désormais 2 sprites au lieu d'1).
-
-Le socle technique est en place et il est bon :
-
-- **PixiJS 8.19.0 (WebGL)** est déjà la dépendance de rendu — vérifié dans
-  `arena/client/package.json` et `arena/node_modules/pixi.js`.
-- `render.ts` (332 lignes) respecte déjà la bonne discipline : **une seule
-  texture partagée** (`circleTexture`) instanciée en sprites, donc un seul
-  appel de dessin pour tout le corps d'un serpent. Le commentaire de
-  `SnakeView` documente explicitement ce raisonnement. **Tout ce qui suit
-  doit préserver cette propriété.**
-- La séparation simulation / rendu est nette : `session.ts` calcule toutes
-  les positions, `render.ts` ne fait que dessiner.
-
-**>>> PROCHAIN TICKET : AV.3 (texture de segment ombrée) <<<**
+> Opened 2026-09-08. Dedicated branch: `arena-visuals` (forked from `master` @ `d85cf3b`).
+> Trigger: the game is *fun* (proven at the alpha test, D85) but it **does not make you want to play**.
+> Visual reference: slither.io captures supplied by the user on 2026-09-08.
+> Scope: `arena/client/` only. **Not one line of server, not one line of on-chain.**
 
 ---
 
-## DOCTRINE — les trois règles qui priment sur toute considération esthétique
+## STATUS AS OF 2026-09-08 — READ THIS FIRST
 
-### R1. Le rendu ne ment JAMAIS sur la géométrie de jeu
+**Delivered:** AV.0, AV.1, AV.1b (`a54b438`) · AV.2 + AV.2b (`0ed9fdf`, later
+**removed**) · AV.3 → AV.3h (`24e8b7c`) · AV.4 + AV.4b (`c2c2af9`).
+**Written, not yet committed:** AV.5.
 
-A4.13 a coûté des mois : le client passait `SNAKE_TURN_SPEED` là où le
-serveur passait `dims.turnSpeed`, l'écart était nul à score 0 et de 27 % à
-score 2000. Invisible, et pourtant décisif dans un jeu à argent réel.
+**Outstanding debt: the three AV.0 reference FPS figures have STILL never been
+recorded.** We instrumented in order to measure and never wrote down the
+baseline — which is exactly what would have priced the glow before we found
+it by eye.
 
-Conséquence pour CE chantier : on modifie **les textures, les teintes, les
-calques, l'opacité**. On ne touche **jamais** :
+The technical foundation is in place and it is sound:
 
-- `SNAKE_RADIUS`, ni le `scale` dérivé de `dims.radius` ;
-- les positions de segments fournies par `session.ts` ;
-- le nombre de segments dessinés ;
+- **PixiJS 8.19.0 (WebGL)** was already the rendering dependency — verified in
+  `arena/client/package.json` and `arena/node_modules/pixi.js`.
+- `render.ts` already follows the right discipline: **one shared texture**
+  instanced as sprites, so a whole snake body is a single draw call. The
+  `SnakeView` comment spells that reasoning out. **Everything below must
+  preserve that property.**
+- The sim/render split is clean: `session.ts` computes every position,
+  `render.ts` only draws.
+
+**>>> NEXT TICKET: AV.6 (vignette), or AV.9/AV.11 if the arena screen comes first <<<**
+
+---
+
+## DOCTRINE — the three rules that outrank any aesthetic consideration
+
+### R1. The rendering NEVER lies about game geometry
+
+A4.13 cost months: the client passed `SNAKE_TURN_SPEED` where the server
+passed `dims.turnSpeed`. The error was zero at score 0 and 27% at score
+2000 — invisible, and decisive in a real-money game.
+
+Consequence for this work: we change **textures, tints, layers, opacity**.
+We **never** touch:
+
+- `SNAKE_RADIUS`, nor the `scale` derived from `dims.radius`;
+- the segment positions handed over by `session.ts`;
+- the number of segments drawn;
 - `FOOD_RADIUS`, `EXTRACT_RADIUS`, `AOI_RADIUS`.
 
-Corollaire moins évident : **un halo ne doit jamais pouvoir être confondu
-avec un corps.** Si le joueur croit que la hitbox est plus grosse qu'elle
-ne l'est, c'est un bug de gameplay déguisé en effet spécial. Les halos
-restent nettement plus diffus et plus larges que l'objet qu'ils éclairent.
+Less obvious corollary: **no effect may ever be mistaken for a body.** If a
+player believes the hitbox is bigger than it is, that is a gameplay bug
+wearing a special effect as a disguise.
 
-### R2. Le budget de frames est le budget mainnet (D85)
+### R2. The frame budget is the mainnet budget (D85)
 
-D85 : « pour tout ce qui touche au gameplay et à la fluidité, on ne
-raisonne plus MVP puis optim plus tard ». Un effet joli qui fait tomber le
-framerate est un **mauvais échange**, pas un compromis acceptable.
+D85: "for anything touching gameplay and fluidity, we no longer reason MVP
+first and optimise later". A pretty effect that drops the framerate is a
+**bad trade**, not an acceptable compromise.
 
-Chaque ticket se valide avec un chiffre, pas avec une impression. Voir AV.0.
+Every ticket is validated with a number, not an impression. See AV.0.
 
-### R3. Zéro dépendance nouvelle tant que ce n'est pas prouvé nécessaire
+### R3. No new dependency until it is proven necessary
 
-Ajouter un paquet à `arena/` déclenche le rituel du lockfile Alpine
-(`arena/client/Dockerfile` fait `npm ci` sur `node:20-alpine`) — piège
-`@emnapi` déjà payé trois fois. Les tickets AV.1 → AV.8 sont conçus pour
-n'exiger **aucune dépendance**. Seul AV.10 en demande une, et il est
-conditionné à une mesure.
+Adding a package to `arena/` triggers the Alpine lockfile ritual
+(`arena/client/Dockerfile` runs `npm ci` on `node:20-alpine`) — the
+`@emnapi` trap, already paid for three times. Every ticket here is designed
+to need **no dependency at all**.
 
 ---
 
-## Ce que les captures de référence contiennent réellement
+## What the reference captures actually contain
 
-Décomposition, pour que chaque ticket ait une cible nommée :
+Breakdown, so every ticket has a named target:
 
-| # | Effet observé | Ticket |
+| # | Observed effect | Ticket |
 |---|---|---|
-| 1 | Trame hexagonale régulière et biseautée, qui défile | AV.1 |
-| 2 | Halo diffus coloré sous chaque pastille, qui « éclaire » le fond | AV.2 |
-| 3 | Saturation vers le blanc quand les halos se superposent | AV.2 |
-| 4 | Corps ombré en tube (clair au centre, sombre aux bords) | AV.3 |
-| 5 | Yeux blancs à pupille sombre, orientés | AV.4 |
-| 6 | Peaux à bandes (rouge/blanc/bleu, orange/crème…) | AV.5 |
-| 7 | Assombrissement des bords de l'écran | AV.6 |
-| 8 | Serpent en boost qui rayonne et lave le fond | AV.7 |
-| 9 | Mort = nappe d'orbes incandescents | AV.8 |
-| 10 | Liseré sombre autour du corps | AV.5 (option) |
+| 1 | Regular bevelled hexagonal lattice, scrolling | AV.1 |
+| 2 | Soft coloured halo under each pellet, "lighting" the floor | AV.2 ⛔ |
+| 3 | Saturation towards white where halos overlap | AV.2 ⛔ |
+| 4 | Body shaded as a tube (bright centre, dark flanks) | AV.3 |
+| 5 | White eyes with dark pupils, oriented | AV.4 |
+| 6 | Banded skins (red/white/blue, orange/cream…) | AV.5 |
+| 7 | Darkening towards the screen edges | AV.6 |
+| 8 | A boosting snake radiating and washing the floor | AV.7 |
+| 9 | Death as a sheet of glowing orbs | AV.8 |
+| 10 | Dark outline around the body | AV.5 (option) |
 
-**Le point technique qui change tout :** slither.io n'utilise **aucun
-post-traitement**. C'est du Canvas 2D. Les halos sont des **sprites de
-dégradé radial en blending additif**. La lumière n'est pas calculée, elle
-est dessinée. On peut donc reproduire 85 % du rendu sans un seul shader.
+**The technical point that changes everything:** slither.io uses **no
+post-processing**. It is Canvas 2D. Its halos are **radial-gradient sprites
+in additive blending** — light is not computed, it is drawn. So 85% of the
+look is reachable without a single shader.
 
 ---
 
-## API Pixi 8.19 — vérifiées dans les typings installés le 2026-09-08
+## Pixi 8.19 APIs — verified against the installed typings, 2026-09-08
 
-Ne rien coder de mémoire au-delà de cette liste ; re-vérifier le reste.
+Do not code anything beyond this list from memory; re-check the rest.
 
-| Besoin | Statut |
+| Need | Status |
 |---|---|
-| `blendMode = 'add'` | ✅ chaîne littérale en v8 (`rendering/.../state/const.d.ts`) |
+| `blendMode = 'add'` | ✅ string literal in v8 (`rendering/.../state/const.d.ts`) |
 | `TilingSprite` | ✅ `scene/sprite-tiling/` |
-| `FillGradient` avec `type: 'radial'` | ✅ `scene/graphics/shared/fill/FillGradient.d.ts` |
-| `ParticleContainer` + `Particle` | ✅ `scene/particle-container/` (API refaite en v8) |
-| `renderer.generateTexture()` | ✅ déjà utilisé dans `render.ts:create()` |
-| Bloom / glow intégré | ❌ **absent** — filtres natifs = blur, color-matrix, noise, displacement, alpha |
+| `FillGradient` with `type: 'radial'` | ✅ `scene/graphics/shared/fill/FillGradient.d.ts` |
+| `ParticleContainer` + `Particle` | ✅ `scene/particle-container/` (API rebuilt in v8) |
+| `renderer.generateTexture()` | ✅ already used in `render.ts:create()` |
+| Built-in bloom / glow | ❌ **absent** — native filters are blur, color-matrix, noise, displacement, alpha |
+| `CanvasSource` + `resolution` | ✅ logical size = pixel size / resolution |
 
 ---
 
 # TICKETS
 
-## AV.0 — Instrumenter avant de toucher à quoi que ce soit
+## AV.0 — Instrument before touching anything
 
-**Pourquoi.** R2 exige des chiffres. Sans mesure de départ, « ça rame un
-peu » est une impression et on ne saura jamais quel effet a coûté quoi.
+**Why.** R2 demands numbers. Without a baseline, "it feels a bit choppy" is
+an impression and we will never know which effect cost what.
 
-**À faire.**
-- Afficher `app.ticker.FPS` (lissé sur ~30 frames) dans le HUD de debug
-  existant, ainsi que le nombre de sprites du calque nourriture.
-- Noter la valeur de référence sur trois configurations : la machine du
-  user, une machine faible, et un mobile si le jeu y est jouable.
-- Consigner ces trois chiffres **ici même**, dans ce fichier.
+**To do.**
+- Show the frame rate in the existing debug HUD, plus the sprite count.
+- Record the baseline on three configurations: the user's machine, a weak
+  machine, and a phone if the game is playable there.
+- Write those three figures **into this file**.
 
-**Validation.** Les trois chiffres sont écrits dans ce fichier.
+**Validation.** The three figures are written down here. **STILL PENDING.**
 
-**Risque.** Nul.
-
----
-
-## AV.1 — Fond hexagonal (le plus gros écart visuel)
-
-**Pourquoi.** Aujourd'hui le décor est un aplat `#0b1020` + 900 points
-aléatoires dessinés une fois (`render.ts`, dans `create()`). Un motif
-**aléatoire** ne donne aucune sensation de vitesse : l'œil a besoin d'une
-**régularité** pour mesurer un déplacement. C'est la raison pour laquelle
-slither.io utilise une trame hexagonale, et c'est ce qui manque le plus.
-
-**Technique.**
-1. Générer **une fois** une texture de tuile via `renderer.generateTexture()`
-   sur un `Graphics` — même approche que `circleTexture`, donc zéro asset,
-   zéro requête réseau.
-2. L'afficher dans un `TilingSprite` en espace monde, 2800 × 2800
-   (`WORLD_RADIUS = 1400`), inséré **sous** tous les autres calques.
-3. Biseau : chaque hexagone reçoit une arête haute claire et une arête
-   basse sombre — c'est ce qui donne le relief embossé des captures.
-
-**Le piège à ne pas rater.** La **période du réseau** doit être exacte ou
-une couture défilera à l'écran. Pour des hexagones à sommet plat de rayon
-`R` : le motif se répète sur un rectangle `3R × √3·R` contenant deux
-centres, `(0,0)` et `(1.5R, √3R/2)`. À valider **à l'œil, en mouvement** —
-un pixel d'erreur se voit immédiatement.
-
-**Fichiers.** `arena/client/src/render.ts` (méthode `create()`).
-
-**Validation.** Se déplacer en diagonale sur toute la largeur de la map
-sans voir apparaître la moindre ligne de raccord.
-
-**Coût GPU.** Un seul quad, le shader de répétition fait tout. Gratuit.
-
-**Risque.** Nul (purement décoratif, aucune interaction avec la sim).
+**Risk.** None.
 
 ---
 
-## AV.2 — Halos additifs sur la nourriture (« effet de halo »)
+## AV.1 — Hexagonal floor (the largest visual gap)
 
-**Pourquoi.** C'est la signature visuelle de slither.io. Sur les captures,
-chaque pastille projette un halo 6 à 10× plus large qu'elle, à très faible
-opacité, et **dix halos superposés saturent vers le blanc** — signature du
-blending additif, qu'un blending normal ne peut pas produire (il donnerait
-un aplat terne).
+**Why.** The floor used to be a flat `#0b1020` fill plus 900 random dots
+drawn once. A **random** pattern gives the eye nothing to measure a
+displacement against: the eye needs **regularity** to read motion as speed.
+That is exactly why slither.io has a lattice.
 
-**Technique.**
-1. Une **texture unique** de tache ronde floue : disque blanc dont l'alpha
-   va de 1 au centre à 0 au bord.
-   - Voie principale : `Graphics` + `FillGradient({ type: 'radial' })` puis
-     `generateTexture()`.
-   - **Repli éprouvé si le dégradé Pixi fait des siennes** : un `<canvas>`
-     avec `ctx.createRadialGradient()` puis `Texture.from(canvas)`. Zéro
-     dépendance, comportement parfaitement prévisible.
-2. Un `Container` `glowLayer` inséré **entre le fond (AV.1) et le calque
-   nourriture**.
-3. Un sprite par pastille : `blendMode = 'add'`, `tint` = couleur de la
-   pastille, `scale` ≈ 8× le rayon, `alpha` ≈ 0.2 (à régler à l'œil).
-4. Cycle de vie **strictement couplé** à `foodSprites` : `addFood()` crée
-   les deux, `removeFood()` détruit les deux. Une fuite ici laisse des
-   halos orphelins qui éclairent le vide.
+**Technique.** Generate the tile texture **once** at boot, show it in a
+world-space `TilingSprite` below every other layer, and bevel each cell so
+it reads as an embossed panel.
 
-**Pourquoi ça ne coûte rien.** Tous les halos partagent **une seule
-texture** → Pixi les regroupe en un appel de dessin. Trois cents halos
-coûtent autant qu'un seul. C'est exactement le raisonnement déjà écrit
-dans le commentaire de `SnakeView`.
+**The trap.** See "AV.1 — the note not to rediscover" at the bottom.
 
-**Fichiers.** `render.ts` : `create()`, `addFood()`, `removeFood()`, `clear()`.
+**GPU cost.** One quad; the repeat happens in the sampler. Free.
 
-**Validation.**
-- Un amas d'orbes de cadavre sature visiblement vers le blanc (capture 4).
-- FPS inchangé vs AV.0 avec le maximum de pastilles à l'écran.
-- Après une mort et un respawn, `foodSprites.size === glowSprites.size`.
-
-**Risque.** Faible. Surveiller R1 : le halo doit rester manifestement plus
-diffus que la pastille, jamais lisible comme une hitbox.
+**Risk.** None (purely decorative, no interaction with the sim).
 
 ---
 
-## AV.3 — Texture de segment ombrée (meilleur rapport gain/effort)
+## AV.2 — Additive halos on pellets ⛔ DELIVERED THEN REMOVED
 
-**Pourquoi.** `circleTexture` est un disque **uni**, d'où l'aspect
-« chapelet de gommettes ». Sur les captures, le corps lit comme un **tube** :
-bande centrale claire, bords sombres.
-
-**Technique.** Remplacer le disque uni par un disque **pré-ombré en niveaux
-de gris** (dégradé radial légèrement décentré + rebord sombre). La teinte
-Pixi étant une **multiplication**, `tint` continue de fonctionner
-exactement comme aujourd'hui.
-
-**La propriété à préserver.** Toujours **une seule texture** → le batching
-et le coût de rendu sont rigoureusement inchangés. C'est un remplacement de
-texture, pas un changement d'architecture.
-
-⚠️ **La texture est générée à `SNAKE_RADIUS` et mise à l'échelle par
-`scale = radius / SNAKE_RADIUS`.** Générer la texture ombrée à une
-résolution plus élevée (ex. ×4) pour que les gros serpents ne soient pas
-flous — mais **sans toucher au calcul de `scale`** (R1).
-
-**Fichiers.** `render.ts` : `create()`.
-
-**Validation.** Un serpent de score élevé ne montre pas de pixellisation ;
-le corps lit comme un volume et non comme des disques empilés.
-
-**Risque.** Faible.
+Delivered in `0ed9fdf`, removed in `24e8b7c`. See **AV.3g** and **AV.3h**
+for the measured reason. A tombstone comment is kept in `render.ts`.
 
 ---
 
-## AV.4 — Les yeux (plus gros gain de personnalité de toute la liste)
+## AV.3 — Shaded segment texture (best effort/benefit ratio)
 
-**Pourquoi.** Sur les quatre captures, la tête porte deux yeux blancs à
-pupille sombre, décalés perpendiculairement à la direction. C'est ce qui
-transforme un cercle en **créature**. Chez toi, la tête est un disque
-teinté — c'est probablement la première chose qu'un testeur remarquera.
+**Why.** `circleTexture` was a **flat** disc, hence the "string of beads"
+look. In the captures the body reads as a **tube**.
 
-**Technique.** Quatre sprites enfants du conteneur de tête (deux sclères,
-deux pupilles), positionnés avec la perpendiculaire au cap. La pupille se
-décale légèrement dans la direction du regard.
+**Technique.** Replace the flat disc with a **greyscale pre-shaded** one.
+Pixi's tint being a **multiplication**, `tint` keeps working exactly as
+before.
 
-**Où trouver le cap.** `session.ts` connaît la direction ; `drawSnake()` ne
-la reçoit pas aujourd'hui. Deux options :
-- la déduire du vecteur `tête → premier segment` **côté renderer** (aucun
-  changement de signature, aucun risque de désynchronisation) — **préféré** ;
-- ou l'ajouter à la signature de `drawSnake()`.
+**Property to preserve.** Still **one texture** → batching and render cost
+are rigorously unchanged. This is a texture swap, not an architecture
+change.
 
-**Fichiers.** `render.ts` : `drawSnake()`.
+⚠️ Supersample so large snakes are not blurry — but **without touching the
+`scale` computation** (R1). `resolution` on the texture source is what makes
+that free.
 
-**Validation.** Les yeux restent cohérents dans un virage serré et pendant
-un boost ; aucun tremblement à basse vitesse.
-
-**Risque.** Faible. Ne consomme aucune donnée réseau supplémentaire.
+**Risk.** Low.
 
 ---
 
-## AV.5 — Peaux à bandes + liseré (ouvre la porte aux skins NFT)
+## AV.4 — The eyes (biggest personality gain on the list)
 
-**Pourquoi.** Les peaux rouge/blanc/bleu et orange/crème des captures 2 et
-3 **ne sont pas des textures** : c'est la teinte qui change selon l'index
-du segment. Chez nous, la boucle qui positionne les segments existe déjà.
-
-**Technique.**
-```
-s.tint = palette[Math.floor(i / bandWidth) % palette.length];
-```
-
-**Coût : nul.** Et l'implication produit est importante : une peau devient
-**une palette + une largeur de bande**, soit quelques octets — pas un asset
-à stocker ni à servir. C'est exactement le format qu'il faut pour la
-marketplace de skins cosmétiques du business model, et ça garantit
-structurellement le « jamais de pay-to-win » (une palette ne peut pas
-porter d'avantage de jeu).
-
-**Option — liseré sombre** (le serpent blanc de la capture 4). Un second
-sprite légèrement plus grand et sombre derrière chaque segment. ⚠️ Cela
-**double le nombre de sprites** : à réserver au joueur local, ou à mesurer
-avant de généraliser. **Ne pas livrer sans le chiffre AV.0.**
-
-**Fichiers.** `render.ts` : `drawSnake()` ; palettes dans le même fichier.
-
-**Validation.** FPS inchangé. Les bandes ne créent pas d'illusion de
-segmentation de la hitbox (R1).
-
-**Risque.** Faible pour les bandes, **moyen pour le liseré** (perf).
+Delivered. See the AV.4 and AV.4b notes below.
 
 ---
 
-## AV.6 — Vignette et ambiance générale
+## AV.5 — Banded skins (opens the door to NFT skins)
 
-**Pourquoi.** Les captures s'assombrissent nettement vers les bords, ce qui
-concentre l'attention au centre — là où se trouve la tête du joueur.
-
-**Technique.** Un sprite plein écran en **espace écran** (pas dans `world`),
-dégradé radial noir, alpha faible, ajouté au `stage` **sous** le minimap et
-le HUD. Redimensionné sur l'événement de resize.
-
-**Fichiers.** `render.ts` : `create()` + gestion du resize.
-
-**Validation.** La vignette ne bouge pas avec la caméra et ne masque ni le
-minimap ni le HUD.
-
-**Risque.** Nul.
+Delivered. See the AV.5 note below.
 
 ---
 
-## AV.7 — Glow de boost
+## AV.6 — Vignette and general mood
 
-**Pourquoi.** Capture 2 : le grand serpent en boost **rayonne** et lave le
-fond. Aujourd'hui, le boost ne change que la couleur de la tête en blanc
-(`session.ts` : `const drawn = boosting ? { body: colors.body, head: "#ffffff" } : colors`).
-C'est le moment le plus intense du jeu et il ne se voit presque pas.
+**Why.** The captures darken markedly towards the edges, which concentrates
+attention at the centre — where the player's head is.
 
-**Technique.** Réutiliser la texture de halo d'AV.2, en sprites additifs le
-long du corps, plus grands et plus opaques pendant le boost. Ne les créer
-que pour les serpents effectivement en boost.
+**Technique.** A full-screen sprite in **screen space** (not in `world`),
+radial black gradient, low alpha, added to the `stage` **below** the minimap
+and the HUD. Resized on the resize event.
 
-**Changement de signature nécessaire.** `drawSnake()` ne reçoit pas l'état
-de boost — `session.ts` le calcule (`boosting`) mais ne le transmet que
-déguisé en couleur de tête. Il faut le passer explicitement.
-**C'est l'occasion de remplacer le paramètre `colors` par un objet de style
-unique** (`{ body, head, boosting, offline }`) plutôt que d'ajouter un
-huitième argument positionnel à une signature qui en compte déjà huit.
+⚠️ **Full-screen effect — apply the AV.2 lesson.** It *subtracts* light
+rather than adding it, so it is far safer than a halo, but the same
+discipline applies: judge it in motion, and keep it weak enough that it
+never fights the floor for attention.
 
-**Fichiers.** `render.ts` : `drawSnake()` ; `session.ts` : le site d'appel
-(~ligne 741). **Uniquement le passage de l'information — aucune logique de
-simulation touchée** (R1).
+**Files.** `render.ts`: `create()` + resize handling.
 
-**Validation.** FPS stable avec plusieurs serpents en boost simultané dans
-l'AoI.
+**Validation.** The vignette does not move with the camera and masks neither
+the minimap nor the HUD.
 
-**Risque.** Moyen (nombre de sprites variable). Borner le nombre de halos
-par serpent, indépendamment de la longueur du corps.
+**Risk.** Low.
 
 ---
 
-## AV.8 — La mort doit se voir
+## AV.7 — Boost emphasis — TO BE RE-COSTED BEFORE WRITING ANY CODE
 
-**Pourquoi.** La mort est l'événement le plus coûteux du jeu : le joueur
-perd sa mise. Capture 4 : une nappe d'orbes incandescents. Chez nous, les
-orbes existent déjà (`ORB_TINT`, aire proportionnelle à la valeur) mais
-apparaissent sans aucune emphase.
+**Why.** In the captures, a boosting snake **radiates** and washes the
+floor. Today boost only turns the head white. It is the most intense moment
+in the game and it barely shows.
 
-**Technique.**
-- Halo additif sur les orbes (vient gratuitement avec AV.2, l'aire étant
-  déjà proportionnelle à la valeur).
-- Un « pop » d'échelle à l'apparition (~200 ms).
-- Optionnel : onde de choc au point de mort — un anneau qui s'étend et
-  s'efface, en `Graphics`, sans dépendance.
+**Mandatory first step.** The AV.3g lesson is that **total coverage**
+(count × area) decides, never how one isolated effect looks. A boost glow
+touches 1 to 3 snakes at a time against 300 pellets, so the arithmetic is
+not remotely comparable and the effect is probably perfectly viable —
+**but compute the coverage first**. That is precisely the step that was
+skipped the first time.
 
-**Point de vigilance produit.** Le 70/30 (D71 amendé) veut que 30 % de la
-valeur soit **recyclée map-wide**, pas déposée sur le cadavre. L'effet
-visuel ne doit pas laisser croire que 100 % du butin est là, sur place —
-sinon l'écran ment sur l'économie, ce qui est précisément l'invariant que
-D71 protège (« pellet visible = argent réel »).
+**Signature note.** `drawSnake()` does not receive the boost state;
+`session.ts` computes it and only smuggles it in as a head colour. Passing
+it explicitly is the moment to replace the `colors` parameter with a single
+style object rather than adding a tenth positional argument.
 
-**Fichiers.** `render.ts` : `addFood()` + une petite animation.
-
-**Validation.** Une mort à forte valeur est lisible d'un coup d'œil ; le
-volume d'orbes reste cohérent avec la valeur réellement au sol.
-
-**Risque.** Faible.
+**Risk.** Medium (variable sprite count). Bound the number of extra sprites
+per snake, independently of body length.
 
 ---
 
-## AV.9 — HUD, minimap et menu — À CADRER AVANT DE CODER
+## AV.8 — Death must be visible — TO BE REDESIGNED WITHOUT A HALO
 
-**Statut : EN ATTENTE D'ARBITRAGE DU USER.**
+**Why.** Death is the most expensive event in the game: the player loses
+their stake. Today the orbs appear with no emphasis whatsoever.
 
-Le HUD est aujourd'hui **du DOM par-dessus le canvas** (`main.ts` :
-`document.getElementById("status")`), plus un minimap en `Graphics` dessiné
-en espace écran. Le menu est `arena/client/src/menu.ts` (165 lignes).
+**Technique, now that the glow is gone.**
+- A scale "pop" on appearance (~200 ms).
+- A shockwave at the point of death — an expanding, fading ring in
+  `Graphics`, no dependency.
 
-Trois périmètres possibles, non tranchés :
-1. l'écran de **menu** du client de jeu (choix de mise, entrée en partie) ;
-2. le **HUD en jeu** (valeur portée, timer d'extraction, avertissements) ;
-3. une page du **portail Next** dans `app/`.
+**Product caveat.** The amended 70/30 (D71) puts 30% of the value back into
+the map, not onto the corpse. The effect must not suggest 100% of the loot
+is lying there — otherwise the screen lies about the economy, which is the
+very invariant D71 protects ("a visible pellet is real money").
 
-Pour 1 et 2, c'est du DOM/CSS classique : on peut réutiliser directement la
-charte du portail (F3.x). Pour le canvas, il n'existe pas de « librairie de
-composants » — c'est Pixi et des textures.
-
-**À trancher avant d'ouvrir un ticket.**
+**Risk.** Low.
 
 ---
 
-## AV.10 — Bloom en post-traitement — CONDITIONNEL, NE PAS COMMENCER
+## AV.9 — HUD, minimap and menu — SCOPE MUST BE SETTLED FIRST
 
-**Statut : bloqué par une mesure et une vérification.**
+**Status: WAITING ON THE USER.**
 
-**Ce que ça apporterait.** Un bloom réagit à ce qui est *réellement*
-lumineux à l'écran, donc plus juste que des halos dessinés — notamment le
-« soleil blanc » de la capture 2.
+The HUD is currently **DOM over the canvas** (`main.ts`:
+`document.getElementById("status")`), plus a `Graphics` minimap drawn in
+screen space. The menu is `arena/client/src/menu.ts`.
 
-**Les trois réserves, par ordre d'importance.**
-1. **Coût.** Un filtre sur un conteneur force un rendu dans une texture
-   intermédiaire, puis seuil + flou + composition. C'est la différence
-   entre 60 et 30 fps sur une machine faible. **R2 dit que c'est un mauvais
-   échange.** À n'appliquer qu'à un calque dédié, **jamais au stage entier**
-   (sinon le HUD est bavé).
-2. **Dépendance.** `pixi-filters` n'est pas installé. **La compatibilité
-   avec Pixi 8.19 est à VÉRIFIER sur le dépôt officiel — ne pas la supposer
-   depuis une connaissance datée.**
-3. **Lockfile.** Toute nouvelle dépendance de `arena/` impose de régénérer
-   le lock **dans l'image cible** (piège `@emnapi` payé 3 fois) :
-   ```
-   docker run --rm --platform linux/amd64 -v "$PWD/arena":/app -w /app \
-     node:20-alpine npm install --package-lock-only
-   ```
-   Indicateur de non-régression correct (leçon FrontTODO F2.4) : « toute
-   dépendance dure déclarée est-elle résolvable dans le lockfile ? » —
-   **pas** un comptage d'entrées.
+Three possible scopes, none chosen:
+1. the game client's **menu** screen (stake choice, entering a round);
+2. the **in-game HUD** (value carried, extraction timer, warnings);
+3. a page of the **Next portal** in `app/`.
 
-**Condition d'ouverture.** AV.1 → AV.8 livrés ET mesurés, et un manque
-esthétique **précis et nommé** subsiste. Si les halos additifs suffisent —
-et ils suffisent chez slither.io — ce ticket est **abandonné**, pas reporté.
+For 1 and 2 this is plain DOM/CSS and the portal's design system (F3.x) can
+be reused directly. For the canvas there is no "component library" — it is
+Pixi and textures.
+
+**Settle this before opening a ticket.** Note that **AV.11 belongs to the
+same screen** and should be done in the same pass.
 
 ---
 
-# ORDRE D'EXÉCUTION
+## AV.10 — Post-processing bloom ⛔ ABANDONED
 
-**Révisé le 2026-09-08**, après la suppression du glow (AV.3h) : AV.7 et
-AV.8 s'appuyaient sur la texture de halo qui n'existe plus, et AV.10 perd
-son objet.
+**Abandoned, and that is a conclusion rather than a retreat.** Bloom adds
+light across the whole screen. AV.3g measured that this is precisely what
+this game cannot tolerate.
 
-| Ordre | Ticket | Effet ressenti | Effort | Statut |
+---
+
+# EXECUTION ORDER
+
+**Revised 2026-09-08** after the glow removal (AV.3h): AV.7 and AV.8 leaned
+on a halo texture that no longer exists, and AV.10 lost its purpose.
+
+| Order | Ticket | Felt effect | Effort | Status |
 |---|---|---|---|---|
-| ✅ | AV.0 instrumentation | — | — | livré `a54b438` (⚠ les 3 chiffres FPS de référence ne sont TOUJOURS pas relevés) |
-| ✅ | AV.1 fond hexagonal | énorme | — | livré, puis refondu AV.3c/3e |
-| ⛔ | AV.2 halos additifs | — | — | livré `0ed9fdf`, **RETIRÉ** `24e8b7c` — voir AV.3h |
-| ✅ | AV.3 segment ombré | fort | — | livré, corrigé en cylindre AV.3b |
-| **1** | **AV.4 yeux** | **fort** | faible | **PROCHAIN** |
-| 2 | AV.5 peaux à bandes | moyen | très faible | ouvre le format des skins NFT |
-| 3 | AV.3h bouton B → vraie préférence | moyen | faible | bloqué : choix du 3ᵉ style par le user |
-| 4 | AV.6 vignette | moyen | faible | ⚠ effet plein écran — même prudence qu'AV.2 |
-| 5 | AV.8 emphase de la mort | moyen | faible | **à repenser sans halo** (pop d'échelle + onde de choc) |
-| 6 | AV.7 emphase du boost | fort | moyen | **à recalculer** — voir ci-dessous |
-| — | AV.9 HUD/menu | ? | ? | **bloqué : arbitrage user sur le périmètre** |
-| ⛔ | AV.10 bloom | — | — | **ABANDONNÉ**, pas reporté |
-
-**AV.7 n'est pas mort, il est à re-chiffrer.** La leçon d'AV.3h est que
-c'est la **couverture totale** (nombre × aire) qui décide, pas l'aspect
-d'un effet isolé. Or un glow de boost concerne 1 à 3 serpents à la fois,
-contre 300 pastilles : l'arithmétique est sans commune mesure et l'effet
-est probablement parfaitement viable. **Calculer la couverture AVANT
-d'écrire une ligne** — c'est exactement l'étape qui a manqué la première
-fois.
-
-**AV.10 est abandonné, et c'est une conclusion, pas un renoncement.** Le
-bloom ajoute de la lumière sur tout l'écran. On vient de mesurer que c'est
-précisément ce que ce jeu ne supporte pas.
+| ✅ | AV.0 instrumentation | — | — | `a54b438` (⚠ the 3 reference FPS figures are STILL not recorded) |
+| ✅ | AV.1 hexagonal floor | huge | — | delivered, then reworked in AV.3c/3e |
+| ⛔ | AV.2 additive halos | — | — | `0ed9fdf`, **REMOVED** in `24e8b7c` — see AV.3h |
+| ✅ | AV.3 shaded segment | strong | — | delivered, corrected to a cylinder in AV.3b |
+| ✅ | AV.4 eyes | strong | — | `c2c2af9`, stabilised by AV.4b |
+| ✅ | AV.5 banded skins | medium | — | written, not committed — defines the NFT skin format |
+| 1 | AV.3h button B → real preference | medium | low | blocked: user to pick the 3rd style |
+| 2 | AV.6 vignette | medium | low | ⚠ full-screen effect — same caution as AV.2 |
+| 3 | AV.8 death emphasis | medium | low | **redesign without a halo** |
+| 4 | AV.7 boost emphasis | strong | medium | **re-cost coverage first** |
+| — | AV.9 HUD/menu | ? | ? | **blocked: user must settle the scope** |
+| — | AV.11 shared colour identity | — | medium | **blocked with AV.9 — business-model prerequisite** |
+| ⛔ | AV.10 bloom | — | — | **ABANDONED**, not deferred |
 
 ---
 
-# DÉPLOIEMENT
+# DEPLOYMENT
 
-Ce chantier ne touche que `arena/client/`. Donc :
+This work touches `arena/client/` only. Therefore:
 
 ```bash
 ssh root@167.233.250.97
@@ -470,349 +317,439 @@ git pull
 docker compose --profile https up -d --build client
 ```
 
-**Ne nommer que `client`.** Recréer `server` déconnecte tous les joueurs
-actifs, et déconnexion = mort instantanée = mise perdue (règle
-anti-rage-quit, amendée 2026-08-06). Un déploiement du seul client est
-**sans danger à n'importe quelle heure** — c'est un avantage qu'on perd dès
-qu'on touche au serveur.
+**Name `client` and nothing else.** Recreating `server` disconnects every
+active player, and a disconnect is instant death and a lost stake
+(anti-rage-quit rule, amended 2026-08-06). A client-only deploy is
+**safe at any hour** — an advantage lost the moment the server is touched.
 
-Rappel : `VITE_SERVER_URL` est gravé au build → `--build` obligatoire,
-`restart` ne suffirait pas (DEPLOY.md §4bis).
+Reminder: `VITE_SERVER_URL` is baked at build time → `--build` is
+mandatory, `restart` would not suffice (DEPLOY.md §4bis).
 
 ---
 
-# BACKLOG — ne PAS commencer sans accord explicite
+# BACKLOG — do NOT start without explicit agreement
 
-- **`ParticleContainer` v8** pour la nourriture si le profilage le réclame.
-  L'API a été refaite en v8 et contraint fortement ce qu'on peut faire par
-  particule. **Uniquement sur preuve chiffrée**, jamais par précaution.
-- Traînées de boost persistantes (coûteux, et risque R1 : une traînée ne
-  doit pas ressembler à un corps).
-- Thème alternatif (les captures montrent une variante verte).
-- Skins comme actifs cosmétiques on-chain — dépend d'AV.5, mais c'est un
-  chantier produit, pas un chantier de rendu.
-- Effets météo / événements d'arène.
+- **v8 `ParticleContainer`** for food if profiling demands it. The API was
+  rebuilt in v8 and constrains what can be done per particle. **Only on
+  measured evidence**, never as a precaution.
+- Persistent boost trails (expensive, and an R1 risk: a trail must not look
+  like a body).
+- Alternative theme (the captures show a green variant).
+- Skins as on-chain cosmetic assets — depends on AV.5 and **AV.11**, but it
+  is a product effort, not a rendering one.
+- Weather / arena events.
 
 ---
 
 # JOURNAL
 
-*(à remplir au fil des tickets : date, ticket, commit, mesure FPS avant/après,
-et surtout ce qui a coûté du temps et ne doit pas être redécouvert)*
-
-| Date | Ticket | Commit | FPS avant → après | Leçon |
+| Date | Ticket | Commit | FPS before → after | Lesson |
 |---|---|---|---|---|
-| 2026-09-08 | AV.0 | `a54b438` | — | `ticker.FPS` de Pixi ne rapporte QUE la dernière frame (`1000/elapsedMS`) : le lire une fois par seconde échantillonne une frame arbitraire et affiche du bruit. On compte les frames sur une fenêtre de 500 ms. |
-| 2026-09-08 | AV.1 | `a54b438` | — | Voir la note ci-dessous sur la période de tuile — c'est le seul vrai piège du ticket. |
-| 2026-09-08 | AV.3 | *(non commité)* | à relever | Texture de segment ombrée. **`resolution` est la clé du ticket** : la source porte 4× les pixels tout en DÉCLARANT la même taille logique (24×24), donc `scale = radius / SNAKE_RADIUS` reste vrai partout et aucun site d'appel ne change (R1 respecté sans effort). Suréchantillonner était nécessaire : le rayon monte à ×3 à score 10 000 et ×5,5 à 50 000 — un aplat survivait à ça, un dégradé non. **Dégradé radial à DEUX cercles, cœur décalé en haut-à-gauche** : c'est le décalage qui fait le volume, un dégradé centré lit comme un anneau plat. Niveaux en **gris** parce que `tint` MULTIPLIE — 1.0 laisse la couleur intacte, rien ne peut décaler une teinte. ⚠ Effet de bord attendu : niveau moyen ~0,75 donc serpents et pastilles ~25 % plus sombres qu'avant. |
-| 2026-09-08 | AV.2b | *(non commité)* | à relever | Clignotement des halos + orbes de cadavre 30 % plus lumineux (demande user). **Phase ET vitesse randomisées par pastille** : sur une horloge partagée sans décalage, tous les halos respirent à l'unisson — ça se lit comme un bug de stroboscope, pas comme un champ vivant. Désynchronisé, le même effet devient du scintillement d'ambiance. **Seul le halo respire, jamais la pastille** (R1 : la vérité lisible du jeu ne s'anime pas pour décorer). Horloge murale (`performance.now()`) et non accumulateur : rien ne dérive, et un onglet en arrière-plan reprend à la bonne phase au lieu de rejouer son absence. Le rapport 30 % tient au creux comme au sommet du cycle (les deux alphas oscillent proportionnellement). |
-| 2026-09-08 | AV.2 | *(non commité)* | à relever | Halo = sprite **frère** de la pastille dans un calque dédié, jamais son enfant : dans `foodLayer` la séquence deviendrait pastille/halo/pastille/halo, et le batcher ne fusionne que des sprites **consécutifs** partageant texture ET mode de fusion. Un calque chacun = 2 appels de dessin quel que soit le nombre de pastilles. — Texture fabriquée sur un **canvas 2D** (`CanvasSource`) et non avec `FillGradient` : contrôle exact de l'alpha à chaque palier. La **courbe** est le sujet : une rampe linéaire 1→0 lit comme un cône plat, pas comme de la lumière ; il faut une décroissance de type inverse-carré (cœur vif, chute rapide, longue jupe faible). |
-| 2026-09-08 | AV.1b | `a54b438` | — | Overlays de debug (fantôme serveur vert + bulle AoI) **éteints pour les joueurs** (décision user : le fantôme vert donne une impression de latence). **Mis derrière `?debug` dans l'URL, PAS supprimés** — c'est l'instrument de diagnostic d'A4.14. Retirer la mesure pour masquer le symptôme transforme un bug connu en bug inconnu. Param d'URL et non drapeau de build : activable sur le site EN LIGNE sans rebuild. Aucun risque d'avantage (A1.8) : n'affiche que notre propre position serveur et notre propre rayon d'AoI, jamais un adversaire. |
+| 2026-09-08 | AV.0 | `a54b438` | — | Pixi's `ticker.FPS` reports the LAST frame only (`1000/elapsedMS`): reading it once a second samples one arbitrary frame and prints noise. Count frames over a 500 ms window instead. |
+| 2026-09-08 | AV.1 | `a54b438` | — | See the tile-period note at the bottom — the only real trap in the ticket. |
+| 2026-09-08 | AV.1b | `a54b438` | — | Debug overlays (green server ghost + AoI bubble) **turned off for players** (user call: the green ghost reads as latency). **Put behind `?debug` in the URL, NOT deleted** — it is A4.14's diagnostic instrument, and removing the measurement to hide the symptom turns a known bug into an unknown one. A query param rather than a build flag: switchable against the LIVE site with no rebuild. No advantage risk (A1.8): it shows only our own server position and our own AoI radius, never an opponent. |
+| 2026-09-08 | AV.2 | `0ed9fdf` ⛔ | — | Halo as a **sibling** sprite in a dedicated layer, never a child: inside `foodLayer` the order becomes pellet/halo/pellet/halo, and the batcher only merges **consecutive** sprites sharing a texture AND a blend mode. One layer each = 2 draw calls regardless of pellet count. — Texture built on a **2D canvas** (`CanvasSource`) rather than with `FillGradient`: exact control of alpha at every stop. The **curve** is the subject: a linear 1→0 ramp reads as a flat cone, not as light; an inverse-square falloff is needed (bright core, fast decay, long faint skirt). |
+| 2026-09-08 | AV.2b | `0ed9fdf` ⛔ | — | Halo twinkle + corpse orbs 30% brighter (user request). **Phase AND speed randomised per pellet**: on a shared clock with no offset every halo breathes in unison, which reads as a strobing bug rather than a living field. Wall clock (`performance.now()`), not an accumulator: nothing drifts, and a backgrounded tab resumes on the right phase instead of replaying its absence. |
+| 2026-09-08 | AV.3 | `24e8b7c` | to record | **`resolution` is the key to the ticket**: the source carries 4× the pixels while DECLARING the same logical size, so `scale = radius / SNAKE_RADIUS` stays true everywhere and no call site changes (R1 satisfied for free). Supersampling was necessary: radius reaches ×3 at score 10 000 and ×5.5 at 50 000 — a flat fill survived that, a gradient would not. |
+| 2026-09-08 | AV.4 | `c2c2af9` | to record | See the AV.4 note. |
+| 2026-09-08 | AV.5 | *(uncommitted)* | to record | See the AV.5 note. |
 
-## AV.3b — LA COMPARAISON MESURÉE (2026-09-08) — à ne pas refaire
+## AV.3b — THE MEASURED COMPARISON (2026-09-08) — do not redo this
 
-Le user a trouvé notre rendu « pas propre » sans savoir pourquoi, et a
-supposé une histoire de couleurs pâles. Plutôt que de trancher à l'œil, les
-deux captures (la nôtre + slither) ont été **échantillonnées pixel par
-pixel** (`sips -s format bmp` puis parsing BMP en Python pur — la machine
-n'a ni PIL ni ImageMagick, cf. [[front-redesign]]).
+The user found our render "not clean" without knowing why, and guessed it
+was about pale colours. Rather than settle it by eye, both captures (ours
+and slither's) were **sampled pixel by pixel** (`sips -s format bmp` then a
+pure-Python BMP parse — the machine has neither PIL nor ImageMagick, cf.
+[[front-redesign]]).
 
-| | Nous | slither.io |
+| | Ours | slither.io |
 |---|---|---|
-| Saturation du corps (médiane) | **0,79** | **0,50** |
-| Saturation, étendue | 0,38 → 0,80 | **0,49 → 0,51** |
-| Valeur du corps (médiane) | 0,52 | 0,63 |
-| Valeur, pic | 0,74 | 0,87 |
-| Saturation du fond | **0,39** | **0,21** |
-| Valeur du fond | 0,200 | 0,165 |
-| Contraste corps/fond | ×2,6 | ×3,8 |
-| Période du motif hexagonal | 288 px | 183 px |
+| Body saturation (median) | **0.79** | **0.50** |
+| Saturation, spread | 0.38 → 0.80 | **0.49 → 0.51** |
+| Body value (median) | 0.52 | 0.63 |
+| Value, peak | 0.74 | 0.87 |
+| Floor saturation | **0.39** | **0.21** ⚠ see AV.3c |
+| Floor value | 0.200 | 0.165 |
+| Body/floor contrast | ×2.6 | ×3.8 |
+| Hex pattern period | 288 px | 183 px |
 
-**Les trois enseignements, par ordre d'importance :**
+**Three findings, by importance:**
 
-1. **Le « chapelet de perles » ne venait PAS de la silhouette.** Calculé :
-   avec `r = 12` et `SNAKE_SPACING = 10`, la bosse du contour vaut
-   `12 − √(144−25) = 1,09 px` sur 24 de large, soit **4,5 %** — invisible.
-   Le coupable était le **dégradé RADIAL d'AV.3** (bord à 0,46) : chaque
-   disque peignait son liseré sombre par-dessus le cœur clair du précédent,
-   soit une arche sombre tous les 10 px. **Corrigé en changeant la NATURE
-   du dégradé, pas son intensité** : linéaire, perpendiculaire à la marche
-   (rotation du sprite sur le cap local). Le long du corps la valeur devient
-   constante → aucun arc interne possible ; en travers le contraste reste
-   fort → un vrai cylindre. Signature confirmée par la mesure : chez slither
-   H et S sont **verrouillés** pendant que V double.
-2. **Notre fond était BLEU** (S = 0,39), le leur est une ardoise neutre
-   (S = 0,21). Un bleu saturé sous un serpent bleu saturé s'empâte. Passer
-   au neutre fait monter le contraste corps/fond de ×2,6 à ×3,8 **sans rien
-   éclaircir**. Différence invisible tant qu'on ne la mesure pas.
-3. **La dispersion de saturation trahit un défaut de forme.** `tint` étant
-   une multiplication, S devrait être CONSTANT sur le corps. Nos 0,38 → 0,80
-   étaient des pixels de bord : trop de périmètre, donc trop de contour —
-   confirmation indépendante du point 1.
+1. **The "string of beads" was NOT the silhouette.** Computed: with `r = 12`
+   and `SNAKE_SPACING = 10`, the outline scallop is
+   `12 − √(144−25) = 1.09 px` out of 24 wide, i.e. **4.5%** — invisible.
+   The culprit was AV.3's **RADIAL** gradient (rim at 0.46): every disc
+   painted its dark rim over the bright middle of the previous one, an arc
+   every 10 px. **Fixed by changing the NATURE of the gradient, not its
+   strength**: linear, perpendicular to travel (sprite rotated onto the
+   local heading). Along the body the value becomes constant → no internal
+   arc is possible; across it the contrast stays strong → a real cylinder.
+   Confirmed by the measurement: in the reference, H and S are **locked**
+   while V doubles.
+2. **Our floor was BLUE** and the reference's looked neutral — **this
+   conclusion was later shown wrong, see AV.3c.**
+3. **Saturation spread betrays a shape defect.** Since `tint` multiplies, S
+   should be CONSTANT across a body. Our 0.38 → 0.80 were edge pixels: too
+   much perimeter, therefore too much outline — an independent confirmation
+   of finding 1.
 
-⚠ Mesure non appliquée, laissée au user : nos hexagones sont **57 % plus
-grands** que la référence (`HEX_R_WORLD = 48`, il faudrait ~31). Contredit
-son réglage du même jour (+20 %), donc c'est son arbitrage, pas le nôtre.
+⚠ Measurement not applied, left to the user: our hexagons are **57% larger**
+than the reference (`HEX_R_WORLD = 48`, ~31 would match). That contradicts
+his own +20% adjustment the same day, so it is his call, not ours.
 
-## AV.3d — LE FLOU : deux défauts Pixi jamais réglés
+## AV.3c — THE FLOOR, AND A MEASUREMENT ERROR OF MINE
 
-Symptôme rapporté par le user : « un effet de blur produit par le sol
-lorsqu'on joue », **invisible sur un arrêt sur image**. Ce dernier détail
-est le diagnostic : un flou constant se voit sur une image fixe ; un flou
-qui n'apparaît qu'en mouvement est du **crénelage de minification**.
+The AV.3b conclusion "their floor is neutral" was **wrong**. It came from a
+percentile taken over the WHOLE frame, diluted by every region a halo had
+washed out. Sampling the cells themselves — values supplied by the user,
+`#18212d` and `#0e1621` — shows the reference floor is decidedly **BLUE**:
+hue 214, saturation 0.47 to 0.58. Ours was the desaturated one.
 
-**Cause 1 — `resolution` n'était jamais fixé.**
-`AbstractRenderer.defaultOptions.resolution = 1`. Sur tout écran HiDPI
-(n'importe quel Mac récent, `devicePixelRatio = 2`), on rend à la moitié
-des pixels réels et le compositeur agrandit ×2. **Toute l'image est
-ramollie, uniformément.** Correctif : `resolution: window.devicePixelRatio`
-+ **`autoDensity: true`** (obligatoire : sans lui la taille CSS du canvas
-suit le backing store et le jeu s'affiche ×2 trop grand).
+**Lesson: a statistic over a whole image does not measure a local object.**
 
-**Cause 2 — la tuile était minifiée sans mipmap.**
-362 texels pour 144 unités monde = 2,51 texels/unité, contre 1,3 pixel
-écran/unité → **minification ×1,93**. Or `TextureSource.defaultOptions`
-porte `mipLevelCount: 1` : aucun mipmap, donc un texel sur quatre est
-échantillonné. Immobile ça tient, en mouvement ça rampe.
+The real difference was never the cell colour. Measured on matching
+close-ups:
 
-**Les deux se corrigent d'un coup** : rendre à la résolution du device
-supprime l'agrandissement ET ramène la tuile à ~1 texel par pixel device,
-où il n'y a plus rien à créneler.
-
-⚠ **Vérifié, pas supposé** : `app.screen` est documenté **en pixels CSS**,
-indépendant de `resolution` → `viewScale()` et le champ de vision sont
-inchangés au bit près. C'était la condition bloquante : le FOV est un
-invariant d'ÉQUITÉ (AF.3bis), pas un réglage cosmétique.
-
-⚠ **Coût** : ×4 de travail fragment sur un écran ×2. Si le compteur AV.0
-décroche des 60 fps, plafonner à 1.5 — **jamais revenir à 1**.
-
-**Cause 3 (mineure, mon erreur)** : `shadowBlur` était à `0.28r`, soit
-~15 px écran de dégradé doux autour de CHAQUE cellule — le sol n'avait
-plus d'arêtes du tout. Ramené à `0.09r`. L'ombre de la référence est une
-lèvre sombre fine, pas un halo : elle dit « en relief », pas « flou ».
-
-## AV.3e — LE SOL N'A PAS CRÉÉ LE PROBLÈME, IL L'A RÉVÉLÉ
-
-Le user rapporte, après AV.3d, un flou résiduel **et une sensation de
-nausée**. Ce second mot déplace le diagnostic : une nausée en jeu vient du
-**mouvement de caméra**, pas d'une texture molle.
-
-**Deux causes distinctes, à ne pas confondre.**
-
-**(a) Le flou résiduel — rééchantillonnage sous-pixel.** `camera()` posait
-`world.position` à une valeur FRACTIONNAIRE. Le monde tombe donc sur une
-phase sous-pixel différente à chaque frame et toutes les textures sont
-rééchantillonnées 60 fois par seconde. Immobile : net. En mouvement : ça
-NAGE. Ce n'est pas un réglage de filtrage, c'est l'offset qui ne tient
-jamais en place. **Correctif : arrondir la translation aux pixels DEVICE**
-(pas CSS — après AV.3d on rend à `devicePixelRatio`, arrondir en CSS
-laisserait un demi-pixel device de tremblement). Coût : un demi-pixel CSS
-de placement caméra, imperceptible.
-
-**(b) LA VRAIE CAUSE DE FOND — la caméra dérive toute seule. NON CORRIGÉE.**
-`CAMERA_RATE = 0.15` (`session.ts:117`) = lissage exponentiel, constante de
-temps ~110 ms : la caméra traîne en permanence derrière la tête. Et
-`session.ts:362` **resynchronise `predicted.x/y` sur la vérité serveur** —
-or **A4.14 est OUVERT** : divergence médiane 25 px, max mesuré 218 px. À
-chaque correction la cible saute, puis la caméra glisse ~110 ms. **Le décor
-défile sans que le joueur ait rien demandé** : flux visuel découplé de
-l'input = nausée, par définition.
-
-**Pourquoi ça n'existait pas avant AV.1 :** le sol était un aplat + 900
-points épars. Une glissade de caméra y était **invisible**. Sur une trame
-régulière et contrastée, chaque micro-glissade devient lisible. Le motif
-n'a rien cassé — il a rendu visible un défaut déjà là.
-
-**Pourquoi slither ne l'a pas :** pas de réconciliation qui saute comme la
-nôtre, et une caméra bien plus serrée.
-
-**Atténuation appliquée (demande user)** : contraste du sol −20 %
-(amplitude TOP↔GAP 17,8 → 14,2 en luminance, milieu ancré). Ça ne supprime
-pas le mouvement, ça baisse le volume auquel le sol le rapporte.
-**Mitigation, pas remède.**
-
-**À TESTER ENSUITE, dans cet ordre :**
-1. `CAMERA_RATE` 0.15 → 0.35 (caméra plus serrée, moins de glissade).
-   Une ligne, réversible. ⚠ Change le FEELING de jeu → D85, essai à
-   valider par le user, jamais imposé.
-2. Si ça suffit, **le vrai correctif reste A4.14** (supprimer la
-   divergence à la source). Régler la caméra ne fait que masquer un
-   netcode qui saute.
-
-## AV.3g — LA CAUSE RÉELLE : voile lumineux, pas flou. RÉSOLU.
-
-**Trouvée par le user**, avec les interrupteurs B/G/P d'AV.3f : couper le
-calque de halos (`G`) rend l'écran sain ; rien d'autre n'y change quoi que
-ce soit. Ni le sol, ni la caméra.
-
-**Ce n'était donc PAS du flou. C'était du VEILING GLARE.** La surface d'un
-halo va comme le **carré** du rayon, et à `GLOW_SPREAD = 8` l'arithmétique
-est accablante :
-
-| réglage | 300 pastilles | 450 pastilles |
+| | Ours | Reference |
 |---|---|---|
-| spread 8 | **123 % de l'écran** | **184 %** |
-| spread 4 | 31 % | 46 % |
-| **spread 3** | **17 %** | 26 % |
+| Median luminance | 36.8 | 26.7 |
+| p85 / p98 | 36.8 / 50.7 | 37.0 / 51.1 |
+| Pixels inside a seam | **13%** | **30%** |
 
-L'écran entier était tapissé de lumière additive, plus d'une fois. La
-lumière additive relève le niveau de noir **partout**, le contraste
-s'effondre, et l'œil lit ça comme une image hors focus. AV.2b a ensuite
-fait **respirer** ce tapis : c'est ce qui a transformé une image laide en
-image nauséeuse.
+Two findings hide in that table. First, our brightest tones were **already
+right**; the floor read pale because **cells covered 87% of the surface
+against their 70%**. Widening the seams lowers the average without a single
+colour getting darker. Second, our p50 **equalled** our p85 — a plateau,
+i.e. perfectly flat cell interiors — while the reference spreads
+continuously, because every one of its cells carries a gradient. Flat faces
+are what make a grid look like a wireframe instead of a floor.
 
-**Le 3 est MESURÉ.** Profils radiaux de pastilles isolées dans la
-référence — excès de luminance 100 / 91 / 71 / 48 / 22 / 1 % à 0, 2, 4, 6,
-8, 10 px, sur un cœur de 2-4 px : leur halo meurt à **2 à 3 fois** le rayon
-de la pastille. Les larges nappes colorées de leurs captures ne sont pas de
-gros halos, ce sont **beaucoup de petits qui s'additionnent** là où les
-pastilles s'agglutinent — comportement offert par le blending additif.
+Hence: cells at `0.84` of the lattice pitch (coverage goes as the square →
+70%), rounded corners, a per-cell vertical gradient, and a drop shadow into
+the seam.
 
-**Trois leçons de méthode, à ne pas perdre :**
-1. **Mes trois diagnostics précédents étaient faux** (tuile trop molle,
-   `resolution`, dérive caméra). Ils ont produit de vraies améliorations —
-   `resolution: devicePixelRatio` et le snapping pixel restent des
-   correctifs justes — mais **aucun n'était la cause**. Empiler des
-   correctifs plausibles n'est pas un diagnostic.
-2. **L'interrupteur a tranché en une minute** ce que trois cycles de
-   raisonnement n'avaient pas trouvé. Face à un symptôme visuel diffus,
-   construire l'A/B AVANT de corriger.
-3. Le détail qui aurait dû mettre sur la voie dès le début : « ce n'est pas
-   flagrant sur un arrêt sur image ». Un voile additif est *constant*, mais
-   son caractère insupportable vient de la **pulsation** — donc invisible
-   sur une image fixe. J'ai lu ce mot comme « crénelage de minification »
-   et je m'y suis tenu trop longtemps.
+## AV.3d — THE BLUR: two Pixi defaults never set
 
-## AV.3h — GLOW SUPPRIMÉ, et ce qu'il reste à faire du bouton B
+Symptom as reported: "a blur effect produced by the floor while playing",
+**invisible on a still**. That last detail is the diagnosis: constant blur
+shows on a still image; blur that only appears in motion is **minification
+aliasing**.
 
-**Décision user (2026-09-08), après tests et avis extérieurs d'amis : le
-glow des pastilles est RETIRÉ**, pas seulement réduit. Réduit à 3 il était
-tolérable ; sans lui le confort est meilleur, et c'est le critère qui prime
-(D85 : l'expérience de jeu est le standard — « ça ressemble à la
-référence » ne bat pas « on peut y jouer une heure »).
+**Cause 1 — `resolution` was never set.**
+`AbstractRenderer.defaultOptions.resolution = 1`. On any HiDPI screen (every
+recent Mac, `devicePixelRatio = 2`) we rendered half the real pixels and let
+the compositor scale up. **The whole image was uniformly softened.** Fix:
+`resolution: window.devicePixelRatio` + **`autoDensity: true`** (mandatory —
+without it the canvas CSS size follows the backing store and the game
+displays twice too large).
 
-Tout le code du glow est supprimé : `makeGlowTexture`, `GlowView`,
-`glowLayer`, `glowTexture`, `glowSprites`, `pulseGlows`, les constantes
-`GLOW_*` et `PULSE_*`, les bascules `G` et `P`, et les entrées glow de
-`addFood` / `removeFood` / `clear()` / `stats()`. **Une pierre tombale est
-laissée dans `render.ts`** (section AV.2) avec la raison chiffrée : l'idée
-est assez séduisante pour que quelqu'un veuille la reprendre, et la
-contrainte à respecter alors est la **COUVERTURE TOTALE** (nombre × aire),
-jamais l'aspect d'un halo isolé — c'est ce chiffre-là qui rendait le jeu
-injouable, et il est invisible quand on inspecte un halo à la fois.
+**Cause 2 — the tile was minified with no mipmap.**
+362 texels per 144 world units = 2.51 texels/unit against 1.3 screen
+pixels/unit → **×1.93 minification**. And `TextureSource.defaultOptions`
+carries `mipLevelCount: 1`: no mipmaps, so one texel in four is sampled.
+Still it holds; in motion it crawls.
 
-Fond conservé tel quel (`tiles`). Bascule `B` conservée.
+**Both are fixed at once** by rendering at device resolution: it removes the
+upscale AND brings the tile back to ~1 texel per device pixel, where there
+is nothing left to alias.
 
-### Le bouton B doit devenir une VRAIE préférence — pas encore fait
+⚠ **Verified, not assumed**: `app.screen` is documented **in CSS pixels**,
+independent of `resolution` → `viewScale()` and the field of view are
+unchanged bit for bit. That was the blocking condition: FOV is a **fairness**
+invariant (AF.3bis), not a cosmetic setting.
 
-Avis donné au user, qu'il a suivi sur le principe :
+⚠ **Cost**: 4× the fragment work on a 2× display. If the AV.0 counter drops
+off 60 fps, cap at 1.5 — **never go back to 1**.
 
-**Pour :** l'épisode prouve que le confort visuel varie d'une personne à
-l'autre ; le sol est purement décoratif ; **aucun enjeu d'équité** (à la
-différence du champ de vision, AF.3bis).
+**Cause 3 (minor, my error)**: `shadowBlur` was `0.28r`, i.e. ~15 screen
+pixels of soft gradient around EVERY cell — the floor had no edges left.
+Reduced to `0.09r`. The reference's shadow is a thin dark lip, not a halo:
+it says "raised", it does not say "blurred".
 
-**Ce qui manque avant que ce soit une fonctionnalité :**
-1. **Persistance `localStorage`** — sinon le choix est perdu au rechargement
-   et c'est une nuisance, pas un réglage.
-2. **Retirer le bandeau de debug**, le remplacer par un retour discret.
-3. **NE PAS garder `none` dans les trois choix proposés au joueur.** Tout
-   AV.1 repose sur le constat qu'une trame RÉGULIÈRE est ce qui rend la
-   vitesse lisible (les 900 points aléatoires n'y arrivaient pas).
-   Proposer « aucun motif » laisse un joueur dégrader sa propre perception
-   de vitesse sans le savoir. **Triplet proposé : `relief` / `plat` /
-   `discret`** (même trame, contraste très réduit, pour ceux que les motifs
-   fatiguent) — les trois gardent la référence de mouvement.
-4. À terme : un menu de réglages. Une touche globale à une lettre est une
-   ressource rare quand le jeu grandit.
+## AV.3e — THE FLOOR DID NOT CREATE THE PROBLEM, IT REVEALED IT
 
-## AV.4 — les yeux (livré 2026-09-08)
+After AV.3d the user reported residual blur **and nausea**. That second word
+moves the diagnosis: nausea in a game comes from **camera motion**, not from
+a soft texture.
 
-Quatre sprites par serpent, enfants de `root` : ils héritent donc de
-l'alpha (fondu graced/offline) et meurent avec lui, sans code de plus.
+**Two distinct causes, not to be conflated.**
 
-**Texture PLATE et non celle du corps** : le dégradé cylindrique d'AV.3b
-aurait posé une bande claire horizontale en travers de chaque œil — un
-reflet mensonger sur une sphère. La référence n'a aucun ombrage sur ses
-yeux. Même taille logique que `circleTexture`, donc
-`scale = r / SNAKE_RADIUS` continue de marcher partout.
+**(a) Residual blur — sub-pixel resampling.** `camera()` set
+`world.position` to a FRACTIONAL value, so the world landed on a different
+sub-pixel phase every frame and every texture was resampled 60 times a
+second. Still: sharp. Moving: it SWIMS. Not a filtering setting — the offset
+never sitting still. **Fix: round the translation to DEVICE pixels** (not
+CSS — after AV.3d we render at `devicePixelRatio`, and CSS rounding would
+leave half a device pixel of wobble). Cost: half a CSS pixel of camera
+placement, imperceptible.
 
-**Proportions, toutes en fractions du rayon du serpent** (donc elles
-suivent la croissance gratuitement), et vérifiées numériquement :
-- centre de l'œil à `0.581 r` du centre de la tête, bord extérieur à
-  `1.001 r` → les yeux affleurent exactement la silhouette, comme dans la
-  référence ;
-- pupille : rayon `0.193 r`, débattement `0.168 r` → bord au plus loin
-  `0.361 r` contre un œil de `0.420 r`, soit **14 % de marge : la pupille
-  ne peut jamais déborder de l'œil**, à aucune taille.
+**(b) THE DEEPER CAUSE — the camera drifts on its own. NOT FIXED.**
+`CAMERA_RATE = 0.15` (`session.ts:117`) is exponential smoothing with a
+~110 ms time constant, so the camera permanently trails the head. And
+`session.ts:362` **resynchronises `predicted.x/y` onto server truth** — and
+**A4.14 is OPEN**: median divergence 25 px, measured max 218 px. Every
+correction makes the target jump, then the camera slides for ~110 ms. **The
+scenery scrolls without the player asking**: visual flow decoupled from
+input, which is the definition of motion sickness.
 
-**RÈGLE D'INFORMATION — la seule vraie décision du ticket.** Seul le
-joueur local transmet `lookAngle` (= `input.angle`, la valeur même envoyée
-au serveur : les yeux ne peuvent donc pas raconter une intention
-différente de celle qui est jouée). **Les adversaires n'en reçoivent
-jamais** : afficher leur curseur annoncerait leur virage AVANT qu'ils le
-prennent, soit une information que le joueur ne pouvait pas obtenir —
-exactement ce qu'A1.8 et AF.3bis interdisent. Leurs pupilles suivent leur
-**cap visible**, qui ne révèle rien de neuf.
+**Why it did not exist before AV.1:** the floor was a flat fill plus 900
+sparse dots, on which a camera slide was **invisible**. On a regular
+contrasted lattice, every micro-slide becomes legible. The pattern broke
+nothing — it made a pre-existing defect visible.
 
-Effet de bord recherché : chez le joueur local, visée et cap diffèrent
-pendant un virage (la visée précède le corps), et c'est ce décalage qui
-rend les yeux expressifs — ils regardent où tu braques avant que le
-serpent y arrive.
+**Mitigation applied (user request)**: floor contrast −20% (TOP↔GAP
+amplitude 17.8 → 14.2 in luminance, mid anchored). It does not remove the
+motion, it lowers the volume at which the floor reports it. **Mitigation,
+not cure.**
 
-## AV.4b — le cap instable (corrigé 2026-09-08)
+**NOTE: this was NOT the cause of the reported nausea — see AV.3g.** It
+remains a real open defect regardless.
 
-Rapporté par le user comme « les yeux des adversaires buggent », attribué
-aux bots qui n'ont pas de souris. **Hypothèse fausse, et la corriger
-changeait la priorité** : la souris ne concerne que le joueur local ; pour
-tout le monde le regard venait de `atan2(tête − body[0])`. Le défaut
-frappait donc **aussi un adversaire humain**, en partie payante.
+**To test later, in order:**
+1. `CAMERA_RATE` 0.15 → 0.35 (tighter camera, less slide). One line,
+   reversible. ⚠ Changes game FEEL → D85, must be validated by the user,
+   never imposed.
+2. The real fix is **A4.14** (remove the divergence at source). Tuning the
+   camera only masks netcode that jumps.
 
-**Deux modes de panne, tous deux fréquents en jeu réel :**
-1. `updateBody` (`session.ts:422`) sème le corps **au point de la tête**.
-   Un serpent qui entre dans l'AoI a donc `body[0] === tête` →
-   `atan2(0,0) = 0` → yeux plein Est pendant quelques frames.
-2. Quand la position d'un distant **stagne** (paquet en retard,
-   dead reckoning à sec), `body[0]` reconverge **sur** la tête. Le vecteur
-   tend vers zéro et son angle n'est plus que du bruit → pupilles en
-   vrille.
+## AV.3f — THE A/B SWITCHES
 
-**Correctif :** parcourir le corps jusqu'au premier tracer situé à plus de
-`SNAKE_SPACING * 0.25` de la tête (c'est l'espacement, pas le rayon, qui
-gouverne la séparation), sinon **conserver le dernier cap valide** stocké
-dans le `SnakeView`. Les yeux restent **masqués** tant qu'aucun cap n'est
-digne de confiance : deux frames sans yeux ne se voient pas, deux frames
-d'yeux tournés dans la mauvaise direction se lisent comme un bug — c'est
-d'ailleurs exactement ainsi que ça a été rapporté. Le joueur local a un
-repli utile (`lookAngle`), donc son serpent ne spawn jamais sans yeux.
+Three suspects, three toggles, so the cause could be **isolated** instead of
+argued about: `B` floor style, `G` halo layer, `P` halo pulse. Plus a
+`none` floor mode as the control condition — if the sensation survives a
+floor with no pattern at all, the floor was never the cause.
 
-**Bénéfice secondaire :** `head.rotation` souffrait du même calcul depuis
-AV.3b. Invisible jusqu'ici — un dégradé sur un disque ne trahit pas une
-rotation instable — mais deux yeux le hurlent. Leçon générale : **ajouter
-un repère visuel révèle les défauts de tout ce à quoi il est attaché.**
+It paid for itself immediately: it found the cause in one minute, where
+three rounds of reasoning had not. `G` and `P` were removed with the glow;
+`B` stays and is on its way to becoming a player preference (AV.3h).
 
-## AV.1 — la note à ne pas redécouvrir
+## AV.3g — THE REAL CAUSE: veiling glare, not blur. RESOLVED.
 
-Le réseau hexagonal se répète sur `3R × √3·R`. Comme une texture fait un
-nombre **entier** de pixels et que `√3` est irrationnel, **aucun rayon `R`
-ne rend les deux côtés entiers**. Arrondir l'un des deux décale le point de
-raccord par rapport à la géométrie dessinée : c'est exactement la couture
-qu'on cherche à éviter.
+**Found by the user** with the AV.3f switches: cutting the halo layer (`G`)
+restores a healthy image; nothing else changes anything. Not the floor, not
+the camera.
 
-**Méthode retenue — on inverse la dérivation.** On choisit d'abord les deux
-tailles entières en pixels, avec un rapport aussi proche de `√3` qu'on
-veut, puis on en déduit `R` :
+**So it was never blur. It was VEILING GLARE.** Halo area goes as the
+**square** of the radius, and at `GLOW_SPREAD = 8` the arithmetic is
+damning:
 
-- `362 / 209 = 1.7320574` contre `√3 = 1.7320508` → erreur relative `6.6e-6`
-- `3R = 362` **exactement** (`R = 362/3`) et `1.5R = 181` **exactement**
-- seul `√3·R = 209.0008` diffère de `TILE_H = 209` → **0.0008 px** de
-  décalage au raccord vertical, sur toute la vie du jeu
+| setting | 300 pellets | 450 pellets |
+|---|---|---|
+| spread 8 | **123% of the screen** | **184%** |
+| spread 4 | 31% | 46% |
+| **spread 3** | **17%** | 26% |
 
-L'erreur **ne s'accumule pas** : le GPU répète la tuile à l'identique, il ne
-reconstruit jamais un réseau idéal. Le seul écart possible est ce 0.0008 px,
-présent une fois, à chaque bord.
+The whole screen was carpeted in additive light, more than once over.
+Additive light raises the black level **everywhere**, contrast collapses,
+and the eye reads that as being out of focus. AV.2b then made the carpet
+**breathe**, which is what turned an ugly frame into a nauseating one.
 
-Seconde condition, indépendante de la première : chaque centre du réseau est
-dessiné **neuf fois** (lui-même + les huit décalages voisins), sinon les
-cellules à cheval sur le bord sont tranchées et le raccord se voit — l'artefact
-de tuilage classique, qu'on confond facilement avec une mauvaise taille de tuile.
+**The 3 is MEASURED.** Radial profiles of isolated pellets in the reference:
+excess luminance 100 / 91 / 71 / 48 / 22 / 1% at 0, 2, 4, 6, 8, 10 px over a
+2–4 px core — a halo that dies at **2 to 3 times** the pellet radius. The
+broad coloured washes in their captures are not big halos: they are **many
+small ones summing** where pellets cluster, which additive blending gives
+for free.
+
+**Three method lessons, not to be lost:**
+1. **My three previous diagnoses were wrong** (tile too soft, `resolution`,
+   camera drift). They produced real improvements —
+   `resolution: devicePixelRatio` and pixel snapping remain correct fixes —
+   but **none was the cause**. Stacking plausible fixes is not a diagnosis.
+2. **The switch settled in one minute** what three rounds of reasoning had
+   not. Faced with a diffuse visual symptom, build the A/B **before**
+   fixing.
+3. The detail that should have pointed the way from the start: "it is not
+   obvious on a still". An additive veil is *constant*, but what makes it
+   unbearable is the **pulsing** — hence invisible on a frozen frame. I read
+   that word as "minification aliasing" and held on to it far too long.
+
+## AV.3h — GLOW REMOVED, and what remains to do with button B
+
+**User decision (2026-09-08), after testing and outside opinions from
+friends: the pellet glow is REMOVED**, not merely reduced. At spread 3 it
+was tolerable; without it comfort is better, and that is the criterion that
+wins (D85: the play experience is the standard — "it looks like the
+reference" does not outrank "you can play it for an hour").
+
+All glow code is gone: `makeGlowTexture`, `GlowView`, `glowLayer`,
+`glowTexture`, `glowSprites`, `pulseGlows`, the `GLOW_*` and `PULSE_*`
+constants, the `G` and `P` toggles, and the glow branches of `addFood` /
+`removeFood` / `clear()` / `stats()`. **A tombstone is left in `render.ts`**
+(section AV.2) with the costed reason: the idea is tempting enough that
+someone will want it back, and the constraint to design against then is
+**TOTAL COVERAGE** (count × area), never how one isolated halo looks — that
+is the number that made the game unplayable, and it is invisible when you
+inspect one halo at a time.
+
+### Button B must become a REAL preference — not done yet
+
+**For:** the episode proves visual comfort varies between people; the floor
+is purely decorative; **no fairness stake** (unlike the field of view,
+AF.3bis).
+
+**What is missing before it is a feature:**
+1. **`localStorage` persistence** — otherwise the choice is lost on reload
+   and it is a nuisance, not a setting.
+2. **Drop the debug banner**, replace it with discreet feedback.
+3. **Do NOT keep `none` among the three player-facing choices.** All of AV.1
+   rests on the finding that a REGULAR lattice is what makes speed legible
+   (900 random dots did not). Offering "no pattern" lets a player degrade
+   their own perception of speed without knowing it. **Proposed triplet:
+   `relief` / `flat` / `subtle`** (same lattice, much reduced contrast, for
+   people whom patterns tire) — all three keep the motion reference.
+4. Eventually: a settings menu. A one-letter global key is a scarce resource
+   as the game grows.
+
+## AV.4 — the eyes (delivered 2026-09-08)
+
+Four sprites per snake, children of `root`, so they inherit the snake's
+alpha (graced/offline fade) and die with it, with no extra code.
+
+**FLAT texture, not the body's**: AV.3b's cylinder gradient would have laid
+a horizontal bright band across each eye — a lying highlight on a sphere.
+The reference has no shading on its eyes at all. Same logical size as
+`circleTexture`, so `scale = r / SNAKE_RADIUS` keeps working everywhere.
+
+**Proportions, all as fractions of the snake's radius** (so they follow
+growth for free), and verified numerically:
+- eye centre at `0.581 r` from the head centre, outer edge at `1.001 r` →
+  the eyes sit exactly flush with the silhouette, as in the reference;
+- pupil: radius `0.193 r`, travel `0.168 r` → furthest edge `0.361 r`
+  against a `0.420 r` eye, i.e. **14% margin: the pupil can never spill out
+  of the eye**, at any size.
+
+**INFORMATION RULE — the only real decision in the ticket.** Only the local
+player passes `lookAngle` (= `input.angle`, the very value sent to the
+server, so the eyes cannot tell a story different from the one being
+played). **Opponents never get one**: showing their cursor would announce
+their turn BEFORE they take it — information the player could not otherwise
+have, which is exactly what A1.8 and AF.3bis exist to prevent. Their pupils
+follow their **visible heading**, which reveals nothing new.
+
+Intended side effect: for the local player, aim and heading differ during a
+turn (the aim leads the body), and that gap is what makes the eyes
+expressive — they look where you are steering before the snake gets there.
+
+## AV.4b — the unstable heading (fixed 2026-09-08)
+
+Reported as "opponents' eyes look buggy", attributed to bots having no
+mouse. **The hypothesis was wrong, and correcting it changed the
+priority**: the mouse only concerns the local player; for everyone else the
+gaze came from `atan2(head − body[0])`. So the defect hit **human opponents
+too**, in paid rounds.
+
+**Two failure modes, both frequent in a real game:**
+1. `updateBody` (`session.ts:422`) seeds the body **at the head position**.
+   A snake entering the AoI therefore has `body[0] === head` →
+   `atan2(0,0) = 0` → eyes snapped due East for a few frames.
+2. When a remote position **stalls** (late packet, dead reckoning out of
+   samples), `body[0]` converges back **onto** the head. The vector shrinks
+   to nothing and its angle becomes pure noise → pupils spin.
+
+**Fix:** walk the body to the first tracer further than
+`SNAKE_SPACING * 0.25` from the head (spacing, not radius, governs the
+separation), otherwise **keep the last good heading** stored on the
+`SnakeView`. The eyes stay **hidden** until a heading is trustworthy: two
+frames without eyes go unnoticed, two frames of eyes pointing the wrong way
+read as a bug — which is exactly how it was reported. The local player has a
+useful fallback (`lookAngle`), so our own snake never spawns eyeless.
+
+**Secondary benefit:** `head.rotation` suffered from the same computation
+since AV.3b. Invisible until now — a gradient on a disc does not betray an
+unstable rotation — but two eyes scream it. General lesson: **adding a
+visual reference reveals the defects of everything it is attached to.** That
+happened twice in one day; the hexagonal lattice had already exposed a
+pre-existing camera drift.
+
+## AV.5 — banded skins (delivered 2026-09-08)
+
+**This ticket defines the FORMAT the marketplace will sell**, and that is
+its real stake. A skin is **a list of colours plus a band width**. A few
+dozen bytes: no asset to store, none to serve, nothing to load at spawn.
+
+Above all it makes "never pay-to-win" a **property of the data** rather than
+a promise: a palette cannot encode a hitbox, a speed or a reach. An
+expensive skin is *structurally* incapable of buying an advantage.
+
+**The second tone is the SAME HUE** (S 0.22 / V 0.97) — a pale version of
+the animal, never a foreign colour. Two tones of one hue read as markings on
+a creature; two different hues read as a costume, and at a glance the player
+would stop being able to name who is who. **Identifying an opponent
+instantly is a gameplay need, not a style one.**
+
+**Zero cost, and here is why:** tracers keep their index for life (growth
+appends at the TAIL), so a segment's band is painted once at birth and never
+rewritten. No per-frame tint work, and the markings stay put on the body
+instead of scrolling along it.
+
+`BAND_SEGMENTS = 4`, i.e. ~1.7 body widths — the reference's proportion.
+Disconnected snakes stay **one tone**: a frozen body is a warning, not a
+place for decoration.
+
+⚠ Bug caught in passing: `session.ts` rebuilt `drawn` field by field for the
+boost case, which **erased the band palette** — a snake lost its skin
+exactly while it was interesting to look at. Fixed with a spread.
+
+## AV.11 — COLOUR IS NOT A SHARED IDENTITY (open, to be done with AV.9)
+
+Raised by the user on 2026-09-08: "I always see myself in blue, my friend
+does not recognise me by colour". **The defect is wider than that.**
+
+**Verified in the code:**
+- `PlayerState` (`ArenaRoom.ts:78+`) has **no colour or skin field**.
+  Nothing is synchronised.
+- `session.ts:451` assigns palettes **client-side**, via `paletteCursor++`,
+  in the order that client saw players arrive.
+
+So not only does the player always see themselves as `PLAYER_COLORS`, but
+**two opponents see the same third snake in two different colours**. There
+is no shared colour identity in the arena at all.
+
+**Four consequences, by importance:**
+1. **The skin marketplace is BLOCKED by this.** An NFT skin nobody else can
+   see has no value. This is therefore not polish: it is a **business-model
+   prerequisite**, to be done before selling any cosmetic.
+2. No callouts between players ("watch the purple one" means nothing if
+   purple is not the same for everyone) — this matters as soon as friends
+   play together on voice.
+3. Recognising a friend, the original report.
+4. Any future colour-coding (killfeed, leaderboard) inherits the problem.
+
+**Design constraint NOT to forget — this is a fairness stake, not a taste
+one.** A free colour choice would let a player pick a hue that blends into
+the floor: less visible means a real advantage. Therefore:
+- colour/skin must live in the **synchronised, server-authoritative state**;
+- the choice comes from a **server-validated whitelist**, with a **minimum
+  contrast against the floor palette** (measurable: the floor luminances are
+  in AV.3c);
+- D82 doctrine: the barrier is server-side, **never on what the client
+  declares**. A headless client's `options.skin` announces whatever suits it.
+
+**Work:** a field in the shared schema + server validation + a selector in
+the menu (`arena/client/src/menu.ts`), and later NFT ownership verification.
+To be done **with AV.9**, since it is the same screen.
+
+## AV.1 — the note not to rediscover
+
+The hex lattice repeats over `3R × √3·R`. Since a texture is an **integer**
+number of pixels and `√3` is irrational, **no radius `R` makes both sides
+whole**. Rounding either one shifts the wrap point away from the drawn
+geometry: exactly the seam we are trying to avoid.
+
+**Method — invert the derivation.** Choose the two integer pixel sizes
+first, with a ratio as close to `√3` as desired, then derive `R`:
+
+- `362 / 209 = 1.7320574` against `√3 = 1.7320508` → relative error `6.6e-6`
+- `3R = 362` **exactly** (`R = 362/3`) and `1.5R = 181` **exactly**
+- only `√3·R = 209.0008` differs from `TILE_H = 209` → **0.0008 px** of
+  mismatch at the vertical wrap, for the life of the game
+
+The error **does not accumulate**: the GPU repeats the tile identically, it
+never reconstructs an ideal lattice. The only possible discrepancy is that
+0.0008 px, present once, at each edge.
+
+Second condition, independent of the first: every lattice centre is drawn
+**nine times** (itself plus the eight neighbouring tile offsets), otherwise
+cells straddling the border are sliced off and the join shows — the classic
+tiling artefact, easily mistaken for a wrongly sized tile.

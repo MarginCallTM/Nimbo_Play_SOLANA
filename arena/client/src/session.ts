@@ -738,7 +738,10 @@ export async function startGameSession(
                 : id === myId
                     ? PLAYER_COLORS
                     : (palettes.get(id) ?? OTHER_PALETTES[0]);
-            const drawn = boosting ? { body: colors.body, head: "#ffffff" } : colors;
+            // AV.5 — spread, not a rebuild: listing the fields by hand
+            // silently dropped the band palette, so a boosting snake lost
+            // its skin for exactly as long as it was interesting to look at.
+            const drawn = boosting ? { ...colors, head: "#ffffff" } : colors;
             const alpha = p.graced || offline ? 0.4 : 1;
             const label =
                 `${p.name} ◎${(p.score / SCORE_PER_SOL).toFixed(4)}${offline ? " (offline)" : ""}`;

@@ -31,7 +31,26 @@ import {
 export interface SnakeColors {
     body: string;
     head: string;
+    // AV.5 — a skin, in its entirety: the colours its body cycles
+    // through. Absent means a plain one-tone snake.
+    //
+    // THIS IS THE FORMAT THE MARKETPLACE WILL SELL, so it is worth being
+    // deliberate about. A skin is a LIST OF COLOURS plus a band width —
+    // tens of bytes, no asset to store, none to serve, and nothing to
+    // load at spawn. It also makes "never pay-to-win" a property of the
+    // data rather than a promise: a palette cannot encode a hitbox, a
+    // speed or a reach, so an expensive skin is structurally incapable of
+    // buying an advantage.
+    bands?: string[];
 }
+
+// Band length in SEGMENTS. At SNAKE_SPACING = 10 and a 24-unit body,
+// four segments is ~1.7 body widths — the reference's proportion.
+//
+// R1 watch: bands run ALONG the tube, so they can never suggest the body
+// is cut into separate pieces. Keep the two tones close enough in value
+// that a band reads as a marking and not as a gap.
+const BAND_SEGMENTS = 4;
 
 // AV.3b — palettes rebuilt from a MEASUREMENT, not from taste. Sampling
 // our own screenshot against the reference gave, for the body:
@@ -53,17 +72,38 @@ export interface SnakeColors {
 //
 // Head is lighter and less saturated than the body: it reads as the lit
 // end of the same animal rather than as a different colour.
-export const PLAYER_COLORS: SnakeColors = { body: "#709de0", head: "#99c2ff" };
+// AV.5 — the second band tone is the SAME HUE at S 0.22 / V 0.97: a pale
+// version of the animal, never a foreign colour. Two tones of one hue
+// read as markings on a creature; two different hues read as a costume,
+// and at a glance the player would stop being able to name who is who.
+// Telling snakes apart instantly is a gameplay need, not a style one.
+export const PLAYER_COLORS: SnakeColors = {
+    body: "#709de0",
+    head: "#99c2ff",
+    bands: ["#709de0", "#c1d7f7"],
+};
+// Offline snakes stay ONE tone on purpose: a frozen body is a warning,
+// not a place for decoration.
 export const OFFLINE_COLORS: SnakeColors = { body: "#4a4f5c", head: "#6a7080" };
 // one palette per opponent, cycled through as they appear
 export const OTHER_PALETTES: SnakeColors[] = [
-    { body: "#e09d70", head: "#ffc299" }, // orange
-    { body: "#b270e0", head: "#d599ff" }, // purple
-    { body: "#70e09d", head: "#99ffc2" }, // green
-    { body: "#e07087", head: "#ff99ae" }, // red
-    { body: "#e0d370", head: "#fff399" }, // yellow
-    { body: "#70d8e0", head: "#99f7ff" }, // cyan
+    { body: "#e09d70", head: "#ffc299", bands: ["#e09d70", "#f7d7c1"] }, // orange
+    { body: "#b270e0", head: "#d599ff", bands: ["#b270e0", "#e1c1f7"] }, // purple
+    { body: "#70e09d", head: "#99ffc2", bands: ["#70e09d", "#c1f7d7"] }, // green
+    { body: "#e07087", head: "#ff99ae", bands: ["#e07087", "#f7c1cc"] }, // red
+    { body: "#e0d370", head: "#fff399", bands: ["#e0d370", "#f7f1c1"] }, // yellow
+    { body: "#70d8e0", head: "#99f7ff", bands: ["#70d8e0", "#c1f3f7"] }, // cyan
 ];
+
+// The colour segment `i` wears. Index-based, and that is what makes it
+// free: tracers keep their index for life (growth appends at the TAIL),
+// so a band is painted once when its segment is born and never rewritten
+// — no per-frame tint work, and the markings stay put on the body
+// instead of scrolling along it.
+function bandTint(colors: SnakeColors, i: number): string {
+    if (!colors.bands || colors.bands.length === 0) return colors.body;
+    return colors.bands[Math.floor(i / BAND_SEGMENTS) % colors.bands.length];
+}
 
 // Ambient pellet colors — visual variety only, no gameplay meaning
 const PELLET_TINTS = [0xff79c6, 0x8be9fd, 0x50fa7b, 0xf1fa8c, 0xbd93f9, 0xffb86c];
@@ -790,17 +830,23 @@ export class GameView {
             };
             this.snakes.set(id, view);
         }
-        // re-tint only when colors actually change (offline toggle)
+        // re-tint only when colors actually change (offline toggle). Bands
+        // never vary independently of `body`, so testing that one field
+        // still catches every skin change.
         if (view.colors.body !== colors.body) {
             view.colors = { ...colors };
             view.head.tint = colors.head;
-            for (const s of view.body.children) (s as Sprite).tint = colors.body;
+            view.body.children.forEach((s, i) => {
+                (s as Sprite).tint = bandTint(colors, i);
+            });
         }
-        // sync sprite count to the body length
+        // sync sprite count to the body length. A new segment is born at
+        // the TAIL, so its index is final and its band tint is written
+        // once, here, for good.
         while (view.body.children.length < body.length) {
             const s = new Sprite(this.circleTexture);
             s.anchor.set(0.5);
-            s.tint = colors.body;
+            s.tint = bandTint(colors, view.body.children.length);
             view.body.addChild(s);
         }
         while (view.body.children.length > body.length) {
