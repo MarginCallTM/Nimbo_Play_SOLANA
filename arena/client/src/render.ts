@@ -180,11 +180,44 @@ const HEX_TILE_SCALE = (HEX_R_WORLD * 3) / TILE_W_PX;
 // contrast does not remove the movement, it lowers how loudly the floor
 // reports it. It is a mitigation, not the cure — see the camera note in
 // ArenaVisualsTODO (AV.3e).
-const HEX_CELL_TOP = "#1b2737";    // lit upper edge of a cell
-const HEX_CELL_MID = "#17212e";    // the user's sampled cell colour
-const HEX_CELL_BOTTOM = "#131b25"; // shaded lower edge
-const HEX_GAP = "#111822";         // the user's sampled seam colour
-const HEX_SHADOW = "rgba(4,8,14,0.68)"; // what a raised cell drops into the seam
+// AV.3h — the floor styles a player can pick between (key B).
+//
+// All three keep hue 214 and the same lattice, so the arena still looks
+// like itself whichever is chosen. Only the RELIEF varies.
+//
+// `subtle` exists because patterns tire some people — the whole glow
+// episode proved visual comfort is personal. Its luminance amplitude is
+// 40% of `relief`'s (14.2 -> 5.7), anchored on the same mid, so the floor
+// keeps its colour and merely stops shouting.
+//
+// There is deliberately NO "no floor" option, even though the debug
+// switch had one. All of AV.1 rests on a regular lattice being what makes
+// speed legible; offering "none" would let a player quietly degrade their
+// own perception of motion. A preference may trade comfort against
+// beauty, never against information.
+interface FloorStyle {
+    top: string;
+    mid: string;
+    bottom: string;
+    gap: string;
+    shadow: string;
+}
+
+const FLOOR_RELIEF: FloorStyle = {
+    top: "#1b2737",
+    mid: "#17212e", // the user's sampled cell colour
+    bottom: "#131b25",
+    gap: "#111822", // the user's sampled seam colour
+    shadow: "rgba(4,8,14,0.68)",
+};
+
+const FLOOR_SUBTLE: FloorStyle = {
+    top: "#172434",
+    mid: "#19212a",
+    bottom: "#141f2c",
+    gap: "#121e2e",
+    shadow: "rgba(4,8,14,0.25)",
+};
 
 // Cell size as a fraction of the lattice pitch. Coverage goes as the
 // SQUARE of this, so 0.84 lands at 70% — the measured reference figure.
@@ -350,14 +383,20 @@ function hexPoints(cx: number, cy: number, r: number): number[] {
 //     corners are most of what made ours read as a wireframe;
 //   - a drop shadow into the seam, which is what tells the eye the cell
 //     sits ABOVE the ground rather than being a hole cut through it.
-function drawHexCell(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
+function drawHexCell(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    r: number,
+    style: FloorStyle,
+) {
     const corner = r * HEX_CORNER;
     const p = hexPoints(cx, cy, r - corner);
 
     const gradient = ctx.createLinearGradient(cx, cy - r, cx, cy + r);
-    gradient.addColorStop(0, HEX_CELL_TOP);
-    gradient.addColorStop(0.5, HEX_CELL_MID);
-    gradient.addColorStop(1, HEX_CELL_BOTTOM);
+    gradient.addColorStop(0, style.top);
+    gradient.addColorStop(0.5, style.mid);
+    gradient.addColorStop(1, style.bottom);
 
     ctx.save();
     ctx.beginPath();
@@ -370,7 +409,7 @@ function drawHexCell(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: n
     // the floor stopped having edges at all, which read as the whole
     // scene being out of focus. The reference's shadow is a thin dark
     // lip, not a halo — it says "raised", it does not say "blurred".
-    ctx.shadowColor = HEX_SHADOW;
+    ctx.shadowColor = style.shadow;
     ctx.shadowBlur = r * 0.09;
     ctx.shadowOffsetY = r * 0.05;
     ctx.fillStyle = gradient;
@@ -456,14 +495,56 @@ function makeTile(
     return new Texture({ source: new CanvasSource({ resource: canvas }) });
 }
 
-function makeHexTileTextureFlat(): Texture {
-    return makeTile(drawHexCellFlat, FLAT_GAP, 0.94);
+// AV.3h — the three floors a player can choose from. `flat` is the
+// pre-AV.3c look, kept because it turned out some people simply prefer
+// it; `subtle` is `relief` with its contrast pulled right down.
+//
+// The canvas IS the tile, so there is no frame to crop: whatever the
+// neighbour copies drew outside it simply never made it in.
+export type FloorMode = "relief" | "flat" | "subtle";
+export const FLOOR_MODES: FloorMode[] = ["relief", "flat", "subtle"];
+const FLOOR_LABELS: Record<FloorMode, string> = {
+    relief: "Relief",
+    flat: "Flat",
+    subtle: "Subtle",
+};
+// Shown at rest, bottom-left. A setting nobody can find is not a setting,
+// and an undocumented key is worse than a labelled one — so the hint is
+// permanent, and only steps aside to name the style just after a press.
+const FLOOR_HINT = "Press B to change background";
+
+function makeFloorTexture(mode: FloorMode): Texture {
+    if (mode === "flat") return makeTile(drawHexCellFlat, FLAT_GAP, 0.94);
+    const style = mode === "relief" ? FLOOR_RELIEF : FLOOR_SUBTLE;
+    return makeTile(
+        (ctx, cx, cy, r) => drawHexCell(ctx, cx, cy, r, style),
+        style.gap,
+        HEX_CELL_SCALE,
+    );
 }
 
-// the canvas IS the tile, so there is no frame to crop: anything the
-// neighbour copies drew outside it simply never made it in
-function makeHexTileTexture(): Texture {
-    return makeTile(drawHexCell, HEX_GAP, HEX_CELL_SCALE);
+// AV.3h — the preference survives a reload, or it is a nuisance rather
+// than a setting. Every access is guarded: a private window, cleared site
+// data or a browser set to block storage all make these THROW, and a
+// crash here would take the whole renderer down with it.
+const FLOOR_STORAGE_KEY = "nimbo.arena.floor";
+
+function loadFloorMode(): FloorMode {
+    try {
+        const saved = window.localStorage.getItem(FLOOR_STORAGE_KEY);
+        if (saved && (FLOOR_MODES as string[]).includes(saved)) return saved as FloorMode;
+    } catch {
+        /* storage unavailable — fall through to the default */
+    }
+    return "relief";
+}
+
+function saveFloorMode(mode: FloorMode) {
+    try {
+        window.localStorage.setItem(FLOOR_STORAGE_KEY, mode);
+    } catch {
+        /* the choice still applies for this session */
+    }
 }
 
 // One snake on screen: body sprites + head sprite + floating label.
@@ -526,44 +607,76 @@ export class GameView {
     // stays, and is on its way to becoming a real player preference —
     // see AV.3h in ArenaVisualsTODO for what that still needs.
     private floor!: TilingSprite;
-    private floorTextures!: { tiles: Texture; flat: Texture };
-    private floorMode: "tiles" | "flat" | "none" = "tiles";
-    private diagEl?: HTMLDivElement;
+    // Built lazily: only the style actually chosen is ever rasterised, so
+    // a player who never presses B pays for one tile and not three.
+    private floorTextures = new Map<FloorMode, Texture>();
+    private floorMode: FloorMode = loadFloorMode();
+    private floorToast?: HTMLDivElement;
+    private floorToastTimer = 0;
 
     private constructor() {
         this.app = new Application();
     }
 
-    // AV.3f — the toggles, plus a readout so a screenshot always says
-    // which combination produced it. Self-contained in the view: the test
-    // has to work in the menu and the demo too, not only in a paid room.
-    private installDiagnostics() {
+    // AV.3h — the floor preference. Born as a diagnostic switch (AV.3f),
+    // which found the veiling-glare cause in a minute, and kept because
+    // the same episode showed visual comfort is personal.
+    //
+    // Self-contained in the view, so it works in the menu and the demo
+    // too, not only in a paid room.
+    private installFloorPreference() {
         const el = document.createElement("div");
+        // Deliberately NOT the debug HUD's look. A permanent grey
+        // "[B] floor: tiles" in the corner is our tooling leaking into the
+        // product; a setting should announce itself once and then get out
+        // of the way.
         el.style.cssText =
-            "position:fixed;left:8px;bottom:8px;z-index:10;color:#8fa3bf;" +
-            "font:12px monospace;pointer-events:none;white-space:pre";
+            "position:fixed;left:12px;bottom:12px;z-index:10;color:#dbe4f0;" +
+            "font:13px system-ui,sans-serif;letter-spacing:.02em;pointer-events:none;" +
+            "padding:6px 12px;border-radius:999px;background:rgba(12,18,28,.72);" +
+            "opacity:.55;transition:opacity .35s";
+        el.textContent = FLOOR_HINT;
         document.body.appendChild(el);
-        this.diagEl = el;
-        this.refreshDiagnostics();
+        this.floorToast = el;
 
         window.addEventListener("keydown", (e) => {
             // never steal a keystroke aimed at the name field
             const t = e.target as HTMLElement | null;
             if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
             if (e.code !== "KeyB") return;
-            this.floorMode =
-                this.floorMode === "tiles" ? "flat" : this.floorMode === "flat" ? "none" : "tiles";
-            this.floor.visible = this.floorMode !== "none";
-            if (this.floorMode !== "none") {
-                this.floor.texture = this.floorTextures[this.floorMode];
-            }
-            this.refreshDiagnostics();
+            const next = FLOOR_MODES[(FLOOR_MODES.indexOf(this.floorMode) + 1) % FLOOR_MODES.length];
+            this.setFloorMode(next);
         });
     }
 
-    private refreshDiagnostics() {
-        if (!this.diagEl) return;
-        this.diagEl.textContent = `[B] floor: ${this.floorMode}`;
+    private setFloorMode(mode: FloorMode) {
+        this.floorMode = mode;
+        let texture = this.floorTextures.get(mode);
+        if (!texture) {
+            texture = makeFloorTexture(mode);
+            this.floorTextures.set(mode, texture);
+        }
+        this.floor.texture = texture;
+        saveFloorMode(mode);
+
+        // One element, two states. It rests on the HINT, so the setting can
+        // actually be found — an undiscoverable preference is no preference
+        // at all — and brightens to the chosen style's name for a moment on
+        // each press, then falls back to the hint.
+        //
+        // `?debug` pins the style name instead, because when we are the ones
+        // testing, a screenshot has to say what produced it.
+        const el = this.floorToast;
+        if (!el) return;
+        el.textContent = `Floor — ${FLOOR_LABELS[mode]}`;
+        el.style.opacity = "1";
+        window.clearTimeout(this.floorToastTimer);
+        if (!this.debug) {
+            this.floorToastTimer = window.setTimeout(() => {
+                el.textContent = FLOOR_HINT;
+                el.style.opacity = ".55";
+            }, 1400);
+        }
     }
 
     // Live cost of the current scene. `sprites` is what actually reaches
@@ -653,9 +766,12 @@ export class GameView {
         // Cost: ONE quad. The repeat happens in the sampler, so covering
         // 5000x5000 units costs exactly what covering one cell would.
         const floorSpan = 2 * (WORLD_RADIUS + REFERENCE_VIEW_CORNER);
-        view.floorTextures = { tiles: makeHexTileTexture(), flat: makeHexTileTextureFlat() };
+        // the mode comes from localStorage, so a returning player lands on
+        // the floor they chose rather than on ours
+        const startTexture = makeFloorTexture(view.floorMode);
+        view.floorTextures.set(view.floorMode, startTexture);
         const floor = new TilingSprite({
-            texture: view.floorTextures.tiles,
+            texture: startTexture,
             width: floorSpan,
             height: floorSpan,
             tileScale: { x: HEX_TILE_SCALE, y: HEX_TILE_SCALE },
@@ -663,7 +779,7 @@ export class GameView {
         floor.position.set(-floorSpan / 2, -floorSpan / 2);
         view.floor = floor;
         view.world.addChild(floor);
-        view.installDiagnostics();
+        view.installFloorPreference();
 
         // The world border — kept, and kept alone in this layer. Crossing
         // it kills (A4.11 border deaths), so it is the one piece of

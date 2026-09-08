@@ -582,24 +582,50 @@ someone will want it back, and the constraint to design against then is
 is the number that made the game unplayable, and it is invisible when you
 inspect one halo at a time.
 
-### Button B must become a REAL preference — not done yet
+### Button B is now a REAL preference — DONE 2026-09-08
 
-**For:** the episode proves visual comfort varies between people; the floor
-is purely decorative; **no fairness stake** (unlike the field of view,
-AF.3bis).
+Shipped as `relief` / `flat` / `subtle`, cycled with **B**.
 
-**What is missing before it is a feature:**
-1. **`localStorage` persistence** — otherwise the choice is lost on reload
-   and it is a nuisance, not a setting.
-2. **Drop the debug banner**, replace it with discreet feedback.
-3. **Do NOT keep `none` among the three player-facing choices.** All of AV.1
-   rests on the finding that a REGULAR lattice is what makes speed legible
-   (900 random dots did not). Offering "no pattern" lets a player degrade
-   their own perception of speed without knowing it. **Proposed triplet:
-   `relief` / `flat` / `subtle`** (same lattice, much reduced contrast, for
-   people whom patterns tire) — all three keep the motion reference.
-4. Eventually: a settings menu. A one-letter global key is a scarce resource
-   as the game grows.
+**A correction on my part, worth keeping.** I first argued for hiding the
+readout before merging and called it a "risk". It was not a risk — the
+floor is decorative and there is **no fairness stake** (unlike the field of
+view, AF.3bis) — and the user pushed back correctly. The real point was much
+narrower: a permanent grey `[B] floor: tiles` in monospace is the visual
+language of a dev overlay, not of a game setting. And the user's own
+counter-argument was the better one: **an undiscoverable setting is useless,
+so the answer was to make it look like a feature, not to hide it.**
+
+What it now does:
+1. **`localStorage` persistence** (`nimbo.arena.floor`), every access
+   wrapped in try/catch — a private window, cleared site data or a browser
+   blocking storage all THROW, and a crash there would take the renderer
+   down with it. Falls back to `relief`.
+2. **A permanent hint, bottom-left**: `Press B to change background`, at
+   55% opacity. On each press it brightens to `Floor — Relief` for 1.4 s,
+   then falls back to the hint. One element, two states.
+   `?debug` pins the style name instead, because when we are the ones
+   testing, a screenshot has to say what produced it.
+3. **`none` was DROPPED from the player-facing choices.** All of AV.1 rests
+   on a REGULAR lattice being what makes speed legible (900 random dots did
+   not). Offering "no pattern" would let a player quietly degrade their own
+   perception of motion. **A preference may trade comfort against beauty,
+   never against information.**
+4. **Textures are built lazily** — only the chosen style is rasterised, so a
+   player who never presses B pays for one tile, not three.
+
+`subtle` is `relief` with its luminance amplitude at 40% (14.2 → 5.7),
+anchored on the same mid, so the floor keeps its colour and merely stops
+shouting.
+
+**Discoverability — settled, and I had left it open by mistake.** I shipped
+the setting with no visible hint, having argued myself that an
+undiscoverable preference is useless, and the user had to point it out
+again. The hint is now permanent. **Lesson: when a feature's whole value
+depends on being found, its label is part of the feature, not polish.**
+
+Still deferred to AV.9: a proper settings menu. A one-letter global key is
+a scarce resource as the game grows, and the hint line does not scale to
+five of them.
 
 ## AV.4 — the eyes (delivered 2026-09-08)
 
