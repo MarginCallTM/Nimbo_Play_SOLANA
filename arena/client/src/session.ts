@@ -530,8 +530,12 @@ export async function startGameSession(
     };
     intervals.push(setInterval(() => {
         const avg = netPackets ? Math.round(netBytes / netPackets) : 0;
+        // AV.0 — render cost sits next to network cost on purpose: when
+        // the game stutters, the first question is which of the two moved.
+        const { fps, sprites } = view.stats();
         netEl.textContent =
-            `rtt ${Math.round(rttMs)}ms — net in: ${netBytes} B/s (${netPackets} msg, avg ${avg} B/msg)`;
+            `rtt ${Math.round(rttMs)}ms — net in: ${netBytes} B/s (${netPackets} msg, avg ${avg} B/msg)` +
+            ` — ${fps} fps, ${sprites} sprites`;
         netBytes = 0;
         netPackets = 0;
     }, 1000));

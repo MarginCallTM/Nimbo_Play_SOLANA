@@ -3,7 +3,7 @@
 // predicted self, interpolated others, locally regrown bodies — and
 // hands them over. Same sim/render split as the proto's Snake vs
 // SnakeView, now applied across the network boundary.
-import { Application, Container, Graphics, Sprite, Text } from "pixi.js";
+import { Application, Container, Graphics, Rectangle, Sprite, Text, TilingSprite } from "pixi.js";
 import type { Texture } from "pixi.js";
 import {
     AOI_RADIUS,
@@ -13,6 +13,7 @@ import {
     FOOD_RADIUS,
     FOOD_VALUE,
     SNAKE_RADIUS,
+    REFERENCE_VIEW_CORNER,
     REFERENCE_VIEW_H,
     REFERENCE_VIEW_W,
     WORLD_RADIUS,
@@ -41,6 +42,113 @@ const ORB_TINT = 0xffcc66; // dropped orbs (corpse/boost): golden = loot
 
 const MINIMAP_RADIUS = 70;
 
+// --- AV.1 — the hexagonal ground ------------------------------------
+//
+// What it replaces and why. The floor used to be a flat fill plus 900
+// RANDOM dots. Random gives the eye nothing to measure a displacement
+// against, so moving fast felt like moving nowhere. A REGULAR lattice is
+// what turns motion into speed — that is the whole reason slither.io
+// has one.
+//
+// THE TILE MUST WRAP EXACTLY, or a seam scrolls across the screen. For
+// flat-top hexagons of circumradius R the lattice repeats over a
+// rectangle 3R wide by sqrt(3)*R tall, holding two centres: one at the
+// corner and one dead in the middle.
+//
+// The catch: a texture is an INTEGER number of pixels, and 3R / sqrt(3)R
+// = sqrt(3) is irrational, so no R makes both sides whole. Rounding one
+// of them shifts the wrap point away from the drawn geometry — the seam
+// we are trying to avoid. Fix: pick the two INTEGER pixel sizes first,
+// with a ratio as close to sqrt(3) as we like, then derive R from them.
+// 362/209 = 1.7320574 against sqrt(3) = 1.7320508 — an error of 4e-6,
+// i.e. under a thousandth of a pixel across the tile.
+const TILE_W_PX = 362;
+const TILE_H_PX = 209;
+const HEX_R_PX = TILE_W_PX / 3;
+
+// The one knob to turn. How wide a hexagon is IN WORLD UNITS, which is
+// what sets the apparent size of the grid under the snakes: a spawning
+// snake (SNAKE_RADIUS = 12, so 24 units across) spans about a quarter of
+// a cell. Everything else follows from this number.
+// 40 -> 48 on 2026-09-08 (user call: cells 20% larger, calmer floor).
+const HEX_R_WORLD = 48;
+
+// Drawn at ~3 texture pixels per world unit, so the grid stays sharp at
+// the reference viewport (1 world unit ~ 1.3 screen pixels at 1080p).
+const HEX_TILE_SCALE = (HEX_R_WORLD * 3) / TILE_W_PX;
+
+const HEX_GAP = 0x070a14;    // the seam between cells: darkest tone
+const HEX_FILL = 0x0d1326;   // the cell face
+const HEX_TOP = 0x1a2242;    // upper edges catch the light
+const HEX_BOTTOM = 0x05070e; // lower edges fall into shadow
+
+// Vertices of one flat-top hexagon, as a flat [x0,y0,x1,y1,...] list.
+// Angle 0 puts a vertex at the right, which lands flat edges on the top
+// and the bottom — the reference's orientation.
+function hexPoints(cx: number, cy: number, r: number): number[] {
+    const pts: number[] = [];
+    for (let i = 0; i < 6; i++) {
+        const a = (Math.PI / 3) * i;
+        pts.push(cx + r * Math.cos(a), cy + r * Math.sin(a));
+    }
+    return pts;
+}
+
+// One cell: face, then shadow on the lower edges, then highlight on the
+// upper ones. That two-stroke split is the whole bevel — it is what
+// makes the floor read as embossed panels instead of a flat honeycomb.
+// Baked into a texture once, so its cost is paid at boot and never again.
+function drawHexCell(g: Graphics, cx: number, cy: number, r: number) {
+    const p = hexPoints(cx, cy, r);
+    g.poly(p).fill(HEX_FILL);
+    // y grows downward: v0(right) -> v1 -> v2 -> v3(left) is the LOWER
+    // chain, v3 -> v4 -> v5 -> v0 the upper one.
+    g.moveTo(p[0], p[1])
+        .lineTo(p[2], p[3])
+        .lineTo(p[4], p[5])
+        .lineTo(p[6], p[7])
+        .stroke({ width: 3, color: HEX_BOTTOM, alpha: 0.9 });
+    g.moveTo(p[6], p[7])
+        .lineTo(p[8], p[9])
+        .lineTo(p[10], p[11])
+        .lineTo(p[0], p[1])
+        .stroke({ width: 3, color: HEX_TOP, alpha: 0.55 });
+}
+
+// The repeating tile, rendered once at boot into a GPU texture.
+//
+// Seamlessness comes from drawing each of the two lattice centres NINE
+// times — itself plus the eight neighbouring tile offsets. A cell that
+// straddles an edge is therefore also drawn coming back in on the
+// opposite side; `frame` then keeps only the tile proper. Skipping this
+// leaves cells sliced off at the border, which is the classic tiling
+// artefact and looks exactly like a mis-sized tile.
+function makeHexTileTexture(renderer: Application["renderer"]): Texture {
+    const g = new Graphics();
+    // the seam colour shows wherever no cell covers, so it is the floor
+    g.rect(-2, -2, TILE_W_PX + 4, TILE_H_PX + 4).fill(HEX_GAP);
+
+    const centres = [
+        { x: 0, y: 0 },
+        { x: TILE_W_PX / 2, y: TILE_H_PX / 2 }, // = (1.5R, sqrt(3)R/2)
+    ];
+    for (const c of centres) {
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                drawHexCell(g, c.x + dx * TILE_W_PX, c.y + dy * TILE_H_PX, HEX_R_PX * 0.94);
+            }
+        }
+    }
+
+    const texture = renderer.generateTexture({
+        target: g,
+        frame: new Rectangle(0, 0, TILE_W_PX, TILE_H_PX),
+        antialias: true,
+    });
+    g.destroy();
+    return texture;
+}
+
 // One snake on screen: body sprites + head sprite + floating label.
 // Sprites all share ONE texture (proto lesson): Pixi batches them
 // into a single draw call — a 400-segment snake costs the same GPU
@@ -66,8 +174,35 @@ export class GameView {
     private foodSprites = new Map<string, Sprite>();
     private snakes = new Map<string, SnakeView>();
 
+    // AV.0 — the number every visual effect from here on is judged by.
+    // D85 makes fluidity a mainnet-grade requirement, so an effect that
+    // costs frames is a bad trade, not an acceptable compromise — and
+    // "it feels smooth" is not a measurement.
+    //
+    // Pixi's own ticker.FPS reports the LAST frame only (1000/elapsedMS),
+    // so reading it once a second samples one arbitrary frame and reports
+    // noise. Counting frames over a real window costs an increment and
+    // tells the truth.
+    private frames = 0;
+    private fpsSampledAt = 0;
+    private fps = 0;
+
+    // `?debug` in the URL turns the netcode overlays back on — see drawDebug.
+    private debug = new URLSearchParams(window.location.search).has("debug");
+
     private constructor() {
         this.app = new Application();
+    }
+
+    // Live cost of the current scene. `sprites` is what actually reaches
+    // the GPU — food, body segments and heads — which is the figure that
+    // moves when an effect is added, where FPS only says whether it hurt.
+    stats(): { fps: number; sprites: number } {
+        let sprites = this.foodSprites.size;
+        for (const view of this.snakes.values()) {
+            sprites += view.body.children.length + 1; // + the head
+        }
+        return { fps: Math.round(this.fps), sprites };
     }
 
     // Pixi v8 initializes asynchronously (GPU context negotiation) —
@@ -78,18 +213,49 @@ export class GameView {
         await app.init({ resizeTo: window, background: "#0b1020", antialias: true });
         document.body.appendChild(app.canvas);
 
+        // AV.0 — frame counter, averaged over a 500ms window (see stats()).
+        // Attached to the VIEW, not to a session: the menu and the demo
+        // are exactly where a heavy effect would go unnoticed otherwise.
+        view.fpsSampledAt = performance.now();
+        app.ticker.add(() => {
+            view.frames++;
+            const elapsed = performance.now() - view.fpsSampledAt;
+            if (elapsed >= 500) {
+                view.fps = (view.frames * 1000) / elapsed;
+                view.frames = 0;
+                view.fpsSampledAt += elapsed;
+            }
+        });
+
         // z-order = insertion order: decor < food < debug < snakes
         app.stage.addChild(view.world);
 
-        // static scenery, drawn ONCE: world border + reference dots
-        // (without them, moving over a uniform background shows nothing)
+        // AV.1 — the hexagonal floor, below everything else.
+        //
+        // Oversized past the world border by a full screen diagonal
+        // (REFERENCE_VIEW_CORNER): standing ON the border, a player still
+        // sees roughly half a screen beyond it, and the grid must not
+        // just stop in mid-air there. The border ring below is what marks
+        // the lethal edge — the floor never carries that meaning.
+        //
+        // Cost: ONE quad. The repeat happens in the sampler, so covering
+        // 5000x5000 units costs exactly what covering one cell would.
+        const floorSpan = 2 * (WORLD_RADIUS + REFERENCE_VIEW_CORNER);
+        const floor = new TilingSprite({
+            texture: makeHexTileTexture(app.renderer),
+            width: floorSpan,
+            height: floorSpan,
+            tileScale: { x: HEX_TILE_SCALE, y: HEX_TILE_SCALE },
+        });
+        floor.position.set(-floorSpan / 2, -floorSpan / 2);
+        view.world.addChild(floor);
+
+        // The world border — kept, and kept alone in this layer. Crossing
+        // it kills (A4.11 border deaths), so it is the one piece of
+        // scenery that carries gameplay truth and must stay unmistakable
+        // against the new floor.
         const decor = new Graphics();
         decor.circle(0, 0, WORLD_RADIUS).stroke({ width: 8, color: "#4a5578" });
-        for (let i = 0; i < 900; i++) {
-            const r = WORLD_RADIUS * Math.sqrt(Math.random());
-            const a = Math.random() * 2 * Math.PI;
-            decor.circle(r * Math.cos(a), r * Math.sin(a), 3).fill("#232c4a");
-        }
         view.world.addChild(decor);
         view.world.addChild(view.foodLayer);
         view.world.addChild(view.debugGfx);
@@ -256,7 +422,25 @@ export class GameView {
     }
 
     // --- debug overlays (world space): AoI bubble + server ghost ---
+    //
+    // OFF for players (2026-09-08, user call). The green ghost is the
+    // SERVER's belief about where our head is, so the gap between it and
+    // the drawn head is the round-trip time made visible — honest, and
+    // exactly the wrong thing to show a paying player: it reads as the
+    // game being laggy rather than as the network being measured.
+    //
+    // Kept behind a flag rather than deleted, because it is the
+    // instrument A4.14 is diagnosed with (the ~20px divergence floor,
+    // median 25px for a 15px-radius snake). Removing the measurement to
+    // hide the symptom is how a known bug becomes an unknown one.
+    //
+    // A query param and not a build flag: it can be switched on against
+    // the LIVE site while investigating, with no rebuild. Safe to expose
+    // — it renders our OWN server position and our OWN AoI radius, never
+    // anything about an opponent, so it grants no map awareness (A1.8).
     drawDebug(selfX: number, selfY: number, ghostX: number, ghostY: number, radius: number) {
+        // never drawn when off, so there is nothing to clear either
+        if (!this.debug) return;
         this.debugGfx.clear();
         this.debugGfx
             .circle(selfX, selfY, AOI_RADIUS)
