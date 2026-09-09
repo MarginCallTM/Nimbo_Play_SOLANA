@@ -1,6 +1,8 @@
 import { Room, type Client } from "colyseus";
 import { ArraySchema, Schema, MapSchema, StateView, type, view } from "@colyseus/schema";
 import {
+    DEFAULT_SKIN_ID,
+    skinById,
     AOI_RADIUS,
     ARENA_ROOM,
     BOOST_ORB_VALUE,
@@ -76,6 +78,18 @@ export interface AuthResult {
 export class Player extends Schema {
     // --- synced fields: what every client needs to render ---
     @type("string") name = "";
+    // AV.11 — the skin, as a whitelisted ID and never as colours.
+    //
+    // It is SYNCED because a colour only means something if everyone
+    // sees the same one. Before this field the client picked a palette
+    // by arrival order, so two opponents saw the same third snake in two
+    // different colours: nobody could be recognised, called out, or sold
+    // a cosmetic they alone could see.
+    //
+    // An ID rather than colours is the security half (D82): the server
+    // maps anything unknown back to the default, so no client can dress
+    // itself in the floor's colour and become hard to see.
+    @type("string") skin = DEFAULT_SKIN_ID;
     @type("float32") x = 0;      // float32: half the bandwidth of the
     @type("float32") y = 0;      // default float64, plenty of precision
     @type("float32") angle = 0;
@@ -1470,6 +1484,11 @@ export class ArenaRoom extends Room<{ state: ArenaState; metadata: { roundId: st
         // players' end screens. Length is the part the server owes
         // everyone (the client renders with textContent, never HTML).
         player.name = String(options.name ?? "").trim().slice(0, 24) || "anonymous";
+        // AV.11 — the client's skin is a CLAIM, like everything else it
+        // sends. skinById() is the gate: an unknown or absent id becomes
+        // the default rather than an error, so an outdated client still
+        // gets a legal snake and a hostile one gains nothing by lying.
+        player.skin = skinById(options.skin).id;
         // A3.2 — variable buy-in is real: the verified deposit bought
         // this starting score
         player.score = auth.spawnScore;

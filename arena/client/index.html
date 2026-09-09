@@ -3,6 +3,11 @@
     <head>
         <meta charset="UTF-8" />
         <title>Nimbo Arena</title>
+        <!-- Same mark as the portal and the docs. Routed through src/ so
+             Vite fingerprints it into /assets/: browsers cache favicons
+             harder than anything else, so a fixed name is exactly where a
+             stale icon would outlive several deploys. -->
+        <link rel="icon" type="image/png" href="./src/assets/favicon.png" />
         <style>
             html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1621; }
             /* HUD overlays sit ON TOP of the Pixi canvas (DOM, not

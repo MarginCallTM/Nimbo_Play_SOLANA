@@ -22,6 +22,7 @@ import {
     FOOD_VALUE,
     SNAKE_RADIUS,
     SNAKE_SPACING,
+    type SnakeSkin,
     REFERENCE_VIEW_CORNER,
     REFERENCE_VIEW_H,
     REFERENCE_VIEW_W,
@@ -77,23 +78,19 @@ const BAND_SEGMENTS = 4;
 // read as markings on a creature; two different hues read as a costume,
 // and at a glance the player would stop being able to name who is who.
 // Telling snakes apart instantly is a gameplay need, not a style one.
-export const PLAYER_COLORS: SnakeColors = {
-    body: "#709de0",
-    head: "#99c2ff",
-    bands: ["#709de0", "#c1d7f7"],
-};
+//
+// The local player no longer has a hard-coded palette: since AV.11 the
+// menu picks one from the shared SKINS whitelist.
+// AV.11 — a whitelisted skin, rendered. The band palette is the skin's
+// two tones in the order AV.5 expects, so a skin needs to carry nothing
+// the renderer has to interpret.
+export function colorsFromSkin(skin: SnakeSkin): SnakeColors {
+    return { body: skin.body, head: skin.head, bands: [skin.body, skin.band] };
+}
+
 // Offline snakes stay ONE tone on purpose: a frozen body is a warning,
 // not a place for decoration.
 export const OFFLINE_COLORS: SnakeColors = { body: "#4a4f5c", head: "#6a7080" };
-// one palette per opponent, cycled through as they appear
-export const OTHER_PALETTES: SnakeColors[] = [
-    { body: "#e09d70", head: "#ffc299", bands: ["#e09d70", "#f7d7c1"] }, // orange
-    { body: "#b270e0", head: "#d599ff", bands: ["#b270e0", "#e1c1f7"] }, // purple
-    { body: "#70e09d", head: "#99ffc2", bands: ["#70e09d", "#c1f7d7"] }, // green
-    { body: "#e07087", head: "#ff99ae", bands: ["#e07087", "#f7c1cc"] }, // red
-    { body: "#e0d370", head: "#fff399", bands: ["#e0d370", "#f7f1c1"] }, // yellow
-    { body: "#70d8e0", head: "#99f7ff", bands: ["#70d8e0", "#c1f3f7"] }, // cyan
-];
 
 // The colour segment `i` wears. Index-based, and that is what makes it
 // free: tracers keep their index for life (growth appends at the TAIL),

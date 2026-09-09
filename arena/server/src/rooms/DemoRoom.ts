@@ -10,6 +10,7 @@
 // fake value inside (D72 — free-riders can't farm what isn't real).
 
 import {
+    SKINS,
     DEMO_BOT_COUNT,
     DEMO_FOOD_COUNT,
     DEMO_SPAWN_SCORE,
@@ -126,6 +127,11 @@ export class DemoRoom extends ArenaRoom {
             const bot = new Player();
             bot.sessionId = `bot-${this.botCounter++}`;
             bot.name = BOT_NAMES[this.botCounter % BOT_NAMES.length];
+            // AV.11 — walk the palette rather than letting every bot
+            // default to the same skin: the demo is where a newcomer
+            // learns to read the arena, and six identical snakes teach
+            // exactly the wrong lesson.
+            bot.skin = SKINS[this.botCounter % SKINS.length].id;
             bot.score = 20 + Math.random() * 60; // proto spawn range
             const a = Math.random() * 2 * Math.PI;
             const d = Math.random() * WORLD_RADIUS * 0.7;

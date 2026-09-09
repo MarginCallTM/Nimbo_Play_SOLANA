@@ -37,16 +37,11 @@ import {
     type JoinedMessage,
     type ExtractedMessage,
     type InputMessage,
+    skinById,
     type JoinOptions,
     type RefundedMessage,
 } from "@nimbo/shared";
-import {
-    GameView,
-    OFFLINE_COLORS,
-    OTHER_PALETTES,
-    PLAYER_COLORS,
-    type SnakeColors,
-} from "./render";
+import { GameView, OFFLINE_COLORS, colorsFromSkin } from "./render";
 
 // Shape of the live schema references received from the server
 interface NetPlayer {
@@ -60,6 +55,7 @@ interface NetPlayer {
     channel: number; // extraction channel progress, frames (public!)
     graced: boolean; // spawn protection: rendered translucent
     connected: boolean; // A1.9: false = frozen, harmless, rendered gray
+    skin: string;    // AV.11: server-validated skin id, same for everyone
     frozenBody: ArrayLike<number>;
 }
 
@@ -441,22 +437,25 @@ export async function startGameSession(
     }
 
     // --- schema wiring ----------------------------------------------
-    const palettes = new Map<string, SnakeColors>();
-    let paletteCursor = 0;
-
+    // AV.11 — colours now come from the SERVER, for everyone including
+    // us. What this replaces: an arrival-order cursor into a local
+    // palette, which meant two opponents saw the same third snake in two
+    // different colours. Nobody could be recognised or called out, and a
+    // cosmetic only its owner could see was worth nothing.
+    //
+    // We read our own skin from the synced state too, rather than from
+    // the menu's choice: the server is the one that validated it, so
+    // rendering the server's answer is what guarantees we see ourselves
+    // exactly as everyone else does.
     const callbacks = Callbacks.get(room);
     callbacks.onAdd("players", (player, id) => {
         players.set(String(id), player as NetPlayer);
-        if (String(id) !== myId) {
-            palettes.set(String(id), OTHER_PALETTES[paletteCursor++ % OTHER_PALETTES.length]);
-        }
     });
     callbacks.onRemove("players", (_player, id) => {
         players.delete(String(id));
         snapshots.delete(String(id));
         bodies.delete(String(id));
         lastGen.delete(String(id));
-        palettes.delete(String(id));
         remoteRender.delete(String(id));
         view.removeSnake(String(id));
     });
@@ -733,11 +732,7 @@ export async function startGameSession(
             }
 
             const dims = describeSnakeFromScore(p.score);
-            const colors = offline
-                ? OFFLINE_COLORS
-                : id === myId
-                    ? PLAYER_COLORS
-                    : (palettes.get(id) ?? OTHER_PALETTES[0]);
+            const colors = offline ? OFFLINE_COLORS : colorsFromSkin(skinById(p.skin));
             // AV.5 — spread, not a rebuild: listing the fields by hand
             // silently dropped the band palette, so a boosting snake lost
             // its skin for exactly as long as it was interesting to look at.

@@ -239,6 +239,12 @@ export interface JoinOptions {
     protocol: number;
     name: string;
     stake: number; // SOL tier chosen in the menu; 0 = free play
+    // AV.11 — the chosen skin, as an ID from the SKINS whitelist and
+    // never as colours. Like every other field here it is a CLAIM until
+    // the server checks it: `skinById()` maps anything unknown back to
+    // the default, so a headless client cannot paint itself the colour
+    // of the floor and disappear (D82 — the barrier is server-side).
+    skin?: string;
     // A3.2 — signature of the on-chain join (deposit) transaction.
     // Required when stake > 0: the server reads the tx back from the
     // chain and verifies it before letting the snake spawn. Like the
@@ -454,4 +460,55 @@ export function turnTowards(angle: number, target: number, maxStep: number): num
     if (diff > maxStep) diff = maxStep;
     if (diff < -maxStep) diff = -maxStep;
     return angle + diff;
+}
+
+// --- AV.11 — snake skins ---------------------------------------------
+//
+// WHY THIS LIVES IN `shared` AND NOT IN THE RENDERER. A skin has to be
+// the same for everyone or it is not a skin at all: today the client
+// picks a palette by arrival order (`paletteCursor++`), so two opponents
+// see the same third snake in two different colours and nobody can be
+// recognised or called out. Fixing that means the choice travels on the
+// wire and the SERVER validates it — and both ends need this table.
+//
+// THE WIRE CARRIES AN `id`, NEVER COLOURS. That is the whole security
+// design, and it follows D82: the barrier is server-side, never on what
+// the client declares. If a client could send raw colours, a headless one
+// would send the floor's own colour and become nearly invisible — a real
+// advantage bought with one string. An id checked against this whitelist
+// makes that impossible: unknown id, default skin, end of discussion.
+//
+// Contrast is MEASURED, not eyeballed. Every body colour here sits at
+// least 3.3x the relative luminance of the floor's cell face (#17212e),
+// so no skin can hide against the ground.
+//
+// Hues are 45 degrees apart at fixed S 0.50 / V 0.88 (the values AV.3b
+// measured off the reference), which keeps them tellable apart at a
+// glance — the gameplay need that made us reject multi-hue skins.
+export interface SnakeSkin {
+    id: string;    // stable, and the only thing that travels
+    label: string; // what the menu shows
+    body: string;  // base tone
+    band: string;  // the pale band, same hue (AV.5)
+    head: string;
+}
+
+export const SKINS: SnakeSkin[] = [
+    { id: "azure",  label: "Azure",  body: "#709de0", band: "#c1d7f7", head: "#99c2ff" },
+    { id: "violet", label: "Violet", body: "#9770e0", band: "#d4c1f7", head: "#bd99ff" },
+    { id: "orchid", label: "Orchid", body: "#e070d5", band: "#f7c1f2", head: "#ff99f5" },
+    { id: "rose",   label: "Rose",   body: "#e07081", band: "#f7c1c9", head: "#ff99a8" },
+    { id: "amber",  label: "Amber",  body: "#e0b470", band: "#f7e2c1", head: "#ffd699" },
+    { id: "lime",   label: "Lime",   body: "#b9e070", band: "#e4f7c1", head: "#dbff99" },
+    { id: "jade",   label: "Jade",   body: "#70e07b", band: "#c1f7c6", head: "#99ffa3" },
+    { id: "teal",   label: "Teal",   body: "#70e0d0", band: "#c1f7ef", head: "#99fff0" },
+];
+
+export const DEFAULT_SKIN_ID = SKINS[0].id;
+
+// The single gate every skin id goes through, on BOTH ends. An unknown or
+// absent id is not an error to report, it is simply the default: a player
+// on an older client, or one sending nonsense, still gets a legal snake.
+export function skinById(id: string | undefined): SnakeSkin {
+    return SKINS.find((s) => s.id === id) ?? SKINS[0];
 }

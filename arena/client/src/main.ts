@@ -160,7 +160,7 @@ async function endScreens(
 async function main() {
     // Pixi first: if the GPU init fails there is nothing to play on
     const view = await GameView.create();
-    const { stakeSol, name } = await showMenu();
+    const { stakeSol, name, skinId } = await showMenu();
     const client = new Client(SERVER_URL);
 
     // D72/D76 — FREE routes to the demo: off-chain, bots, fake value,
@@ -170,7 +170,7 @@ async function main() {
         const demo = await startGameSession(
             client,
             DEMO_ROOM,
-            { protocol: PROTOCOL_VERSION, name, stake: 0 },
+            { protocol: PROTOCOL_VERSION, name, stake: 0, skin: skinId },
             view,
         );
         await endScreens(await demo.ended, true, { name, stakeSol: 0 });
@@ -218,6 +218,7 @@ async function main() {
                 protocol: PROTOCOL_VERSION,
                 name,
                 stake: stakeSol,
+                skin: skinId,
                 txSig: deposit.signature,
                 roundId: deposit.roundId,
             },
@@ -249,7 +250,7 @@ async function main() {
         const warmup = await startGameSession(
             client,
             DEMO_ROOM,
-            { protocol: PROTOCOL_VERSION, name, stake: 0 },
+            { protocol: PROTOCOL_VERSION, name, stake: 0, skin: skinId },
             view,
         );
         await Promise.race([warmup.ended, queueSettled]);
@@ -299,6 +300,7 @@ async function main() {
             protocol: PROTOCOL_VERSION,
             name,
             stake: stakeSol,
+            skin: skinId,
             txSig: deposit.signature,
             roundId: deposit.roundId,
         },

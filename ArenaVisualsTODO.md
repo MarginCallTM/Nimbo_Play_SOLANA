@@ -301,7 +301,7 @@ on a halo texture that no longer exists, and AV.10 lost its purpose.
 | 3 | AV.8 death emphasis | medium | low | **redesign without a halo** |
 | 4 | AV.7 boost emphasis | strong | medium | **re-cost coverage first** |
 | — | AV.9 HUD/menu | ? | ? | **blocked: user must settle the scope** |
-| — | AV.11 shared colour identity | — | medium | **blocked with AV.9 — business-model prerequisite** |
+| ✅ | AV.11 shared colour identity | — | — | **CLOSED** — synced, server-validated skin |
 | ⛔ | AV.10 bloom | — | — | **ABANDONED**, not deferred |
 
 ---
@@ -717,7 +717,39 @@ place for decoration.
 boost case, which **erased the band palette** — a snake lost its skin
 exactly while it was interesting to look at. Fixed with a spread.
 
-## AV.11 — COLOUR IS NOT A SHARED IDENTITY (open, to be done with AV.9)
+## AV.11 — COLOUR IS NOT A SHARED IDENTITY — **CLOSED 2026-09-09**
+
+**Fixed end to end.** `Player.skin` is now a synced, server-validated
+field; the client renders every snake — including its own — from that
+state, and the arrival-order `paletteCursor` is gone along with
+`OTHER_PALETTES`. The 8-skin whitelist lives in `shared/` because both
+ends need it, and `skinById()` is the single gate on both.
+
+Three things worth keeping from the implementation:
+
+1. **The wire carries an ID, never colours.** An unknown or absent id
+   becomes the default *without an error*, so an outdated client still
+   gets a legal snake and a hostile one gains nothing by lying. Colours on
+   the wire would have let a headless client dress in the floor's own
+   tone and become hard to see — a real advantage bought with a string
+   (D82: the barrier is server-side).
+2. **We render our OWN skin from the synced state**, not from the menu's
+   choice. The server is what validated it, so echoing the server's answer
+   is what guarantees we see ourselves as everyone else does — and a
+   refused choice shows up immediately instead of silently diverging.
+3. **Demo bots walk the palette.** Six identical snakes in the tutorial
+   would teach exactly the wrong reflex; the demo is where a newcomer
+   learns to read the arena.
+
+Contrast against the floor is measured, not eyeballed: every body colour
+sits at least 3.37x the relative luminance of the cell face (`#17212e`),
+so no skin can hide against the ground.
+
+Original diagnosis, kept because it explains why this mattered:
+
+---
+
+**Raised by the user on 2026-09-08** (open at the time, done with AV.9)
 
 Raised by the user on 2026-09-08: "I always see myself in blue, my friend
 does not recognise me by colour". **The defect is wider than that.**
