@@ -25,7 +25,9 @@ import {
     type DiedMessage,
     type JoinOptions,
 } from "@nimbo/shared";
+import "./fonts.css";
 import { GameView } from "./render";
+import { startBackdrop } from "./backdrop";
 import { currentWallet, sendJoinDeposit, signInWithSolana, type JoinDeposit } from "./wallet";
 import { showGameOver, showMenu } from "./menu";
 import { enterQueue } from "./lobby";
@@ -160,7 +162,25 @@ async function endScreens(
 async function main() {
     // Pixi first: if the GPU init fails there is nothing to play on
     const view = await GameView.create();
+    // The menu is not shown over a dead world any more: a local sim runs
+    // behind it (see backdrop.ts for why it is local and not the real
+    // demo room). Stopped before the session starts, so the two never
+    // draw into the same view at once.
+    const backdrop = startBackdrop(view);
+
+    // Backdrop-only mode (?backdrop): the portal embeds this page as
+    // scenery, so the menu, the HUD and every connection stay out of it.
+    // Returning HERE means no room is ever joined — an embedded
+    // background must never hold a socket to the game server.
+    if (new URLSearchParams(location.search).has("backdrop")) {
+        document.getElementById("overlay")?.style.setProperty("display", "none");
+        document.getElementById("feed")?.style.setProperty("display", "none");
+        return;
+    }
+
     const { stakeSol, name, skinId } = await showMenu();
+    backdrop.stop();
+    view.clear();
     const client = new Client(SERVER_URL);
 
     // D72/D76 — FREE routes to the demo: off-chain, bots, fake value,

@@ -7,14 +7,12 @@
 //
 // It deliberately does NOT repeat the hero's message. The hero sells the
 // promise ("Play better. Win bigger."); this one answers the question the FAQ
-// just raised — how do I actually start, and how much do I have to risk to
-// find out. Hence the free demo standing on equal footing with the paid path
-// (D72/D76: the demo is a separate off-chain sandbox against bots, no wallet,
-// no value at stake).
+// just raised — how do I actually start.
 //
-// Static markup -> Server Component.
+// It now closes on a SINGLE button, and the live arena runs behind it.
 import Link from "next/link";
 import { ARENA_URL } from "@/lib/constants";
+import { ArenaBackdrop } from "./arena-backdrop";
 
 export function FinalCta() {
   return (
@@ -23,6 +21,11 @@ export function FinalCta() {
     // tokens rather than hardcoded colours — the recurring lesson of F3 is
     // that every hardcoded colour survives the next change of charter.
     <section className="grain relative overflow-hidden bg-background py-24">
+      {/* The live arena, running behind the copy (see arena-backdrop.tsx).
+          It sits UNDER the two glows below, so the section's own lighting
+          ties it in instead of it reading as a pasted-in window. */}
+      <ArenaBackdrop />
+
       {/* Two soft light sources, indigo above and coral below, echoing the
           artwork's own lighting: the clouds are lit from within, the fire
           from underneath. pointer-events-none so they never eat a click. */}
@@ -44,28 +47,21 @@ export function FinalCta() {
           round where the floor is worth something.
         </p>
 
-        {/* Same pairing as the hero — solid white primary, outline secondary —
-            so the whole site teaches one button hierarchy. */}
-        <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
+        {/* ONE button (2026-09-09, user's call). Both used to point at the
+            same URL anyway — the arena's own menu is where free and paid
+            actually part ways, so offering the choice twice only split the
+            reader's attention before they had anything to decide with.
+            It takes the solid-white PRIMARY treatment: it is now the single
+            call to action on the page, and an outline button would have
+            ended the page on a whisper. */}
+        <div className="mt-10 flex items-center justify-center">
           <Link
             href={ARENA_URL}
-            className="rounded-xl bg-white px-6 py-3 text-base font-semibold text-background transition-transform hover:scale-[1.02]"
+            className="rounded-xl bg-white px-6 py-3 text-base font-semibold uppercase tracking-wide text-background transition-transform hover:scale-[1.02]"
           >
-            Enter the Arena
-          </Link>
-          <Link
-            href={ARENA_URL}
-            className="rounded-xl border border-white/20 px-6 py-3 text-base font-medium text-white/80 transition-colors hover:bg-white/5"
-          >
-            Try the free demo
+            Try for free
           </Link>
         </div>
-
-        {/* The honest footnote. Saying it here, right at the point of decision,
-            costs nothing and is the same badge the hero opens with (F0). */}
-        <p className="mt-6 text-sm text-white/40">
-          Devnet SOL only — free from any faucet, no monetary value.
-        </p>
       </div>
     </section>
   );

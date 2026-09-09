@@ -248,6 +248,58 @@ const HEX_CORNER = 0.14; // corner rounding, as a fraction of the cell radius
 // COVERAGE (count x area), never the look of a single pellet in
 // isolation. That is the number that made this unplayable, and it is
 // invisible when you inspect one halo at a time.
+//
+// --- AV.2b — it came back, for LOOT ONLY (2026-09-09) ---------------
+//
+// And it came back through that constraint rather than around it. The
+// glow is now OPT-IN per pellet and only corpse loot asks for it, which
+// changes the arithmetic completely — the count, not the halo, was the
+// problem:
+//
+//   spread   30 orbs   80 orbs   200 orbs
+//        4        9%       25%        61%
+//        8       37%       98%       246%   <- the version that failed
+//
+// Corpse loot is measured in dozens and is eaten within seconds, where
+// ambient pellets numbered 300 to 450 permanently. At spread 4 the worst
+// realistic case sits at a quarter of the screen against the 123-184%
+// that made people queasy.
+//
+// It also earns its place now: an orb IS the value a player just lost,
+// so light marks money rather than decorating scenery.
+const GLOW_TEX_PX = 128; // blurry by nature — more resolution buys nothing
+const GLOW_SPREAD = 4;   // halo radius, as a multiple of the orb radius
+const GLOW_ALPHA = 0.35;
+
+// Built on a 2D canvas rather than with FillGradient: exact control of
+// ALPHA at every stop, with no dependence on how a gradient fill is
+// premultiplied on its way to a texture.
+//
+// The CURVE is the subject. A linear 1 -> 0 ramp reads as a flat cone,
+// not as light; these stops approximate an inverse-square falloff —
+// bright core, fast decay, long faint skirt.
+function makeGlowTexture(): Texture {
+    const canvas = document.createElement("canvas");
+    canvas.width = GLOW_TEX_PX;
+    canvas.height = GLOW_TEX_PX;
+    const ctx = canvas.getContext("2d")!;
+    const c = GLOW_TEX_PX / 2;
+    const gradient = ctx.createRadialGradient(c, c, 0, c, c, c);
+    const stops: [number, number][] = [
+        [0.0, 1.0],
+        [0.1, 0.72],
+        [0.25, 0.38],
+        [0.45, 0.15],
+        [0.7, 0.04],
+        [1.0, 0.0],
+    ];
+    for (const [offset, alpha] of stops) {
+        gradient.addColorStop(offset, `rgba(255,255,255,${alpha})`);
+    }
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, GLOW_TEX_PX, GLOW_TEX_PX);
+    return new Texture({ source: new CanvasSource({ resource: canvas }) });
+}
 
 // --- AV.3 — the shaded segment ---------------------------------------
 //
@@ -576,7 +628,14 @@ export class GameView {
     private extractLabel!: Text;
     private circleTexture!: Texture;   // shared by every segment & pellet
     private discTexture!: Texture;     // flat disc: sclerae and pupils
+    private glowTexture!: Texture;     // soft blob, additive, loot only
+    // AV.2b — halos in their OWN layer, below the food. Siblings of the
+    // pellets rather than children: inside foodLayer the order would be
+    // pellet/halo/pellet/halo, and the batcher only merges CONSECUTIVE
+    // sprites sharing a texture and a blend mode.
+    private glowLayer = new Container();
     private foodSprites = new Map<string, Sprite>();
+    private glowSprites = new Map<string, Sprite>(); // same keys as foodSprites
     private snakes = new Map<string, SnakeView>();
 
     // AV.0 — the number every visual effect from here on is judged by.
@@ -594,6 +653,11 @@ export class GameView {
 
     // `?debug` in the URL turns the netcode overlays back on — see drawDebug.
     private debug = new URLSearchParams(window.location.search).has("debug");
+    // `?backdrop` renders the scenery and nothing else: no menu, no HUD,
+    // no controls. It exists so the portal can embed THIS build as a
+    // living background, instead of the simulation being copied into a
+    // second project where it would drift from the game it is showing.
+    private backdropOnly = new URLSearchParams(window.location.search).has("backdrop");
 
     // AV.3f — the floor A/B switch. Born as a diagnostic (three toggles,
     // one per suspect, to isolate the "everything is blurred" report
@@ -607,7 +671,12 @@ export class GameView {
     // Built lazily: only the style actually chosen is ever rasterised, so
     // a player who never presses B pays for one tile and not three.
     private floorTextures = new Map<FloorMode, Texture>();
-    private floorMode: FloorMode = loadFloorMode();
+    // An embedded backdrop always shows `relief`, never the stored
+    // preference. The preference belongs to whoever plays in THIS browser,
+    // and a showcase has to show the intended look — otherwise the portal
+    // would inherit the floor a player once picked on arena.nimboplay.dev,
+    // which nobody chose for it and nobody can change from there.
+    private floorMode: FloorMode = this.backdropOnly ? "relief" : loadFloorMode();
     private floorToast?: HTMLDivElement;
     private floorToastTimer = 0;
 
@@ -622,6 +691,9 @@ export class GameView {
     // Self-contained in the view, so it works in the menu and the demo
     // too, not only in a paid room.
     private installFloorPreference() {
+        // No controls in an embedded backdrop: nothing there is clickable,
+        // and a hint about a key nobody can press is just noise.
+        if (this.backdropOnly) return;
         const el = document.createElement("div");
         // Deliberately NOT the debug HUD's look. A permanent grey
         // "[B] floor: tiles" in the corner is our tooling leaking into the
@@ -680,7 +752,7 @@ export class GameView {
     // the GPU — food, body segments and heads — which is the figure that
     // moves when an effect is added, where FPS only says whether it hurt.
     stats(): { fps: number; sprites: number } {
-        let sprites = this.foodSprites.size;
+        let sprites = this.foodSprites.size + this.glowSprites.size;
         for (const view of this.snakes.values()) {
             sprites += view.body.children.length + 1; // + the head
         }
@@ -785,6 +857,7 @@ export class GameView {
         const decor = new Graphics();
         decor.circle(0, 0, WORLD_RADIUS).stroke({ width: 8, color: "#4a5578" });
         view.world.addChild(decor);
+        view.world.addChild(view.glowLayer); // light UNDER the pellets
         view.world.addChild(view.foodLayer);
         view.world.addChild(view.debugGfx);
         view.world.addChild(view.extractGfx); // zone under the snakes
@@ -802,6 +875,7 @@ export class GameView {
         // free (the reference's food is lit the same way)
         view.circleTexture = makeSegmentTexture();
         view.discTexture = makeDiscTexture();
+        view.glowTexture = makeGlowTexture();
 
         app.stage.addChild(view.minimap);
         return view;
@@ -862,7 +936,7 @@ export class GameView {
     }
 
     // --- food: driven by the Colyseus add/remove callbacks ---------
-    addFood(id: string, x: number, y: number, value: number) {
+    addFood(id: string, x: number, y: number, value: number, glow = false) {
         const isOrb = value > FOOD_VALUE;
         // dropped orb: golden, area proportional to value — an orb worth
         // 5 pellets visibly IS 5 pellets
@@ -880,13 +954,35 @@ export class GameView {
         sprite.scale.set(radius / SNAKE_RADIUS); // texture is snake-sized
         this.foodLayer.addChild(sprite);
         this.foodSprites.set(id, sprite);
+
+        // AV.2b — opt-in halo, and only loot asks for it. Additive, so
+        // overlapping orbs sum towards white exactly as a corpse pile
+        // does in the reference.
+        if (!glow) return;
+        const halo = new Sprite(this.glowTexture);
+        halo.anchor.set(0.5);
+        halo.position.set(x, y);
+        halo.tint = tint;
+        halo.alpha = GLOW_ALPHA;
+        halo.blendMode = "add";
+        halo.scale.set((radius * GLOW_SPREAD) / (GLOW_TEX_PX / 2));
+        this.glowLayer.addChild(halo);
+        this.glowSprites.set(id, halo);
     }
 
+    // Both released independently: a halo outliving its orb would light
+    // empty ground, and the two maps must not drift apart.
     removeFood(id: string) {
         const sprite = this.foodSprites.get(id);
-        if (!sprite) return;
-        this.foodSprites.delete(id);
-        sprite.destroy(); // sprite only — the shared texture survives
+        if (sprite) {
+            this.foodSprites.delete(id);
+            sprite.destroy(); // sprite only — the shared texture survives
+        }
+        const halo = this.glowSprites.get(id);
+        if (halo) {
+            this.glowSprites.delete(id);
+            halo.destroy();
+        }
     }
 
     // --- snakes: fully re-positioned every frame by main.ts --------
@@ -1075,7 +1171,11 @@ export class GameView {
     // not per-room.
     clear() {
         for (const id of [...this.snakes.keys()]) this.removeSnake(id);
-        for (const id of [...this.foodSprites.keys()]) this.removeFood(id);
+        // union of both maps, and removeFood is idempotent: a halo can
+        // never be stranded in the next session by a drift between them
+        for (const id of [...this.foodSprites.keys(), ...this.glowSprites.keys()]) {
+            this.removeFood(id);
+        }
         this.debugGfx.clear();
         this.minimap.clear();
         this.extractGfx.clear();

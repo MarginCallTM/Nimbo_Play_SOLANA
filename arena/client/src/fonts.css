@@ -1,0 +1,33 @@
+/* Geist, self-hosted.
+ *
+ * The typeface the rest of the product already uses: the portal's <h1>
+ * resolves `font-display` -> `--font-geist` (app/src/app/layout.tsx
+ * documents the choice, F3.6), and the docs declare it too. The arena was
+ * the last surface left on plain monospace.
+ *
+ * SELF-HOSTED, not linked from Google Fonts. A <link> would add an
+ * external round-trip on the game's entry page and hand a third party a
+ * request from every visitor. This file is 29 KB, Vite fingerprints it
+ * into /assets/, and nginx then caches it as immutable — so it is fetched
+ * once, ever, and a future change of font cannot be served stale.
+ * Licence: SIL OFL, self-hosting is expressly allowed.
+ *
+ * ONE file for every weight: the latin subset ships as a VARIABLE font,
+ * which is why Google serves the same URL for 400, 500 and 600. Hence the
+ * `font-weight: 400 600` range rather than three separate faces.
+ *
+ * `swap`: text paints immediately in the fallback and reflows when Geist
+ * lands. A menu must never wait on a font.
+ */
+@font-face {
+    font-family: "Geist";
+    font-style: normal;
+    font-weight: 400 600;
+    font-display: swap;
+    src: url("./assets/geist-latin.woff2") format("woff2");
+    /* Latin only. The UI is English; shipping Cyrillic and Greek would
+       triple the weight for glyphs nothing here can render. */
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+        U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC,
+        U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}

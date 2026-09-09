@@ -31,7 +31,9 @@ export function Hero() {
             was removed on purpose (2026-09-07, user's call) to raise the
             artwork: the headline now starts the page and the illustration
             arrives sooner. Devnet status is still stated on the homepage, in
-            the closing CTA and the footer, and in the page metadata.
+            the footer (twice) and in the page metadata — the closing CTA's
+            footnote was removed on 2026-09-09 (user's call), so this list is
+            no longer three deep.
             IF A BADGE EVER COMES BACK HERE, it states devnet. The one this
             replaced claimed "Solana mainnet · Round #248" and both halves were
             false (F0 / F10.1). */}

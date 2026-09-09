@@ -13,7 +13,33 @@ export interface MenuResult {
     skinId: string; // AV.11 — validated against the shared whitelist
 }
 
+// Storage, guarded. Every access here used to be bare, and an opaque
+// origin (a sandboxed iframe) or a browser set to block site data makes
+// these THROW rather than return null — which killed the menu outright.
+// The floor preference already learned this lesson in render.ts; the menu
+// had not. A lost name or skin is a small thing; a menu that never opens
+// is not.
+function readStored(key: string): string | null {
+    try {
+        return window.localStorage.getItem(key);
+    } catch {
+        return null;
+    }
+}
+
+function writeStored(key: string, value: string | null) {
+    try {
+        if (value === null) window.localStorage.removeItem(key);
+        else window.localStorage.setItem(key, value);
+    } catch {
+        /* the choice still applies for this session */
+    }
+}
+
 const NAME_KEY = "nimbo_name";
+// What the server is told when the field is left blank. Never stored —
+// see chosenName().
+const FALLBACK_NAME = "player";
 const SKIN_KEY = "nimbo_skin";
 
 // The umbrella site. Hard-coded rather than baked in like VITE_SERVER_URL:
@@ -29,6 +55,11 @@ const PORTAL_URL = "https://nimboplay.dev";
 function css(...decls: string[]): string {
     return decls.join(";");
 }
+
+// Geist, same as the portal's <h1> (see fonts.css). Applied to the three
+// corner controls only for now — the stake tiers stay monospace, which is
+// a deliberate split to look at rather than an oversight.
+const UI_FONT = '"Geist", system-ui, sans-serif';
 
 const SURFACE = "#141c2b";
 const SURFACE_HOVER = "#1e2a41";
@@ -166,9 +197,12 @@ export function showMenu(): Promise<MenuResult> {
             "position:fixed", "inset:0", "z-index:20",
             "display:flex", "flex-direction:column",
             "align-items:center", "justify-content:center", "gap:20px",
-            // matches the arena floor's own ground (AV.3c), not the navy
-            // that was retired with the old background
-            "background:rgba(14,22,33,0.92)",
+            // TINTED GLASS. A live arena runs behind this (backdrop.ts),
+            // so the veil went from 0.92 to 0.72: dark enough that the
+            // buttons keep their contrast, sheer enough that the snakes
+            // read through it. The tint is the floor's own ground colour
+            // (AV.3c), so the glass belongs to the same world it covers.
+            "background:rgba(14,22,33,0.72)",
             `color:${TEXT}`, "font-family:monospace",
         );
 
@@ -187,7 +221,8 @@ export function showMenu(): Promise<MenuResult> {
         portal.textContent = "← PORTAL";
         portal.style.cssText = css(
             "position:absolute", "left:24px", "top:24px",
-            "padding:10px 16px", "font:13px monospace", "text-decoration:none",
+            "padding:10px 16px", `font:500 13px ${UI_FONT}`, "letter-spacing:.06em",
+            "text-decoration:none",
             `color:${TEXT}`, `background:${SURFACE}`,
             `border:1px solid ${BORDER}`, "border-radius:10px",
             "transition:background .15s",
@@ -196,6 +231,27 @@ export function showMenu(): Promise<MenuResult> {
         portal.onmouseleave = () => (portal.style.background = SURFACE);
         overlay.appendChild(portal);
 
+        // The logo, with the tagline breathing.
+        //
+        // Done WITHOUT a second asset: an identical copy of the image is
+        // stacked on top, clipped to the tagline's measured box
+        // (x 271-871, y 251-307 of 900x472) and brightened. Animating its
+        // opacity makes "EXTRACT TO CASH OUT." swell and fade while the
+        // rest of the logo stays put.
+        //
+        // ⚠ The box is not a perfect separation: the joystick's base sits
+        // at the same height as the start of the tagline, so a sliver of
+        // it brightens too. A separately exported tagline would make this
+        // exact — swap `clip-path` for a second `src` and nothing else
+        // changes.
+        const logoWrap = document.createElement("div");
+        logoWrap.style.cssText = css(
+            "position:relative",
+            "width:min(432px,65vw)",
+            "transform:translateX(-2.2%)",
+            "line-height:0", // no descender gap under the image
+        );
+
         const logo = document.createElement("img");
         logo.src = logoUrl;
         logo.alt = "Nimbo Arena";
@@ -203,21 +259,45 @@ export function showMenu(): Promise<MenuResult> {
         // terms scale together so the narrow-screen behaviour keeps the
         // same proportion instead of only the desktop one shrinking.
         //
-        // OPTICAL CENTRING, and it is not a fudge. Measured on a capture:
-        // the lockup's bounding box centres to within half a pixel of the
-        // buttons, but its luminance-weighted centre of mass sits 2.2% of
-        // its own width to the RIGHT — the white wordmark carries most of
-        // the visible weight while the joystick, though colourful, is a
-        // dark object. The browser centres a box; the eye centres mass.
-        //
-        // Expressed as a percentage OF THE ELEMENT so the correction
-        // tracks the logo at every viewport width, and as a transform so
-        // it never disturbs the layout around it.
-        logo.style.cssText = css(
-            "width:min(432px,65vw)", "height:auto", "user-select:none",
-            "transform:translateX(-2.2%)",
+        // OPTICAL CENTRING lives on the wrapper, and it is not a fudge.
+        // Measured on a capture: the lockup's bounding box centres to
+        // within half a pixel of the buttons, but its luminance-weighted
+        // centre of mass sits 2.2% of its own width to the RIGHT — the
+        // white wordmark carries most of the visible weight while the
+        // joystick, though colourful, is a dark object. The browser
+        // centres a box; the eye centres mass.
+        logo.style.cssText = css("width:100%", "height:auto", "user-select:none");
+        logoWrap.appendChild(logo);
+
+        const tagline = document.createElement("img");
+        tagline.src = logoUrl;
+        tagline.alt = "";
+        tagline.setAttribute("aria-hidden", "true"); // decorative duplicate
+        tagline.style.cssText = css(
+            "position:absolute", "inset:0", "width:100%", "height:auto",
+            "pointer-events:none", "user-select:none",
+            // measured box of "EXTRACT TO CASH OUT." in the 900x472 source
+            "clip-path:inset(53.2% 3.2% 35.0% 30.1%)",
+            "filter:brightness(1.6) saturate(1.15)",
+            "opacity:0",
         );
-        overlay.appendChild(logo);
+        logoWrap.appendChild(tagline);
+        overlay.appendChild(logoWrap);
+
+        // Web Animations rather than a @keyframes rule: this file builds
+        // its DOM by hand and has no stylesheet to add one to, and an
+        // element-scoped animation cannot collide with anything.
+        //
+        // Honoured `prefers-reduced-motion`. A slow pulse is exactly what
+        // that setting exists for, and after the veiling-glare episode we
+        // know first-hand that a breathing screen is not a small thing
+        // for the people it affects.
+        if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            tagline.animate(
+                [{ opacity: 0 }, { opacity: 1 }, { opacity: 0 }],
+                { duration: 2800, iterations: Infinity, easing: "ease-in-out" },
+            );
+        }
 
         // A4.11 — name input. Persisted so friends don't retype it; it
         // rides into the death log + the "killed by X" screen, which is
@@ -227,7 +307,10 @@ export function showMenu(): Promise<MenuResult> {
         nameInput.type = "text";
         nameInput.maxLength = 16;
         nameInput.placeholder = "your name";
-        nameInput.value = localStorage.getItem(NAME_KEY) ?? "";
+        // A stored value equal to the fallback is treated as ABSENT, which
+        // self-heals anyone carrying the one written by the old bug below.
+        const storedName = readStored(NAME_KEY) ?? "";
+        nameInput.value = storedName === FALLBACK_NAME ? "" : storedName;
         nameInput.style.cssText = css(
             "padding:12px 16px", "font:16px monospace", "text-align:center",
             `color:${TEXT}`, `background:${SURFACE}`,
@@ -235,10 +318,17 @@ export function showMenu(): Promise<MenuResult> {
         );
         overlay.appendChild(nameInput);
 
+        // Persist only what was actually TYPED. The previous version saved
+        // the fallback too, so a single run without a name wrote "player"
+        // to storage and it came back pre-filled forever after — a default
+        // wearing the clothes of a choice.
+        //
+        // The fallback still travels to the server: the death log and the
+        // "killed by X" screen need something to print (A4.11).
         const chosenName = () => {
-            const n = (nameInput.value.trim() || "player").slice(0, 16);
-            localStorage.setItem(NAME_KEY, n);
-            return n;
+            const typed = nameInput.value.trim().slice(0, 16);
+            writeStored(NAME_KEY, typed || null);
+            return typed || FALLBACK_NAME;
         };
 
         // --- stakes: paid tiers on a grid, FREE spanning underneath ----
@@ -269,7 +359,7 @@ export function showMenu(): Promise<MenuResult> {
         const finish = (stakeSol: number) => {
             const name = chosenName();
             const skinId = SKINS[skinIndex].id;
-            localStorage.setItem(SKIN_KEY, skinId);
+            writeStored(SKIN_KEY, skinId);
             overlay.remove();
             resolve({ stakeSol, name, skinId });
         };
@@ -283,19 +373,25 @@ export function showMenu(): Promise<MenuResult> {
         // Same white as the paid tiers: the transparent background and the
         // full width already say FREE is a different thing, so dimming the
         // text on top of that made it look disabled rather than distinct.
-        const free = button("FREE — practise against bots", [
+        // Same surface as the paid tiers: only the width and the position
+        // set FREE apart now. A transparent fill made it read as secondary
+        // — which it is not; it is the way in.
+        //
+        // The label used to read "practise against bots", which was simply
+        // FALSE: the demo is joined with joinOrCreate and DemoRoom inherits
+        // maxClients = 16, so up to sixteen humans share one room. D72's
+        // guarantee is narrower than that label claimed — a FREE player
+        // never meets someone who STAKED, not "only ever meets bots".
+        const free = button("FREE", [
             "width:100%", "font:14px monospace",
-            "background:transparent",
         ]);
-        free.onmouseenter = () => (free.style.background = SURFACE);
-        free.onmouseleave = () => (free.style.background = "transparent");
         free.onclick = () => finish(0);
         stakesWrap.appendChild(free);
 
         // --- bottom left: skin picker ---------------------------------
         let skinIndex = Math.max(
             0,
-            SKINS.findIndex((s) => s.id === (localStorage.getItem(SKIN_KEY) ?? DEFAULT_SKIN_ID)),
+            SKINS.findIndex((s) => s.id === (readStored(SKIN_KEY) ?? DEFAULT_SKIN_ID)),
         );
 
         const skinCorner = document.createElement("div");
@@ -313,7 +409,9 @@ export function showMenu(): Promise<MenuResult> {
         );
         skinCorner.appendChild(palette);
 
-        const skinBtn = button("SKIN", ["font:13px monospace", "padding:10px 16px"]);
+        const skinBtn = button("SKIN", [
+            `font:500 13px ${UI_FONT}`, "letter-spacing:.06em", "padding:10px 16px",
+        ]);
         skinCorner.appendChild(skinBtn);
 
         // The button keeps a fixed label; the selected swatch is what says
@@ -328,7 +426,7 @@ export function showMenu(): Promise<MenuResult> {
             const s = skinSwatch(i, i === skinIndex);
             s.onclick = () => {
                 skinIndex = i;
-                localStorage.setItem(SKIN_KEY, SKINS[i].id);
+                writeStored(SKIN_KEY, SKINS[i].id);
                 paint();
             };
             swatches.push(s);
@@ -353,7 +451,7 @@ export function showMenu(): Promise<MenuResult> {
             "display:flex", "align-items:center", "gap:8px",
         );
         const serverBtn = button("🌐  CHOOSE SERVER   ·   SOON", [
-            "font:13px monospace", "padding:10px 16px",
+            `font:500 13px ${UI_FONT}`, "letter-spacing:.06em", "padding:10px 16px",
             "cursor:not-allowed", "opacity:.45",
         ]);
         serverBtn.disabled = true;
