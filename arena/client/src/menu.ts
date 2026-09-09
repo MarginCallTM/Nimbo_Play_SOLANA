@@ -196,7 +196,13 @@ export function showMenu(): Promise<MenuResult> {
         overlay.style.cssText = css(
             "position:fixed", "inset:0", "z-index:20",
             "display:flex", "flex-direction:column",
-            "align-items:center", "justify-content:center", "gap:20px",
+            "align-items:center", "justify-content:center", "gap:22px",
+            // Raised off dead centre (2026-09-09, user's call): the block
+            // stays flex-centred, and the bottom padding shifts its centre
+            // up by half its own value. Done this way rather than with
+            // flex-start + a top padding so a short viewport still centres
+            // what it can instead of pushing the logo off the top.
+            "padding-bottom:12vh",
             // TINTED GLASS. A live arena runs behind this (backdrop.ts),
             // so the veil went from 0.92 to 0.72: dark enough that the
             // buttons keep their contrast, sheer enough that the snakes
@@ -364,8 +370,11 @@ export function showMenu(): Promise<MenuResult> {
             resolve({ stakeSol, name, skinId });
         };
 
+        // Bigger now that the logo sits higher: the space freed below has
+        // to be taken by something, or the composition reads as a block
+        // pinned to the top of an empty screen.
         for (const tier of paid) {
-            const b = button(`${tier} SOL`);
+            const b = button(`${tier} SOL`, ["padding:18px 24px", "font:18px monospace"]);
             b.onclick = () => finish(tier);
             stakes.appendChild(b);
         }
@@ -383,7 +392,7 @@ export function showMenu(): Promise<MenuResult> {
         // guarantee is narrower than that label claimed — a FREE player
         // never meets someone who STAKED, not "only ever meets bots".
         const free = button("FREE", [
-            "width:100%", "font:14px monospace",
+            "width:100%", "padding:16px 24px", "font:16px monospace",
         ]);
         free.onclick = () => finish(0);
         stakesWrap.appendChild(free);

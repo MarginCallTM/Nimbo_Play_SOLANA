@@ -18,30 +18,38 @@
 import { useEffect, useRef, useState } from "react";
 import { ARENA_URL } from "@/lib/constants";
 
-export function ArenaBackdrop() {
+export function ArenaBackdrop({ triggerId = "how" }: { triggerId?: string }) {
   const anchor = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
-  // Mount only once the section is near the viewport. This is the whole
-  // reason the cost is acceptable: a visitor who never scrolls to the
-  // footer downloads none of it.
+  // Start loading when the reader reaches ANOTHER section — "How it
+  // works" by default — rather than when this one is nearly in view.
+  //
+  // The iframe boots Pixi and a simulation, which is not instant. Waiting
+  // until the CTA was 200px away meant arriving on a blank rectangle that
+  // filled in a moment later. Two sections of runway means the arena is
+  // already alive by the time it is scrolled to.
+  //
+  // Watching a NAMED section rather than widening a margin: "200px" is a
+  // number that corresponds to nothing, and it drifts as soon as the copy
+  // above changes length.
   useEffect(() => {
-    const el = anchor.current;
-    if (!el) return;
     // No IntersectionObserver (very old browser, or a test environment):
     // show the section without the backdrop rather than not at all.
     if (typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return;
-        setVisible(true);
-        io.disconnect(); // one-way: never tear it down mid-scroll
-      },
-      { rootMargin: "200px" }, // start loading just before it is needed
-    );
-    io.observe(el);
+    // Falls back to this component's own position if the trigger section
+    // is ever renamed or removed: the backdrop then loads late instead of
+    // never, which is the right way for this to break.
+    const target = document.getElementById(triggerId) ?? anchor.current;
+    if (!target) return;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      setVisible(true);
+      io.disconnect(); // one-way: never tear it down mid-scroll
+    });
+    io.observe(target);
     return () => io.disconnect();
-  }, []);
+  }, [triggerId]);
 
   return (
     <div ref={anchor} aria-hidden className="pointer-events-none absolute inset-0">
