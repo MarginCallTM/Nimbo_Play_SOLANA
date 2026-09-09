@@ -15,8 +15,8 @@
   },
   "favicon": "/favicon.png",
   "logo": {
-    "light": "/logo/mark.png",
-    "dark": "/logo/mark.png",
+    "light": "/logo/lockup-on-light.png",
+    "dark": "/logo/lockup-on-dark.png",
     "href": "https://nimboplay.dev"
   },
   "navigation": {
