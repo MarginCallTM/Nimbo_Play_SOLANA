@@ -31,9 +31,10 @@ export function Hero() {
             was removed on purpose (2026-09-07, user's call) to raise the
             artwork: the headline now starts the page and the illustration
             arrives sooner. Devnet status is still stated on the homepage, in
-            the footer (twice) and in the page metadata — the closing CTA's
-            footnote was removed on 2026-09-09 (user's call), so this list is
-            no longer three deep.
+            the footer's fine print and in the page metadata — the closing CTA's
+            footnote was removed on 2026-09-09 (user's call) and the footer's
+            second mention ("Running on Solana devnet.") on 2026-09-11, so this
+            list keeps thinning. GOLIVE.md G5 holds the full inventory.
             IF A BADGE EVER COMES BACK HERE, it states devnet. The one this
             replaced claimed "Solana mainnet · Round #248" and both halves were
             false (F0 / F10.1). */}
