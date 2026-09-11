@@ -83,22 +83,22 @@ export function Hero() {
       </div>
 
       {/* Artwork band.
-          The source is 3841x2144 and its top ~26% is pure black — dead space
-          that stacked onto the text block's own padding and produced a black
-          gap roughly twice as tall as the reference's. So the band is a
-          container with a WIDER ratio than the image (3841/1650 vs 3841/2144);
+          The source has a tall band of pure black on top — dead space that
+          would stack onto the text block's own padding and produce a black gap
+          roughly twice as tall as the reference's. So the band is a container
+          with a WIDER ratio than the image (1672/720 vs 1672/941);
           `object-cover` scales the art to the full width and `object-bottom`
-          anchors it low, so the surplus is trimmed off the TOP. About 23% goes,
-          leaving only a thin strip of black for the glow to rise into.
+          anchors it low, so the surplus is trimmed off the TOP, leaving only a
+          thin strip of black for the glow to rise into.
           Retune by moving the second number only: lower = tighter crop.
-          MEASURED HEADROOM (2026-09-07). The source is pure black down to
-          25.8% of its height; the first real content is the right cloud's edge
-          at 26.5%. So the crop can go to ~25.8% and no further — past that it
-          eats the clouds. History of this number:
-            1700 -> 21.2% crop, ~60px of dead black survived
-            1650 -> 23.04%
-            1620 -> 24.44%  (current) leaves ~1.4% of black for the glow
-            1591 -> 25.8%   ABSOLUTE FLOOR, clouds touch the top edge
+          MEASURED HEADROOM (2026-09-11, testupsalehero.webp, 1672x941). Rows
+          are black up to 24.9% of the height; the first real content — the
+          flame glow and the cloud tops — lands at 25.3%. So:
+            720 -> 23.5% crop  (current) leaves ~1.8% of black for the glow
+            703 -> 25.3%       ABSOLUTE FLOOR, content touches the top edge
+          The previous asset (Official_bg_webp.webp, 3841x2144) measured 26.5%
+          and ran at 3841/1620; the two crops are within a point of each other,
+          which is why the band barely changes shape.
           `relative` (not absolute) so the band takes real height and pushes the
           page down on its own — no magic offsets to keep in sync. */}
       {/* Mobile uses a TALLER ratio (3/2) on purpose. At 425px the desktop crop
@@ -106,9 +106,9 @@ export function Hero() {
           makes object-cover scale up and trim the SIDES instead, which costs
           only empty cloud and keeps the subject readable. Provisional answer to
           F1.8/F11.1 — a purpose-framed portrait asset would still be better. */}
-      <div className="relative aspect-[3/2] w-full md:aspect-[3841/1620]">
+      <div className="relative aspect-[3/2] w-full md:aspect-[1672/720]">
         <Image
-          src="/Official_bg_webp.webp"
+          src="/testupsalehero.webp"
           alt=""
           aria-hidden
           fill
